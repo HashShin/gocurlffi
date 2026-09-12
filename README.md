@@ -114,12 +114,18 @@ Verified: against that endpoint `-i custom` returns the same backend response
 - `impersonate` - presets, aliases and browser-name resolution.
 - `requests` - `Session`, options, `Request`/`Response`, `Headers`, `Cookies`
   and the request helpers.
+- `browser` - a pure-Go headless browser that runs page JavaScript, so sites
+  that render client-side can be scraped too. See `browser/README.md`.
 - `cmd/gocurlffi` - the command line tool.
+- `cmd/gobrowser` - the headless browser CLI.
 
 ## Repository layout
 
 ```
 cmd/gocurlffi/          CLI
+cmd/gobrowser/          headless browser CLI
+browser/                pure-Go headless browser (DOM, JS, fetch, extraction)
+  browser/              reference Lightpanda (Zig) checkout, gitignored
 requests/               requests-like API, transport, tests
   testdata/             recorded fingerprint baseline (curl_cffi reference)
 impersonate/            browser presets, aliases, TLS profile mapping
@@ -253,15 +259,20 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   while the raw JA3 byte order is one valid sample rather than re-randomized.
 - Async sessions, WebSockets, caching backends, DoH and `curl_options` are not
   ported.
-- No JavaScript engine. Some sites gate HTML behind JS, and impersonation does
-  not help because the gate is server-side, not fingerprint-based. The clearest
-  example is Google: `https://www.google.com/search?q=...` returns a
-  "Turn on JavaScript to keep searching" page (~92 KB) to *every* non-scripting
-  client. Plain `curl` receives the same page, so this is not a client bug. The
-  CLI detects that interstitial and prints a `warning:` instead of letting it
-  masquerade as content. Server-rendered alternatives that do return linkable
-  HTML with this library: `https://www.bing.com/search?q=...`,
-  `https://search.brave.com/search?q=...`, `https://lite.duckduckgo.com/lite/?q=...`.
+- `requests` alone has no JavaScript engine. For client-rendered pages use the
+  `browser` package, which runs scripts in pure Go (`goja`) over the same
+  impersonating transport, e.g. `gobrowser get https://quotes.toscrape.com/js/`.
+  Some gates are still server-side and not fingerprint- or JS-based. The
+  clearest example is Google: `https://www.google.com/search?q=...` returns a
+  "Turn on JavaScript to keep searching" page (~92 KB) to *every* client without
+  a full browser stack. Plain `curl` receives the same page, so this is not a
+  client bug. The `gocurlffi` CLI detects that interstitial and prints a
+  `warning:`. Server-rendered alternatives that do return linkable HTML:
+  `https://www.bing.com/search?q=...`, `https://search.brave.com/search?q=...`,
+  `https://lite.duckduckgo.com/lite/?q=...`.
+- `browser` has no layout, paint, screenshots, ES modules, CSS cascade or
+  WebSockets. It runs scripts and mutates the DOM, which covers scraping; it is
+  not a rendering engine.
 
 ## License
 
