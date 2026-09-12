@@ -1,0 +1,12 @@
+# built CLI
+/bin/
+
+# reference Python implementation (separate git clone)
+/curl_cffi/
+
+# go test artefacts
+*.test
+coverage.out
+
+# stray build artifacts
+/scratch
