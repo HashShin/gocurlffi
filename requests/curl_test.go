@@ -66,3 +66,23 @@ func TestNativeAndCurlDetection(t *testing.T) {
 		t.Error("native/curl detection overlap")
 	}
 }
+
+func TestCurlDefaultHeaders(t *testing.T) {
+	h := NewHeaders(nil)
+	applyCurlDefaults(h)
+	if got := h.Get("User-Agent"); got != curlDefaultUserAgent {
+		t.Errorf("user-agent = %q, want %q", got, curlDefaultUserAgent)
+	}
+	if got := h.Get("Accept"); got != "*/*" {
+		t.Errorf("accept = %q, want */*", got)
+	}
+
+	user := NewHeaders([]HeaderPair{{"User-Agent", "custom/1"}})
+	applyCurlDefaults(user)
+	if user.Get("User-Agent") != "custom/1" {
+		t.Errorf("user agent override lost: %q", user.Get("User-Agent"))
+	}
+	if user.Get("Accept") != "*/*" {
+		t.Errorf("accept default missing: %q", user.Get("Accept"))
+	}
+}

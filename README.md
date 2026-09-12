@@ -69,11 +69,12 @@ Besides the browser presets there are two non-browser targets:
 - `native` (also `none`, `go`, or simply no impersonation): Go's own TLS and
   HTTP stack, plus the default `Accept-Encoding`. This matches curl_cffi's
   behaviour when no `impersonate` is set.
-- `curl`: reproduces the system curl's OpenSSL 3.x ClientHello and its HTTP/2
-  settings exactly. Its JA4 and Akamai hash are identical to curl's
+- `curl`: reproduces the system curl's OpenSSL 3.x ClientHello, its HTTP/2
+  settings and its default request headers (`user-agent: curl/...`,
+  `accept: */*`). Its JA4 and Akamai hash are identical to curl's
   (`t13d3013h2_1d37bd780c83_8537cf56674e`, `3:100;4:65536;2:0|1048510465|0|m,s,a,p`),
   which is useful for APIs that allow a generic curl-like client but challenge
-  browser fingerprints.
+  browser fingerprints. Override the UA or Accept with `-H` if needed.
 
 ```sh
 gocurlffi get https://example.com/api --impersonate curl

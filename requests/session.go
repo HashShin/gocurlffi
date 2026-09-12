@@ -158,6 +158,9 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 	if !cfg.acceptEncodingSet && !isCurlImpersonation(cfg.impersonate) && !baseHeaders.Has("Accept-Encoding") {
 		baseHeaders.Set("Accept-Encoding", "gzip, deflate, br")
 	}
+	if isCurlImpersonation(cfg.impersonate) {
+		applyCurlDefaults(baseHeaders)
+	}
 
 	authHeader := ""
 	if cfg.auth != nil {

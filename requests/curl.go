@@ -19,8 +19,25 @@ import (
 
 const curlImpersonateName = "curl"
 
+// curlDefaultUserAgent is the User-Agent curl sends by default. curl's TLS and
+// HTTP/2 fingerprint is tied to a "curl client" identity, so the UA has to
+// match rather than claiming to be Go or a browser.
+const curlDefaultUserAgent = "curl/8.21.0"
+
 func isCurlImpersonation(name string) bool {
 	return strings.EqualFold(name, curlImpersonateName)
+}
+
+// applyCurlDefaults adds curl's own default request headers so the TLS/HTTP2
+// fingerprint and the headers describe the same client. User supplied headers
+// are never overridden.
+func applyCurlDefaults(h *Headers) {
+	if !h.Has("User-Agent") {
+		h.Set("User-Agent", curlDefaultUserAgent)
+	}
+	if !h.Has("Accept") {
+		h.Set("Accept", "*/*")
+	}
 }
 
 // curlCipherSuites is curl's OpenSSL 3.x cipher list, in order.
