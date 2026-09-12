@@ -274,14 +274,31 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 		_ = arr.Set("length", len(n.Attr))
 		return arr
 	}, nil)
+	// A template's content lives in a detached fragment, so innerHTML targets
+	// the content (as in a browser) and template.content exposes it.
 	e.accessor(p, "innerHTML", func(call goja.FunctionCall) goja.Value {
-		return e.vm.ToValue(innerHTML(e.thisNode(call)))
+		n := e.thisNode(call)
+		if isTemplate(n) {
+			n = e.page.templateContentNode(n)
+		}
+		return e.vm.ToValue(e.page.serializeInner(n))
 	}, func(call goja.FunctionCall) goja.Value {
-		setInnerHTML(e.thisNode(call), argString(call.Argument(0)))
+		n := e.thisNode(call)
+		if isTemplate(n) {
+			n = e.page.templateContentNode(n)
+		}
+		setInnerHTML(n, argString(call.Argument(0)))
 		return goja.Undefined()
 	})
+	e.accessor(p, "content", func(call goja.FunctionCall) goja.Value {
+		n := e.thisNode(call)
+		if !isTemplate(n) {
+			return goja.Undefined()
+		}
+		return e.wrapFragment(e.page.templateContentNode(n))
+	}, nil)
 	e.accessor(p, "outerHTML", func(call goja.FunctionCall) goja.Value {
-		return e.vm.ToValue(outerHTML(e.thisNode(call)))
+		return e.vm.ToValue(e.page.serialize(e.thisNode(call)))
 	}, func(call goja.FunctionCall) goja.Value {
 		n := e.thisNode(call)
 		if n == nil || n.Parent == nil {
@@ -855,7 +872,11 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 // newDocumentFragment creates a document fragment node with the fragment
 // prototype.
 func (e *jsEnv) newDocumentFragment() goja.Value {
-	frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
+	return e.wrapFragment(&html.Node{Type: html.ElementNode, Data: "#document-fragment"})
+}
+
+// wrapFragment wraps a node and gives it the fragment prototype.
+func (e *jsEnv) wrapFragment(frag *html.Node) goja.Value {
 	o := e.wrap(frag)
 	if obj, ok := o.(*goja.Object); ok {
 		_ = obj.SetPrototype(e.protosRef.fragment)

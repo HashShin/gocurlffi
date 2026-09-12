@@ -94,6 +94,11 @@ make gobrowser
   `document.fonts`, `attachShadow` (returns the host). Sub-documents created
   through `DOMParser` or `implementation` keep their own tree: document
   methods operate on the receiver, not the page document.
+- `<template>` content is inert, as in a browser: parsed children live in a
+  detached fragment, so they never appear in queries, `Text()`, `Links()` or
+  `Markdown()`, while `template.content` exposes them for cloning and
+  `template.innerHTML` reads and writes that content. Serialization
+  (`HTML()`, `outerHTML`) still includes template contents.
 - `TreeWalker`/`NodeIterator` (`createTreeWalker`, `NodeFilter` constants) with
   working `nextNode`, `previousNode`, `parentNode` and sibling/first/last
   navigation, which is what text-extraction loops use.
@@ -164,6 +169,9 @@ screenshot or PDF output, and no image decoding. Specifically absent:
   documents are therefore always reported as same-origin.
 - CSS is not cascaded: no `getComputedStyle` computation, no `offsetWidth`.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
+- `<template>` contents are moved out of the element at parse time, so
+  appending a node directly to a template element puts it in the element
+  (visible) rather than in `content`. Use `template.content` to build content.
 
 Sites whose content is gated by a heavy framework and many chained dynamic
 imports may not fully render, and absolute JS-engine parity with V8 is out of

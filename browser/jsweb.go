@@ -84,6 +84,9 @@ func (e *jsEnv) newDOMParser() *goja.Object {
 		if err != nil {
 			panic(e.vm.NewGoError(err))
 		}
+		for t, frag := range extractTemplateContents(doc) {
+			e.page.templateContent[t] = frag
+		}
 		return e.wrap(doc)
 	})
 	return o
@@ -141,6 +144,9 @@ func (e *jsEnv) newHTMLDocument(title string) *html.Node {
 		t := createElement("title")
 		setTextContent(t, title)
 		appendChild(head, t)
+	}
+	for t, frag := range extractTemplateContents(doc) {
+		e.page.templateContent[t] = frag
 	}
 	return doc
 }

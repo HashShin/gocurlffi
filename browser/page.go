@@ -49,18 +49,23 @@ type Page struct {
 	// deadline bounds the script-loading phase (see Options.LoadTimeout).
 	deadline time.Time
 
+	// templateContent maps each <template> to the fragment holding its
+	// content, which is kept out of the document tree.
+	templateContent map[*html.Node]*html.Node
+
 	loadedScripts map[string]bool
 }
 
 // newPage creates an empty page bound to a browser.
 func newPage(b *Browser, url string) *Page {
 	p := &Page{
-		browser:       b,
-		URL:           url,
-		readyState:    "loading",
-		userAgent:     defaultUserAgent,
-		platform:      "Linux armv8l",
-		loadedScripts: map[string]bool{},
+		browser:         b,
+		URL:             url,
+		readyState:      "loading",
+		userAgent:       defaultUserAgent,
+		platform:        "Linux armv8l",
+		loadedScripts:   map[string]bool{},
+		templateContent: map[*html.Node]*html.Node{},
 	}
 	if b.opts.UserAgent != "" {
 		p.userAgent = b.opts.UserAgent
@@ -149,6 +154,7 @@ func (p *Page) load(rawURL string, headers map[string]string) error {
 		return perr
 	}
 	p.doc = doc
+	p.templateContent = extractTemplateContents(doc)
 	return p.run()
 }
 
@@ -160,6 +166,7 @@ func (p *Page) SetContent(source, url string) error {
 		return err
 	}
 	p.doc = doc
+	p.templateContent = extractTemplateContents(doc)
 	return p.run()
 }
 
@@ -335,6 +342,92 @@ func (p *Page) setCookieString(s string) {
 	jar.Set(strings.TrimSpace(name), strings.TrimSpace(value))
 }
 
+// templateContentNode returns the content fragment for a template, creating an
+// empty one if the page did not record the template (for example a template
+// built at runtime).
+func (p *Page) templateContentNode(n *html.Node) *html.Node {
+	if frag, ok := p.templateContent[n]; ok {
+		return frag
+	}
+	frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
+	p.templateContent[n] = frag
+	return frag
+}
+
+// serialize renders a node with template contents re-attached, because the DOM
+// stores them in a detached fragment while serialization must include them.
+func (p *Page) serialize(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
+	if len(p.templateContent) == 0 {
+		return outerHTML(n)
+	}
+	grafted := p.graftTemplates(n)
+	var b bytes.Buffer
+	_ = html.Render(&b, n)
+	p.ungraftTemplates(grafted)
+	return b.String()
+}
+
+// serializeInner renders a node's children with template contents attached.
+func (p *Page) serializeInner(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
+	if len(p.templateContent) == 0 {
+		return innerHTML(n)
+	}
+	grafted := p.graftTemplates(n)
+	var b bytes.Buffer
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		_ = html.Render(&b, c)
+	}
+	p.ungraftTemplates(grafted)
+	return b.String()
+}
+
+type graftedTemplate struct {
+	tmpl *html.Node
+	frag *html.Node
+}
+
+func (p *Page) graftTemplates(n *html.Node) []graftedTemplate {
+	var out []graftedTemplate
+	var walk func(*html.Node)
+	walk = func(x *html.Node) {
+		if isTemplate(x) {
+			if frag, ok := p.templateContent[x]; ok {
+				if frag.FirstChild != nil {
+					out = append(out, graftedTemplate{tmpl: x, frag: frag})
+					for ch := frag.FirstChild; ch != nil; {
+						next := ch.NextSibling
+						removeChild(ch)
+						appendChild(x, ch)
+						ch = next
+					}
+				}
+			}
+		}
+		for c := x.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+func (p *Page) ungraftTemplates(grafted []graftedTemplate) {
+	for _, g := range grafted {
+		for ch := g.tmpl.FirstChild; ch != nil; {
+			next := ch.NextSibling
+			removeChild(ch)
+			appendChild(g.frag, ch)
+			ch = next
+		}
+	}
+}
+
 // --- public API ---
 
 // HTML returns the serialized rendered DOM.
@@ -342,7 +435,7 @@ func (p *Page) HTML() string {
 	if p.doc == nil {
 		return ""
 	}
-	return outerHTML(p.doc)
+	return p.serialize(p.doc)
 }
 
 // Text returns the visible text of the rendered DOM, skipping script and

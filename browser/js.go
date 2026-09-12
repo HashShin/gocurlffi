@@ -164,7 +164,9 @@ func (e *jsEnv) setupPrototypes() {
 	_ = p.document.SetPrototype(p.node)
 	_ = p.text.SetPrototype(p.node)
 	_ = p.comment.SetPrototype(p.node)
-	_ = p.fragment.SetPrototype(p.node)
+	// DocumentFragment implements ParentNode, so give it the element
+	// prototype (querySelector, children, append, ...) rather than plain Node.
+	_ = p.fragment.SetPrototype(p.element)
 	e.defineNodeProto(p.node)
 	e.defineElementProto(p.element)
 	e.defineDocumentProto(p.document)

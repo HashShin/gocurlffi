@@ -267,6 +267,42 @@ func setInnerHTML(n *html.Node, s string) {
 	}
 }
 
+// isTemplate reports whether n is a <template> element.
+func isTemplate(n *html.Node) bool {
+	return n != nil && n.Type == html.ElementNode && n.Data == "template"
+}
+
+// extractTemplateContents moves the parsed children of every <template> into
+// a detached fragment, as the HTML parser does in a browser. Without this the
+// template's content would leak into queries and text extraction, and
+// template.content would have nothing to clone. It returns template -> content.
+func extractTemplateContents(root *html.Node) map[*html.Node]*html.Node {
+	out := map[*html.Node]*html.Node{}
+	if root == nil {
+		return out
+	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if isTemplate(c) {
+				frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
+				for ch := c.FirstChild; ch != nil; {
+					next := ch.NextSibling
+					removeChild(ch)
+					appendChild(frag, ch)
+					ch = next
+				}
+				out[c] = frag
+				walk(frag)
+				continue
+			}
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
 // findElement returns the first descendant element with the given tag.
 func findElement(n *html.Node, tag string) *html.Node {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
