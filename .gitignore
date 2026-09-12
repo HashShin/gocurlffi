@@ -10,3 +10,7 @@ coverage.out
 
 # stray build artifacts
 /scratch
+
+# site check output
+/best_matrix.txt
+/sites_probe.txt
