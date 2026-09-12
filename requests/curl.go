@@ -136,7 +136,7 @@ func curlClientProfile(base profiles.ClientProfile) profiles.ClientProfile {
 		1048510465,
 		nil,
 		nil,
-		0,
+		1,
 		true,
 		nil,
 		nil,

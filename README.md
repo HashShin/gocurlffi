@@ -56,11 +56,11 @@ ClientHello is short; the comparison therefore ignores padding, exactly as the
 behaviour varies in curl_cffi too.
 
 Note that heavily protected sites still need more than a matching fingerprint,
-and their decisions are stateful. `www.adidas.co.uk/api/...` returned 404 to
-`curl` for a while and then started returning 403 to `curl`, plain Go, curl_cffi
-and this client alike; the block moved with the IP/rate state, not the client.
-When such a site prefers a non-browser client, use one of the two
-non-impersonating targets below.
+and their decisions are stateful. Against `www.adidas.co.uk/api/...` the *same*
+`curl` command returned 404 and then 403 within 30 seconds, and plain Go, curl
+and this client tracked each other rather than any fixed client class. The block
+follows the IP/rate state, not the fingerprint. If a site does prefer a
+non-browser client, use one of the two non-impersonating targets below.
 
 ## Impersonation targets
 

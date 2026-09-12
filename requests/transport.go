@@ -128,7 +128,7 @@ func newTransportClient(cfg *config) (httpDoer, error) {
 	var preset *impersonate.Preset
 	if isCurlImpersonation(cfg.impersonate) {
 		base := profiles.MappedTLSClients["chrome_150"]
-		return newTLSClient(cfg, curlClientProfile(base))
+		return newTLSClient(cfg, curlClientProfile(base), true)
 	}
 	if cfg.impersonate != "" {
 		p, err := impersonate.Get(cfg.impersonate)
@@ -153,11 +153,13 @@ func newTransportClient(cfg *config) (httpDoer, error) {
 	// pseudo header order and header priority match curl-impersonate exactly.
 	base = profileForPreset(preset, base)
 
-	return newTLSClient(cfg, base)
+	return newTLSClient(cfg, base, false)
 }
 
 // newTLSClient builds a tls-client transport around a ClientProfile.
-func newTLSClient(cfg *config, base profiles.ClientProfile) (httpDoer, error) {
+// When disableCompression is set the transport stops adding its own
+// Accept-Encoding header, which the curl target needs to stay byte-identical.
+func newTLSClient(cfg *config, base profiles.ClientProfile, disableCompression bool) (httpDoer, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithClientProfile(base),
 		tls_client.WithNotFollowRedirects(),
@@ -197,15 +199,17 @@ func newTLSClient(cfg *config, base profiles.ClientProfile) (httpDoer, error) {
 		}
 	}
 
+	transportOptions := &tls_client.TransportOptions{DisableCompression: disableCompression}
 	if cfg.cert != nil {
 		cert, err := tls.LoadX509KeyPair(cfg.cert.CertFile, cfg.cert.KeyFile)
 		if err != nil {
 			return nil, &ConnectionError{newError(
 				fmt.Sprintf("load client certificate: %v", err), 0, nil)}
 		}
-		opts = append(opts, tls_client.WithTransportOptions(&tls_client.TransportOptions{
-			Certificates: []tls.Certificate{cert},
-		}))
+		transportOptions.Certificates = []tls.Certificate{cert}
+	}
+	if disableCompression || cfg.cert != nil {
+		opts = append(opts, tls_client.WithTransportOptions(transportOptions))
 	}
 
 	client, err := tls_client.NewHttpClient(noopLogger, opts...)
