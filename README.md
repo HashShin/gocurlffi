@@ -253,6 +253,15 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   while the raw JA3 byte order is one valid sample rather than re-randomized.
 - Async sessions, WebSockets, caching backends, DoH and `curl_options` are not
   ported.
+- No JavaScript engine. Some sites gate HTML behind JS, and impersonation does
+  not help because the gate is server-side, not fingerprint-based. The clearest
+  example is Google: `https://www.google.com/search?q=...` returns a
+  "Turn on JavaScript to keep searching" page (~92 KB) to *every* non-scripting
+  client. Plain `curl` receives the same page, so this is not a client bug. The
+  CLI detects that interstitial and prints a `warning:` instead of letting it
+  masquerade as content. Server-rendered alternatives that do return linkable
+  HTML with this library: `https://www.bing.com/search?q=...`,
+  `https://search.brave.com/search?q=...`, `https://lite.duckduckgo.com/lite/?q=...`.
 
 ## License
 

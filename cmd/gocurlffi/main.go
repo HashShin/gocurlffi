@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -292,6 +293,29 @@ func splitHeader(s string) (string, string, bool) {
 	return strings.TrimSpace(k), strings.TrimSpace(v), true
 }
 
+// jsGateMarkers match pages that are JavaScript-only interstitials rather than
+// real content. Google, for example, returns "Turn on JavaScript to keep
+// searching" for /search to every client that does not execute scripts, no
+// matter the TLS/JA3/HTTP2 fingerprint (plain curl gets the same page).
+var jsGateMarkers = []struct {
+	marker string
+	note   string
+}{
+	{"/httpservice/retry/enablejs", "Google requires JavaScript for /search: it serves a JS-only \"Turn on JavaScript to keep searching\" page to every non-browser client (curl gets the same page)."},
+	{"Turn on JavaScript to keep searching", "Google requires JavaScript for /search: the no-JS HTML results were removed, so this is a JavaScript gate, not real results."},
+}
+
+// warnJSGate writes a diagnostic to stderr when body is a known JS-only
+// interstitial, so callers are not misled into treating it as content.
+func warnJSGate(w io.Writer, url string, body []byte) {
+	for _, g := range jsGateMarkers {
+		if bytes.Contains(body, []byte(g.marker)) {
+			fmt.Fprintf(w, "\nwarning: %s\n  (final URL: %s, %d bytes of JavaScript-only interstitial)\n", g.note, url, len(body))
+			return
+		}
+	}
+}
+
 func output(rsp *requests.Response, w io.Writer, m mode, outPath string) error {
 	if outPath != "" {
 		data, err := rsp.ReadAll()
@@ -302,6 +326,7 @@ func output(rsp *requests.Response, w io.Writer, m mode, outPath string) error {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "saved %d bytes to %s\n", len(data), outPath)
+		warnJSGate(os.Stderr, rsp.URL, data)
 		return nil
 	}
 
@@ -322,6 +347,7 @@ func output(rsp *requests.Response, w io.Writer, m mode, outPath string) error {
 	if err != nil {
 		return err
 	}
+	warnJSGate(os.Stderr, rsp.URL, data)
 	_, err = w.Write(data)
 	if err == nil && m == modeVerbose && len(data) > 0 && data[len(data)-1] != '\n' {
 		fmt.Fprintln(w)
