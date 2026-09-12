@@ -106,3 +106,23 @@ func TestPresetPseudoOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveURLDefaultsScheme(t *testing.T) {
+	cases := map[string]string{
+		"example.com":           "https://example.com",
+		"example.com/path?x=1":  "https://example.com/path?x=1",
+		"//example.com":         "https://example.com",
+		"http://example.com/a":  "http://example.com/a",
+		"https://example.com/a": "https://example.com/a",
+	}
+	for in, want := range cases {
+		got, err := resolveURL("", in, nil)
+		if err != nil {
+			t.Errorf("resolveURL(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("resolveURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

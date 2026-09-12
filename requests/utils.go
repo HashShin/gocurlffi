@@ -137,7 +137,13 @@ func resolveURL(baseURL, rawURL string, params Params) (string, error) {
 		final = bu.ResolveReference(ru).String()
 	}
 	if !strings.Contains(final, "://") {
-		return "", &InvalidURL{newError("invalid or missing URL scheme: "+rawURL, 3, nil)}
+		// Be forgiving like a browser address bar: a bare host defaults to
+		// https, and a protocol-relative "//host" gets https too.
+		if strings.HasPrefix(final, "//") {
+			final = "https:" + final
+		} else {
+			final = "https://" + final
+		}
 	}
 	return applyParams(final, params)
 }

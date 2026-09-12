@@ -178,12 +178,20 @@ Options include: `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 
 ## CLI
 
+After `make build` the binary is at `bin/gocurlffi` (run it directly, not with
+`go run`). To run straight from source use the package path `./cmd/gocurlffi`.
+The scheme is optional and defaults to https.
+
 ```sh
-gocurlffi list
-gocurlffi get https://tls.browserleaks.com/json -i chrome150
-gocurlffi get https://example.com -H 'Accept-Language: en-GB' -v
-gocurlffi post https://httpbin.org/post -j '{"a":1}'
-gocurlffi get https://example.com -o page.html
+make build
+./bin/gocurlffi list
+./bin/gocurlffi get tls.browserleaks.com/json -i chrome150
+./bin/gocurlffi get example.com -H 'Accept-Language: en-GB' -v
+./bin/gocurlffi post httpbin.org/post -j '{"a":1}'
+./bin/gocurlffi get example.com -o page.html
+
+# or without building:
+go run ./cmd/gocurlffi get ritzcarlton.com -i custom
 ```
 
 ## Checking sites
