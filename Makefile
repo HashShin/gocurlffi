@@ -31,6 +31,10 @@ test:
 test-live: build
 	GOCURLFFI_BIN=$(BIN) python3 scripts/compare_fingerprints.py
 
+# Status matrix for a list of sites across impersonation targets.
+sites: build
+	bash scripts/check_sites.sh
+
 lint: vet
 	@command -v staticcheck >/dev/null && staticcheck ./... || echo "staticcheck not installed, skipping"
 

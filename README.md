@@ -166,6 +166,22 @@ gocurlffi post https://httpbin.org/post -j '{"a":1}'
 gocurlffi get https://example.com -o page.html
 ```
 
+## Checking sites
+
+`scripts/check_sites.sh` fetches a list of URLs with several impersonation
+targets and prints a status matrix, so you can see which target works where.
+
+```sh
+bash scripts/check_sites.sh                       # built-in sites + default targets
+bash scripts/check_sites.sh https://a.com https://b.com
+bash scripts/check_sites.sh -i custom,chrome131,native -t 15
+bash scripts/check_sites.sh --all-targets -b      # every target, best per site
+make sites
+```
+
+Defaults to these sites: `marriott.com`, `ritzcarlton.com`, `foodnetwork.com`,
+`gocomics.com`, `bsky.app`, `mstdn.social`, `ubiqueros.com`.
+
 ## Regenerating the presets
 
 The vendored upstream source lives in `impersonate/upstream/impersonate.c`. To
