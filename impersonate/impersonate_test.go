@@ -35,8 +35,8 @@ func TestGetUnknown(t *testing.T) {
 
 func TestTargetsSortedAndComplete(t *testing.T) {
 	targets := Targets()
-	if len(targets) != 39 {
-		t.Fatalf("targets = %d, want 39", len(targets))
+	if len(targets) != 40 {
+		t.Fatalf("targets = %d, want 40 (39 presets + custom)", len(targets))
 	}
 	for i := 1; i < len(targets); i++ {
 		if targets[i-1] >= targets[i] {

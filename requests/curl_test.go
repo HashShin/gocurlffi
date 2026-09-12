@@ -5,6 +5,8 @@ import (
 
 	"github.com/bogdanfinn/tls-client/profiles"
 	tls "github.com/bogdanfinn/utls"
+
+	"gocurlffi/impersonate"
 )
 
 func TestCurlClientHelloSpecMatchesCapturedCurl(t *testing.T) {
@@ -84,5 +86,33 @@ func TestCurlDefaultHeaders(t *testing.T) {
 	}
 	if user.Get("Accept") != "*/*" {
 		t.Errorf("accept default missing: %q", user.Get("Accept"))
+	}
+}
+
+func TestCustomTargetHeaders(t *testing.T) {
+	p, err := impersonate.Get("custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.HTTPHeaders) != 13 {
+		t.Fatalf("custom headers = %d, want 13", len(p.HTTPHeaders))
+	}
+	if got := p.HTTPHeaders[0].Name; got != "User-Agent" {
+		t.Errorf("first header = %q", got)
+	}
+	if got := p.HTTPHeaders[1].Name; got != "Accept" {
+		t.Errorf("second header = %q", got)
+	}
+	if got := p.HTTPHeaders[2].Name; got != "Accept-Encoding" {
+		t.Errorf("third header = %q", got)
+	}
+	if !usesCurlTLS("custom") {
+		t.Error("custom target must use the curl TLS transport")
+	}
+	if !usesCurlTLS("curl") {
+		t.Error("curl target must use the curl TLS transport")
+	}
+	if usesCurlTLS("chrome131") {
+		t.Error("browser presets must not use the curl transport")
 	}
 }

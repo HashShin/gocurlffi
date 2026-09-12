@@ -126,7 +126,7 @@ func newTransportClient(cfg *config) (httpDoer, error) {
 
 	profileName := "chrome_150"
 	var preset *impersonate.Preset
-	if isCurlImpersonation(cfg.impersonate) {
+	if usesCurlTLS(cfg.impersonate) {
 		base := profiles.MappedTLSClients["chrome_150"]
 		return newTLSClient(cfg, curlClientProfile(base), true)
 	}

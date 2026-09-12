@@ -23,6 +23,10 @@ func TestAllPresetsBuildSpec(t *testing.T) {
 			t.Fatalf("Get(%s): %v", name, err)
 		}
 		order := presetOrder(p)
+		if order == "" {
+			// Non-browser targets (custom) do not use a browser ClientHello.
+			continue
+		}
 		spec, err := buildSpecForPreset(p, order)
 		if err != nil {
 			t.Errorf("%s: buildSpecForPreset: %v", name, err)

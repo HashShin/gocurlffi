@@ -102,6 +102,8 @@ func (p *Preset) Browser() string {
 		return "safari"
 	case strings.HasPrefix(p.Target, "okhttp"):
 		return "okhttp"
+	case p.Target == CustomTarget:
+		return "custom"
 	default:
 		return ""
 	}
@@ -174,6 +176,10 @@ func init() {
 		byAlias[p.Target] = p
 		targets = append(targets, p.Target)
 	}
+	// Hand-written target (see custom.go).
+	byTarget[customPreset.Target] = &customPreset
+	byAlias[customPreset.Target] = &customPreset
+	targets = append(targets, customPreset.Target)
 	sort.Strings(targets)
 }
 

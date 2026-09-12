@@ -128,6 +128,10 @@ const canonicalExtensionOrder = "0-23-65281-10-11-35-16-5-13-18-51-45-43-27-1751
 // used instead. Chrome 110+ randomly permutes its extensions, so the maintained
 // profile is a better (and equally valid) sample there.
 func presetExtensionOrder(p *impersonate.Preset) string {
+	if p.Target == impersonate.CustomTarget {
+		// The custom target uses the curl transport, not a browser ClientHello.
+		return ""
+	}
 	if p.TLSExtensionOrder != "" {
 		return p.TLSExtensionOrder
 	}

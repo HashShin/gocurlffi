@@ -6,6 +6,8 @@ import (
 	"github.com/bogdanfinn/fhttp/http2"
 	"github.com/bogdanfinn/tls-client/profiles"
 	tls "github.com/bogdanfinn/utls"
+
+	"gocurlffi/impersonate"
 )
 
 // The "curl" target reproduces the OpenSSL 3.x ClientHello and HTTP/2 settings
@@ -26,6 +28,13 @@ const curlDefaultUserAgent = "curl/8.21.0"
 
 func isCurlImpersonation(name string) bool {
 	return strings.EqualFold(name, curlImpersonateName)
+}
+
+// usesCurlTLS reports whether the target should use the OpenSSL/curl transport.
+// "curl" sends curl's own default headers; "custom" reuses the transport but
+// supplies its own header set.
+func usesCurlTLS(name string) bool {
+	return isCurlImpersonation(name) || strings.EqualFold(name, impersonate.CustomTarget)
 }
 
 // applyCurlDefaults adds curl's own default request headers so the TLS/HTTP2

@@ -81,6 +81,33 @@ gocurlffi get https://example.com/api --impersonate curl
 gocurlffi get https://example.com/api -i native
 ```
 
+There is a third non-browser target, `custom`, which pairs the curl/OpenSSL
+TLS+HTTP/2 fingerprint with a fixed Android Chrome header set (the header list
+from the curl invocation below). It sends exactly these headers, in order:
+
+```
+user-agent: Mozilla/5.0 (Linux; Android 10; K) ... Chrome/150.0.0.0 Mobile Safari/537.36
+accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,...
+accept-encoding: gzip, deflate, br, zstd
+sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"
+sec-ch-ua-mobile: ?1
+sec-ch-ua-platform: "Android"
+upgrade-insecure-requests: 1
+sec-fetch-site: none
+sec-fetch-mode: navigate
+sec-fetch-user: ?1
+sec-fetch-dest: document
+accept-language: en-US,en;q=0.9
+priority: u=0, i
+```
+
+```sh
+gocurlffi get 'https://www.adidas.co.uk/api/products/IS811/availability' -i custom --body
+```
+
+Verified: against that endpoint `-i custom` returns the same backend response
+(404 with the product JSON) as the original curl command, request-for-request.
+
 ## Packages
 
 - `impersonate` - presets, aliases and browser-name resolution.
