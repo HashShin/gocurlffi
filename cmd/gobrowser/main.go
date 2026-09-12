@@ -1,0 +1,194 @@
+// Command gobrowser is a small headless-browser CLI built on the pure-Go
+// browser package. It fetches a page with real browser TLS/HTTP fingerprints,
+// runs its JavaScript, and prints the rendered result.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"gocurlffi/browser"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	switch cmd {
+	case "get", "fetch", "open":
+		runGet(args)
+	case "-h", "--help", "help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `gobrowser - pure-Go headless browser
+
+usage:
+  gobrowser get <url> [flags]
+
+flags:
+  -i, --impersonate NAME   TLS/HTTP fingerprint target (chrome, chrome131, custom, ...)
+  -o, --output FILE        write output to FILE instead of stdout
+  -f, --format FORMAT      html (default), markdown, text, links
+      --eval JS            evaluate JS after load and print the result
+      --wait SELECTOR      wait for a selector before extracting
+      --wait-timeout DUR   timeout for --wait (default 10s)
+      --timeout DUR        per-request timeout (default 30s)
+      --no-js              disable JavaScript execution
+      --console            print page console output to stderr
+      --status             print HTTP status to stderr
+`)
+}
+
+func runGet(args []string) {
+	fs := flag.NewFlagSet("get", flag.ExitOnError)
+	var (
+		impersonate  = fs.String("i", "", "impersonate target")
+		impersonateL = fs.String("impersonate", "", "impersonate target")
+		output       = fs.String("o", "", "output file")
+		outputL      = fs.String("output", "", "output file")
+		format       = fs.String("f", "html", "output format")
+		formatL      = fs.String("format", "html", "output format")
+		eval         = fs.String("eval", "", "JS to evaluate after load")
+		wait         = fs.String("wait", "", "selector to wait for")
+		waitTimeout  = fs.Duration("wait-timeout", 10*time.Second, "selector wait timeout")
+		timeout      = fs.Duration("timeout", 30*time.Second, "request timeout")
+		noJS         = fs.Bool("no-js", false, "disable JavaScript")
+		showConsole  = fs.Bool("console", false, "print console output")
+		showStatus   = fs.Bool("status", false, "print HTTP status")
+	)
+	_ = fs.Parse(reorderFlags(args))
+
+	target := fs.Arg(0)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "error: url required")
+		os.Exit(2)
+	}
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "https://" + target
+	}
+	if *impersonate == "" {
+		*impersonate = *impersonateL
+	}
+	if *output == "" {
+		*output = *outputL
+	}
+	if *format == "html" && *formatL != "html" {
+		*format = *formatL
+	}
+
+	runScripts := !*noJS
+	opts := browser.Options{
+		Impersonate: *impersonate,
+		Timeout:     *timeout,
+		RunScripts:  &runScripts,
+	}
+	if *showConsole {
+		opts.Console = func(level, message string) {
+			fmt.Fprintf(os.Stderr, "[console.%s] %s\n", level, message)
+		}
+	}
+
+	b := browser.New(opts)
+	defer b.Close()
+
+	p, err := b.Open(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if *showStatus && p.Response() != nil {
+		fmt.Fprintf(os.Stderr, "status: %d %s\n", p.Response().StatusCode, p.Response().Reason)
+	}
+	if *wait != "" {
+		if p.WaitForSelector(*wait, *waitTimeout) == nil {
+			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", *wait, *waitTimeout)
+		}
+	}
+
+	var out string
+	if *eval != "" {
+		v, err := p.Eval(*eval)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "eval error: %v\n", err)
+			os.Exit(1)
+		}
+		if v != nil && !isUndefined(v.Export()) {
+			out = fmt.Sprintf("%v", v.Export())
+		}
+	} else {
+		switch *format {
+		case "markdown", "md":
+			out = p.Markdown()
+		case "text", "txt":
+			out = p.Text()
+		case "links":
+			var sb strings.Builder
+			for _, l := range p.Links() {
+				sb.WriteString(l.Href)
+				if l.Text != "" {
+					sb.WriteString("\t" + l.Text)
+				}
+				sb.WriteByte('\n')
+			}
+			out = sb.String()
+		default:
+			out = p.HTML()
+		}
+	}
+
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	if *output != "" {
+		if err := os.WriteFile(*output, []byte(out), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *output, err)
+			os.Exit(1)
+		}
+		return
+	}
+	fmt.Print(out)
+}
+
+func isUndefined(v any) bool { return v == nil }
+
+// boolFlags are options that take no value.
+var boolFlags = map[string]bool{
+	"-no-js": true, "--no-js": true,
+	"-console": true, "--console": true,
+	"-status": true, "--status": true,
+	"-h": true, "--help": true,
+}
+
+// reorderFlags moves options ahead of positional arguments so the standard
+// flag package (which stops at the first non-flag) sees them, allowing
+// "gobrowser get URL -f text".
+func reorderFlags(args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") && a != "-" {
+			flags = append(flags, a)
+			if !strings.Contains(a, "=") && !boolFlags[a] && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return append(flags, positional...)
+}

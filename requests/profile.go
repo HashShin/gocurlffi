@@ -112,12 +112,20 @@ func profileForPreset(p *impersonate.Preset, base profiles.ClientProfile) profil
 	helloID := base.GetClientHelloId()
 
 	if order := presetOrder(p); order != "" {
-		if spec, err := buildSpecForPreset(p, order); err == nil {
+		if _, err := buildSpecForPreset(p, order); err == nil {
 			helloID = tls.ClientHelloID{
 				Client:               "custom",
 				RandomExtensionOrder: false,
 				Version:              p.Target,
+				// Build the spec on every handshake. Returning a shared spec
+				// (even by value) shares its extension pointers, and utls
+				// mutates those during the handshake, so a second connection
+				// would send a corrupted ClientHello.
 				SpecFactory: func() (tls.ClientHelloSpec, error) {
+					spec, err := buildSpecForPreset(p, order)
+					if err != nil {
+						return tls.ClientHelloSpec{}, err
+					}
 					return *spec, nil
 				},
 			}

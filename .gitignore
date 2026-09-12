@@ -14,3 +14,6 @@ coverage.out
 # site check output
 /best_matrix.txt
 /sites_probe.txt
+
+# reference Lightpanda (Zig) clone kept next to the Go port
+/browser/browser/
