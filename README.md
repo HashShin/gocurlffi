@@ -116,6 +116,25 @@ Verified: against that endpoint `-i custom` returns the same backend response
   and the request helpers.
 - `cmd/gocurlffi` - the command line tool.
 
+## Repository layout
+
+```
+cmd/gocurlffi/          CLI
+requests/               requests-like API, transport, tests
+  testdata/             recorded fingerprint baseline (curl_cffi reference)
+impersonate/            browser presets, aliases, TLS profile mapping
+  upstream/             vendored curl-impersonate impersonate.c (MIT) +
+                        LICENSE + captured_clienthellos.txt (reference data)
+internal/genpresets/    parses impersonate.c -> presets_gen.go
+internal/capturehello/  captures/parses a ClientHello from any command
+scripts/check_sites.sh  site/target status matrix
+```
+
+Only `impersonate/upstream/impersonate.c` is an external build input; it is
+vendored so a checkout builds and regenerates offline. Everything else is Go,
+plus the one bash script. The reference Python curl_cffi is not vendored (the
+recorded baseline in `requests/testdata` is enough to validate fingerprints).
+
 ## API
 
 Module-level helpers run in a throwaway session, mirroring

@@ -1,7 +1,7 @@
 # built CLI
 /bin/
 
-# reference Python implementation (separate git clone)
+# optional reference clone of the Python curl_cffi (not part of this module)
 /curl_cffi/
 
 # go test artefacts

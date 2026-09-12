@@ -1,8 +1,8 @@
 // Command genpresets parses curl-impersonate's lib/impersonate.c and generates
 // the Go preset data used by the impersonate package.
 //
-// It replaces the previous Python pipeline (scripts/gen_presets.py and
-// scripts/gen_go.py) so that building gocurlffi needs only the Go toolchain.
+// It replaces the earlier Python-based generator so that building gocurlffi
+// needs only the Go toolchain.
 //
 // Usage (from the repository root):
 //

@@ -17,7 +17,7 @@ import (
 // lack their sensor cookie, so this gives gocurlffi a way to look like curl.
 //
 // Every value below was captured from a live curl ClientHello with
-// scripts/capture_clienthello.py curl.
+// `go run ./internal/capturehello 'curl -s --http2 -k -o /dev/null %s'`.
 
 const curlImpersonateName = "curl"
 

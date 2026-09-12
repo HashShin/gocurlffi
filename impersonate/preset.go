@@ -3,7 +3,7 @@
 // engine behind the Python curl_cffi project.
 //
 // The preset list, aliases and header sets are generated from curl-impersonate's
-// lib/impersonate.c (see impersonate/upstream/impersonate.c and scripts/). The
+// lib/impersonate.c (see impersonate/upstream/impersonate.c and internal/genpresets). The
 // actual TLS/HTTP2/HTTP3 handshake is performed by the transport layer in the
 // requests package.
 package impersonate

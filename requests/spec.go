@@ -12,7 +12,7 @@ import (
 
 // chromeDefaultCurves and chromeDefaultSigAlgs are the values BoringSSL uses
 // when a Chrome/Edge preset leaves them unspecified. They were read from live
-// ClientHellos captured by scripts/capture_clienthello.py.
+// ClientHellos captured with internal/capturehello.
 var chromeDefaultCurves = []string{"X25519", "P-256", "P-384"}
 
 var chromeDefaultSigAlgs = []string{
@@ -116,7 +116,7 @@ var sigByName = map[string]tls.SignatureScheme{
 // canonicalExtensionOrder is the extension order curl-impersonate's patched
 // BoringSSL emits when a preset does not pin tls_extension_order and does not
 // permute extensions. It was confirmed against live ClientHellos captured by
-// scripts/capture_clienthello.py (chrome99, edge101 and the Safari presets all
+// internal/capturehello (chrome99, edge101 and the Safari presets all
 // reproduce this order once disabled extensions are filtered out).
 //
 // ECH (65037) has no observable position for non-permuting presets, so it sits

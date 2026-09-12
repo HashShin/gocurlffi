@@ -11,7 +11,7 @@ import (
 
 // fingerprint_baseline.json holds the JA3N (normalized), JA4 and Akamai hashes
 // reported by the Python curl_cffi, recorded once with
-// scripts/record_baseline (see README). The live test below compares this
+// (one-off, using the Python curl_cffi; see README). The live test compares this
 // port's fingerprints against that baseline, so no Python is needed to run it.
 const baselinePath = "testdata/fingerprint_baseline.json"
 
