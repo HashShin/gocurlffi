@@ -142,6 +142,48 @@ client: `custom` is accepted where a plain Chrome fingerprint is challenged.
 That is expected, because the browser renders through the same impersonating
 transport, and it is a good check that the two stay consistent.
 
+## Speed against a real Chromium
+
+`scripts/bench_browser.sh` loads the same pages with `gobrowser` and with a
+Chromium CLI (`--headless=new --dump-dom`) and reports wall time and rendered
+bytes. Measured on Termux/arm64 against Chromium 149:
+
+| Page | Chromium | gobrowser | Chromium bytes | gobrowser bytes |
+| --- | --- | --- | --- | --- |
+| `about:blank` | ~0.95 s | - | 40 | - |
+| `quotes.toscrape.com/js/` | 3.7 / 2.6 s | **2.0 / 1.9 s** | 8 987 | 9 005 |
+| `react.dev` | 3.6 / 2.2 s | 3.6 / 3.8 s | 272 527 | 272 744 |
+| `gocomics.com` | 26.1 / 8.0 s | **8.7 / 8.2 s** | 3 078 797 | 1 575 337 |
+| `foodnetwork.com` | 23.5 / 23.5 s | **3.5 / 3.7 s** | 625 985 | 340 452 |
+
+Reading it honestly:
+
+- gobrowser is faster on every page tested, and several times faster on heavy
+  pages, because there is no browser startup (~1 s before Chromium even starts
+  loading) and no per-page process to launch.
+- On `react.dev` the two are level: that much JavaScript interpreted without a
+  JIT costs about what Chromium spends starting up and compiling.
+- Chromium renders **more** bytes on heavy pages (roughly 2x on gocomics). It is
+  a real browser: it runs more scripts to completion and normalizes the DOM. So
+  gobrowser being faster is partly "does less".
+
+Caveats, so the numbers are not over-read:
+
+- Chromium needs a warmed `--user-data-dir` here; its first run with a cold
+  profile hangs. The warmup is untimed, and timed runs hit a URL the profile has
+  not cached, which is the closest match to gobrowser's always-cold behaviour.
+- Chromium is bounded with `--virtual-time-budget` because `--dump-dom` never
+  returns on pages that do not reach network idle. That budget is virtual, not
+  wall-clock, so its time is a floor rather than a full time-to-interactive.
+- Chromium's launcher ignores `SIGTERM`, so the script bounds it with
+  `timeout -k`.
+
+```sh
+bash scripts/bench_browser.sh -n 3
+bash scripts/bench_browser.sh https://your-site.example/
+GOBROWSER_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
+```
+
 ## Checking sites
 
 `scripts/check_sites.sh -B` runs the same site/target matrix with the headless
