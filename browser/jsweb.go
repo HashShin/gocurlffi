@@ -73,6 +73,7 @@ func (e *jsEnv) setupWeb() {
 		return goja.Undefined()
 	})
 	_ = rt.Set("customElements", e.customElementsObject())
+	_ = rt.Set("NodeFilter", e.newNodeFilter())
 }
 
 // newDOMParser implements new DOMParser().parseFromString(html, type).
@@ -609,4 +610,195 @@ func (e *jsEnv) structuredClone(v goja.Value) goja.Value {
 		return v
 	}
 	return res
+}
+
+// --- TreeWalker / NodeFilter ---
+
+// TreeWalker whatToShow bits, matching the DOM.
+const (
+	showElement  = 0x1
+	showText     = 0x4
+	showComment  = 0x80
+	showDocument = 0x100
+)
+
+// newNodeFilter exposes the NodeFilter constants used with TreeWalker.
+func (e *jsEnv) newNodeFilter() *goja.Object {
+	o := e.vm.NewObject()
+	for k, v := range map[string]int{
+		"FILTER_ACCEPT": 1,
+		"FILTER_REJECT": 2,
+		"FILTER_SKIP":   3,
+		"SHOW_ALL":      0xFFFFFFFF,
+		"SHOW_ELEMENT":  showElement,
+		"SHOW_TEXT":     showText,
+		"SHOW_COMMENT":  showComment,
+		"SHOW_DOCUMENT": showDocument,
+	} {
+		_ = o.Set(k, v)
+	}
+	return o
+}
+
+// newTreeWalker implements the navigation methods libraries actually use,
+// most importantly the `while (walker.nextNode())` text-extraction loop.
+func (e *jsEnv) newTreeWalker(rootVal, whatToShow, filterVal goja.Value) *goja.Object {
+	root := e.nodeArg(rootVal)
+	if root == nil {
+		root = e.page.doc
+	}
+	show := int64(0xFFFFFFFF)
+	if whatToShow != nil && !goja.IsUndefined(whatToShow) {
+		show = whatToShow.ToInteger()
+	}
+	var filterFn goja.Callable
+	if fn, ok := goja.AssertFunction(filterVal); ok {
+		filterFn = fn
+	} else if fo, ok := filterVal.(*goja.Object); ok {
+		if fn, ok := goja.AssertFunction(fo.Get("acceptNode")); ok {
+			filterFn = fn
+		}
+	}
+
+	accept := func(n *html.Node) bool {
+		if n == nil {
+			return false
+		}
+		switch n.Type {
+		case html.ElementNode:
+			if isFragment(n) {
+				return false
+			}
+			if show&showElement == 0 {
+				return false
+			}
+		case html.TextNode:
+			if show&showText == 0 {
+				return false
+			}
+		case html.CommentNode:
+			if show&showComment == 0 {
+				return false
+			}
+		case html.DocumentNode:
+			if show&showDocument == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+		if filterFn != nil {
+			res, err := filterFn(goja.Undefined(), e.wrap(n))
+			if err != nil {
+				return false
+			}
+			return res.ToInteger() == 1
+		}
+		return true
+	}
+
+	o := e.vm.NewObject()
+	_ = o.Set("root", e.wrap(root))
+	_ = o.Set("whatToShow", show)
+	current := root
+	_ = o.Set("currentNode", e.wrap(current))
+
+	// documentOrderNext returns the node after n within root's subtree.
+	documentOrderNext := func(n *html.Node) *html.Node {
+		if n == nil {
+			return nil
+		}
+		if n.FirstChild != nil {
+			return n.FirstChild
+		}
+		for cur := n; cur != nil && cur != root; cur = cur.Parent {
+			if cur.NextSibling != nil {
+				return cur.NextSibling
+			}
+		}
+		return nil
+	}
+
+	const maxNodes = 5_000_000
+
+	_ = o.Set("nextNode", func(goja.FunctionCall) goja.Value {
+		n := documentOrderNext(current)
+		for steps := 0; n != nil && steps < maxNodes; steps++ {
+			if accept(n) {
+				current = n
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(n)
+			}
+			n = documentOrderNext(n)
+		}
+		return goja.Null()
+	})
+	_ = o.Set("previousNode", func(goja.FunctionCall) goja.Value {
+		var prevAccepted *html.Node
+		n := documentOrderNext(root)
+		for steps := 0; n != nil && n != current && steps < maxNodes; steps++ {
+			if accept(n) {
+				prevAccepted = n
+			}
+			n = documentOrderNext(n)
+		}
+		if prevAccepted == nil {
+			return goja.Null()
+		}
+		current = prevAccepted
+		_ = o.Set("currentNode", e.wrap(current))
+		return e.wrap(prevAccepted)
+	})
+	_ = o.Set("parentNode", func(goja.FunctionCall) goja.Value {
+		for n := current.Parent; n != nil && n != root; n = n.Parent {
+			if accept(n) {
+				current = n
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(n)
+			}
+		}
+		return goja.Null()
+	})
+	_ = o.Set("firstChild", func(goja.FunctionCall) goja.Value {
+		for c := current.FirstChild; c != nil; c = c.NextSibling {
+			if accept(c) {
+				current = c
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(c)
+			}
+		}
+		return goja.Null()
+	})
+	_ = o.Set("lastChild", func(goja.FunctionCall) goja.Value {
+		for c := current.LastChild; c != nil; c = c.PrevSibling {
+			if accept(c) {
+				current = c
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(c)
+			}
+		}
+		return goja.Null()
+	})
+	_ = o.Set("nextSibling", func(goja.FunctionCall) goja.Value {
+		for c := current.NextSibling; c != nil; c = c.NextSibling {
+			if accept(c) {
+				current = c
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(c)
+			}
+		}
+		return goja.Null()
+	})
+	_ = o.Set("previousSibling", func(goja.FunctionCall) goja.Value {
+		for c := current.PrevSibling; c != nil; c = c.PrevSibling {
+			if accept(c) {
+				current = c
+				_ = o.Set("currentNode", e.wrap(current))
+				return e.wrap(c)
+			}
+		}
+		return goja.Null()
+	})
+	_ = o.Set("filter", filterVal)
+	return o
 }

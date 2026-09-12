@@ -264,6 +264,28 @@ func (e *jsEnv) setupGlobals() {
 		return e.vm.ToValue(true)
 	})
 
+	_ = rt.Set("postMessage", func(call goja.FunctionCall) goja.Value {
+		ev := e.newEvent("message")
+		_ = ev.Set("data", call.Argument(0))
+		_ = ev.Set("origin", argString(call.Argument(1)))
+		_ = ev.Set("source", global)
+		e.dispatchWindow("message", ev)
+		return goja.Undefined()
+	})
+	_ = rt.Set("getSelection", func(goja.FunctionCall) goja.Value {
+		o := e.vm.NewObject()
+		_ = o.Set("rangeCount", 0)
+		_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue("") })
+		_ = o.Set("getRangeAt", func(goja.FunctionCall) goja.Value { return goja.Null() })
+		_ = o.Set("removeAllRanges", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		_ = o.Set("addRange", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		_ = o.Set("collapse", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		_ = o.Set("selectAllChildren", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		return o
+	})
+	_ = rt.Set("frames", global)
+	_ = rt.Set("length", 0)
+
 	_ = rt.Set("alert", func(call goja.FunctionCall) goja.Value { return goja.Undefined() })
 	_ = rt.Set("confirm", func(call goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
 	_ = rt.Set("prompt", func(call goja.FunctionCall) goja.Value { return goja.Null() })

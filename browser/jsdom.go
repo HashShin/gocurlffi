@@ -311,6 +311,25 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.accessor(p, "dataset", func(call goja.FunctionCall) goja.Value {
 		return e.datasetObject(e.thisNode(call))
 	}, nil)
+	// Frame accessors. There is no separate browsing context, so an iframe
+	// reports the page window/document. This keeps scripts that reach into a
+	// frame from throwing; it also means contentDocument is always
+	// same-origin, which only matters for isolation, not for scraping.
+	e.accessor(p, "contentWindow", func(call goja.FunctionCall) goja.Value {
+		n := e.thisNode(call)
+		if n == nil || n.Data != "iframe" {
+			return goja.Undefined()
+		}
+		return e.vm.GlobalObject()
+	}, nil)
+	e.accessor(p, "contentDocument", func(call goja.FunctionCall) goja.Value {
+		n := e.thisNode(call)
+		if n == nil || n.Data != "iframe" {
+			return goja.Undefined()
+		}
+		return e.wrap(e.page.doc)
+	}, nil)
+
 	e.accessor(p, "children", func(call goja.FunctionCall) goja.Value {
 		return e.nodeList(elementChildren(e.thisNode(call)))
 	}, nil)
@@ -470,6 +489,11 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.method(p, "matches", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue(matches(e.thisNode(call), argString(call.Argument(0))))
 	})
+	for _, alias := range []string{"webkitMatchesSelector", "msMatchesSelector", "mozMatchesSelector"} {
+		e.method(p, alias, func(call goja.FunctionCall) goja.Value {
+			return e.vm.ToValue(matches(e.thisNode(call), argString(call.Argument(0))))
+		})
+	}
 	e.method(p, "closest", func(call goja.FunctionCall) goja.Value {
 		sel := argString(call.Argument(0))
 		for n := e.thisNode(call); n != nil; n = n.Parent {
@@ -709,6 +733,15 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.wrap(n)
 	})
 	e.method(p, "elementFromPoint", func(goja.FunctionCall) goja.Value { return goja.Null() })
+	e.method(p, "open", func(call goja.FunctionCall) goja.Value { return e.wrap(e.docOf(call)) })
+	e.method(p, "close", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	e.method(p, "hasFocus", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+	e.method(p, "createTreeWalker", func(call goja.FunctionCall) goja.Value {
+		return e.newTreeWalker(call.Argument(0), call.Argument(1), call.Argument(2))
+	})
+	e.method(p, "createNodeIterator", func(call goja.FunctionCall) goja.Value {
+		return e.newTreeWalker(call.Argument(0), call.Argument(1), call.Argument(2))
+	})
 	e.method(p, "elementsFromPoint", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
 
 	e.accessor(p, "currentScript", func(call goja.FunctionCall) goja.Value {
@@ -772,6 +805,12 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 	e.accessor(p, "compatMode", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue("CSS1Compat")
 	}, nil)
+	e.accessor(p, "domain", func(call goja.FunctionCall) goja.Value {
+		return e.vm.ToValue(parseLocation(e.page.URL).hostname)
+	}, func(call goja.FunctionCall) goja.Value {
+		// Setting the domain is accepted and ignored; we never relax origin.
+		return goja.Undefined()
+	})
 	e.accessor(p, "implementation", func(call goja.FunctionCall) goja.Value {
 		return e.newImplementation()
 	}, nil)

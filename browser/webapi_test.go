@@ -127,3 +127,97 @@ func BenchmarkQuerySelectorAll(b *testing.B) {
 		}
 	}
 }
+
+func TestTreeWalker(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body><div id="a" class="x"><p id="b">one</p><span id="c">two</span></div>
+<div id="d"><b id="e">three</b></div></body></html>`, "https://example.test/")
+
+	cases := []struct{ expr, want string }{
+		// all elements, in document order
+		{`(function(){
+			var w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+			var ids = [];
+			while (w.nextNode()) { if (w.currentNode.id) ids.push(w.currentNode.id); }
+			return ids.join(',');
+		})()`, "a,b,c,d,e"},
+		// only text nodes
+		{`(function(){
+			var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			var out = [];
+			while (w.nextNode()) { var t = w.currentNode.data.trim(); if (t) out.push(t); }
+			return out.join('|');
+		})()`, "one|two|three"},
+		// filter function: only elements with class x
+		{`(function(){
+			var w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+				acceptNode: function (n) { return n.className === 'x' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; }
+			});
+			var out = [];
+			while (w.nextNode()) { out.push(w.currentNode.id); }
+			return out.join(',');
+		})()`, "a"},
+		// parentNode respects whatToShow: with SHOW_ELEMENT, #b's parent is #a
+		{`(function(){
+			var w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+			while (w.nextNode()) { if (w.currentNode.id === 'b') break; }
+			return w.parentNode().id;
+		})()`, "a"},
+		// with SHOW_TEXT, an element ancestor is not "visible", so this is null
+		{`(function(){
+			var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			w.nextNode();
+			return String(w.parentNode());
+		})()`, "null"},
+		{`document.domain`, "example.test"},
+		{`document.hasFocus()`, "true"},
+		{`document.body.webkitMatchesSelector('body')`, "true"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Fatalf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+}
+
+func TestPostMessage(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body><div id="o"></div>
+<script>
+  window.addEventListener('message', function (e) {
+    document.getElementById('o').setAttribute('data-msg', e.data.hello + '@' + e.origin);
+  });
+  window.postMessage({hello: 'world'}, 'https://example.test');
+</script></body></html>`, "https://example.test/")
+	if got := Attr(p.Query("#o"), "data-msg"); got != "world@https://example.test" {
+		t.Fatalf("postMessage not delivered: %q", got)
+	}
+}
+
+func TestFrameAccessors(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body><div id="plain"></div><iframe id="f"></iframe></body></html>`, "https://example.test/")
+
+	cases := []struct{ expr, want string }{
+		{`document.getElementById('f').contentDocument === document ? 'same' : 'other'`, "same"},
+		{`typeof document.getElementById('f').contentWindow.document`, "object"},
+		// non-frame elements do not expose the property
+		{`String(document.getElementById('plain').contentDocument)`, "undefined"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Fatalf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+}
