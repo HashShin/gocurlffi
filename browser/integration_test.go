@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/text/encoding/japanese"
@@ -173,5 +174,40 @@ func TestCharsetDecoding(t *testing.T) {
 		if got := p.Text(); !strings.Contains(got, want) {
 			t.Fatalf("%s: decoded text %q does not contain %q", path, got, want)
 		}
+	}
+}
+
+// Reloading a page must run its external scripts again.
+func TestReloadRunsExternalScripts(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ext.js" {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte(`document.body.setAttribute('data-ran', 'yes');`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><script src="/ext.js"></script></body></html>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if Attr(p.Query("body"), "data-ran") != "yes" {
+		t.Fatalf("script did not run on first load")
+	}
+	if err := p.Load(srv.URL + "/"); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("external script fetched %d times, want 2", got)
+	}
+	if Attr(p.Query("body"), "data-ran") != "yes" {
+		t.Fatalf("script did not run on reload")
 	}
 }

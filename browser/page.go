@@ -166,6 +166,9 @@ func (p *Page) SetContent(source, url string) error {
 // run sets up the JS environment and executes the document lifecycle.
 func (p *Page) run() error {
 	p.readyState = "loading"
+	// A fresh document must reload its scripts; otherwise a second Load of
+	// the same page would skip every external script.
+	p.loadedScripts = map[string]bool{}
 	if !p.browser.opts.scriptsEnabled() {
 		p.readyState = "complete"
 		return nil
