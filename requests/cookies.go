@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type Cookie struct {
 // Cookies is an ordered cookie collection. It mirrors curl_cffi's Cookies
 // mapping (name -> attributes) closely enough for session handling.
 type Cookies struct {
+	mu    sync.RWMutex
 	items []Cookie
 }
 
@@ -44,7 +46,9 @@ func (c *Cookies) Update(other CookieTypes) {
 		if v == nil {
 			return
 		}
-		for _, ck := range v.items {
+		// Snapshot under the source's lock, then apply one by one so the two
+		// jars are never locked at the same time.
+		for _, ck := range v.Items() {
 			c.SetCookie(ck)
 		}
 	case Cookies:
@@ -78,6 +82,8 @@ func (c *Cookies) Set(name, value string) {
 
 // SetCookie inserts or replaces a cookie, matching on name+domain+path.
 func (c *Cookies) SetCookie(ck Cookie) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if ck.Path == "" {
 		ck.Path = "/"
 	}
@@ -92,6 +98,8 @@ func (c *Cookies) SetCookie(ck Cookie) {
 
 // Get returns the raw value of a cookie by name.
 func (c *Cookies) Get(name string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	for _, it := range c.items {
 		if it.Name == name {
 			return it.Value, true
@@ -102,9 +110,12 @@ func (c *Cookies) Get(name string) (string, bool) {
 
 // GetCookie returns the full cookie by name.
 func (c *Cookies) GetCookie(name string) (*Cookie, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	for i := range c.items {
 		if c.items[i].Name == name {
-			return &c.items[i], true
+			ck := c.items[i]
+			return &ck, true
 		}
 	}
 	return nil, false
@@ -112,6 +123,8 @@ func (c *Cookies) GetCookie(name string) (*Cookie, bool) {
 
 // Del removes a cookie by name.
 func (c *Cookies) Del(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	dst := c.items[:0]
 	for _, it := range c.items {
 		if it.Name != name {
@@ -123,14 +136,22 @@ func (c *Cookies) Del(name string) {
 
 // Items returns a copy of all cookies in insertion order.
 func (c *Cookies) Items() []Cookie {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return append([]Cookie(nil), c.items...)
 }
 
 // Len returns the cookie count.
-func (c *Cookies) Len() int { return len(c.items) }
+func (c *Cookies) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.items)
+}
 
 // Map returns name -> value for every cookie.
 func (c *Cookies) Map() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make(map[string]string, len(c.items))
 	for _, it := range c.items {
 		out[it.Name] = it.Value
@@ -140,6 +161,8 @@ func (c *Cookies) Map() map[string]string {
 
 // matching returns the cookies that should be sent to u.
 func (c *Cookies) matching(u *url.URL) []Cookie {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	host := u.Hostname()
 	path := u.EscapedPath()
 	if path == "" {
@@ -190,6 +213,8 @@ func pathMatch(reqPath, cookiePath string) bool {
 
 // String renders the cookies as a "a=1; b=2" header value.
 func (c *Cookies) String() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	parts := make([]string, 0, len(c.items))
 	for _, it := range c.items {
 		parts = append(parts, it.Name+"="+it.Value)

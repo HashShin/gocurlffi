@@ -153,6 +153,11 @@ it is enough.
 - All network traffic, including `fetch`, `XMLHttpRequest` and external
   scripts, goes through one shared session, so a browser-like flow works
   across hosts (see the note on the ClientHello fix in the repository README).
+- One `Browser` may be used from several goroutines: the session and its
+  cookie jar are synchronized, so pages can be crawled in parallel. A single
+  `Page` is not safe for concurrent use. The race detector is unavailable on
+  android/arm64, so this is covered by construction plus a concurrency test
+  (`TestConcurrentPages`) run repeatedly, not by `-race`.
 
 ### CLI flags
 
