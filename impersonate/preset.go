@@ -22,8 +22,7 @@ type Header struct {
 	Value string
 }
 
-//go:generate python3 ../scripts/gen_presets.py
-//go:generate python3 ../scripts/gen_go.py
+//go:generate go run ../internal/genpresets -root ..
 
 // Preset mirrors a single struct impersonate_opts entry from curl-impersonate.
 // Slices are pre-split from the colon/comma separated C strings for convenience.

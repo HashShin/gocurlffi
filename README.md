@@ -48,12 +48,13 @@ HTTP/2 header order:
 41/41 presets: exact match (0 mismatches)
 ```
 
-`scripts/compare_fingerprints.py` runs the comparison, and
-`scripts/parity_check.py` compares HTTP status codes against curl_cffi across a
-set of real sites. Presets that send GREASE ECH randomise the ECH payload
-length, which makes BoringSSL add the padding extension only when the
-ClientHello is short; the comparison therefore ignores padding, exactly as the
-behaviour varies in curl_cffi too.
+`make test-live` runs `TestLiveFingerprintBaseline`, which compares this port's
+live fingerprints against `requests/testdata/fingerprint_baseline.json`, a
+baseline recorded once from the Python curl_cffi. No Python is needed to run
+it. Presets that send GREASE ECH randomise the ECH payload length, which makes
+BoringSSL add the padding extension only when the ClientHello is short; the
+comparison therefore ignores padding, exactly as the behaviour varies in
+curl_cffi too.
 
 Note that heavily protected sites still need more than a matching fingerprint,
 and their decisions are stateful. Against `www.adidas.co.uk/api/...` the *same*
@@ -203,10 +204,15 @@ The vendored upstream source lives in `impersonate/upstream/impersonate.c`. To
 refresh the generated Go data:
 
 ```sh
-make preprocess   # parse impersonate.c -> presets.json -> presets_gen.go
+make preprocess   # internal/genpresets: parse impersonate.c -> presets_gen.go
 make test         # unit tests
-make test-live    # + live fingerprint comparison against curl_cffi
+make test-live    # live fingerprints vs the recorded curl_cffi baseline
+make capture      # capture a ClientHello with internal/capturehello
 ```
+
+Everything in the build and test path is Go. The only optional non-Go pieces
+are `scripts/check_sites.sh` (bash) and the one-off recording of the
+fingerprint baseline, which used the Python curl_cffi as the reference.
 
 ## Limitations
 

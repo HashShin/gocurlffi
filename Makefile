@@ -2,20 +2,18 @@
 
 BIN := bin/gocurlffi
 
-.PHONY: all build preprocess gen fmt vet test test-live lint clean
+.PHONY: all build preprocess gen fmt vet test test-live sites capture lint clean
 
 all: build
 
 build:
 	go build -trimpath -o $(BIN) ./cmd/gocurlffi
 
-# Regenerate impersonate/presets.json and presets_gen.go from the vendored
-# curl-impersonate source.
+# Regenerate impersonate/presets_gen.go from the vendored curl-impersonate
+# source. Pure Go, no Python.
 preprocess: gen
 gen:
-	python3 scripts/gen_presets.py
-	python3 scripts/gen_go.py
-	gofmt -w impersonate/presets_gen.go
+	go run ./internal/genpresets
 
 fmt:
 	gofmt -w .
@@ -26,10 +24,13 @@ vet:
 test:
 	go test ./...
 
-# Live fingerprint comparison against the installed curl_cffi. Requires
-# python3 with curl_cffi installed and network access.
-test-live: build
-	GOCURLFFI_BIN=$(BIN) python3 scripts/compare_fingerprints.py
+# Live fingerprint check against the recorded curl_cffi baseline (network).
+test-live:
+	go test ./requests -run TestLiveFingerprintBaseline -count=1 -v
+
+# Capture the ClientHello sent by an external command (pure Go).
+capture:
+	go run ./internal/capturehello 'curl -s --http2 -k -o /dev/null %s' 
 
 # Status matrix for a list of sites across impersonation targets.
 sites: build
