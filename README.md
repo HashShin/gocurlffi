@@ -182,6 +182,21 @@ make sites
 Defaults to these sites: `marriott.com`, `ritzcarlton.com`, `foodnetwork.com`,
 `gocomics.com`, `bsky.app`, `mstdn.social`, `ubiqueros.com`.
 
+Observed results (marriott is the discriminating site):
+
+| target | sites passed | marriott |
+| --- | --- | --- |
+| `custom` | 7/7 | 200 (3/3 runs) |
+| `chrome131_android`, `chrome99_android` | 6-7/7 | 403 (3/3 runs) |
+| `chrome150`, `safari260_ios` | 6-7/7 | 200/403 (flaps) |
+| `chrome131`, `safari2601`, `firefox147`, `edge101`, `tor145` | 6/7 | 403 |
+| `native` | 5/7 | 403 |
+| `curl` | 4/7 | 403 |
+
+`custom` is the most reliable target for Akamai-style sites: it is the only one
+that stayed 200 on marriott across repeated runs, while a plain browser
+fingerprint is challenged there.
+
 ## Regenerating the presets
 
 The vendored upstream source lives in `impersonate/upstream/impersonate.c`. To
