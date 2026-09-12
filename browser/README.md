@@ -184,7 +184,13 @@ it is enough.
   is the source material for behaviour, not a build input.
 - Scripts run in the same goroutine as `Open`. A runaway script is bounded by
   `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
-  bounded by `Options.LoadTimeout` (default 30s).
+  bounded by `Options.LoadTimeout` (default 30s). After `DOMContentLoaded` and
+  again after `load` the loader waits up to `Options.TimerBudget` (default 2s)
+  for pending timers, so a timer-driven page can finish rendering.
+- Rendering is much slower than the plain HTTP client by design: it issues one
+  request per script (a large site can be 30-40), executes them in a pure-Go
+  interpreter with no JIT, and re-serializes the DOM. Use `gocurlffi` when the
+  HTML is server-rendered and `gobrowser` only when scripts are required.
 - All network traffic, including `fetch`, `XMLHttpRequest` and external
   scripts, goes through one shared session, so a browser-like flow works
   across hosts (see the note on the ClientHello fix in the repository README).
@@ -205,6 +211,7 @@ gobrowser get URL \
   --wait SELECTOR       # wait for a selector before extracting
   --timeout 30s         # per-request timeout
   --load-timeout 30s    # script-loading budget per page
+  --timer-budget 2s     # wait for pending timers after load (lower = faster)
   --no-js               # disable JavaScript
   --console             # print console.* to stderr
   --status              # print HTTP status to stderr

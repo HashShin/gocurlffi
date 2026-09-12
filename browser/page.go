@@ -114,6 +114,14 @@ func (p *Page) debugf(format string, args ...any) {
 	}
 }
 
+// timerWait returns how long the loader may wait for pending timers.
+func (p *Page) timerWait() time.Duration {
+	if p.browser != nil && p.browser.opts.TimerBudget > 0 {
+		return p.browser.opts.TimerBudget
+	}
+	return defaultTimerBudget
+}
+
 func (p *Page) maxScriptTime() time.Duration {
 	if p.browser != nil && p.browser.opts.JavaScriptTimeout > 0 {
 		return p.browser.opts.JavaScriptTimeout

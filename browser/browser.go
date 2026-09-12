@@ -55,6 +55,11 @@ type Options struct {
 	// once the budget is spent, so a page always finishes loading.
 	LoadTimeout time.Duration
 
+	// TimerBudget bounds how long the loader waits for pending timers after
+	// DOMContentLoaded and again after load. Default 2s each. Lower it to
+	// finish sooner at the cost of missing content rendered by timers.
+	TimerBudget time.Duration
+
 	// Console receives console.* output. nil discards it.
 	Console func(level, message string)
 

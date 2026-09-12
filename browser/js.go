@@ -519,14 +519,14 @@ func (e *jsEnv) clearTimer(id string) {
 	}
 }
 
-// timerBudget bounds how long runTimers will wait for future timers, so a
+// defaultTimerBudget bounds how long runTimers waits for future timers, so a
 // page that schedules a long setTimeout does not stall the load.
-const timerBudget = 2 * time.Second
+const defaultTimerBudget = 2 * time.Second
 
 // runTimers executes pending timers, waiting for ones that are due within the
 // budget, up to maxRounds callbacks.
 func (e *jsEnv) runTimers(maxRounds int) {
-	deadline := time.Now().Add(timerBudget)
+	deadline := time.Now().Add(e.page.timerWait())
 	for round := 0; round < maxRounds; round++ {
 		var due *jsTimer
 		for _, t := range e.timers {
