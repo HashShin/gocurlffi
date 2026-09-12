@@ -20,7 +20,7 @@ func (p *Page) Links() []Link {
 		if href == "" || strings.HasPrefix(href, "javascript:") {
 			continue
 		}
-		out = append(out, Link{Text: strings.TrimSpace(textContent(a)), Href: resolveURL(p.URL, href)})
+		out = append(out, Link{Text: strings.TrimSpace(textContent(a)), Href: resolveURL(p.baseURL(), href)})
 	}
 	return out
 }
@@ -31,7 +31,7 @@ func Attr(n *html.Node, key string) string { return attrOf(n, key) }
 // Markdown renders the current DOM as markdown, useful for feeding an LLM.
 func (p *Page) Markdown() string {
 	var b strings.Builder
-	renderMarkdown(&b, p.doc, p.URL)
+	renderMarkdown(&b, p.doc, p.baseURL())
 	return strings.TrimSpace(b.String())
 }
 

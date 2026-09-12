@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	"gocurlffi/requests"
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/charset"
+
+	"gocurlffi/requests"
 )
 
 // defaultUserAgent mirrors the Android Chrome profile used by the "custom"
@@ -132,7 +134,17 @@ func (p *Page) load(rawURL string, headers map[string]string) error {
 	}
 	p.resp = resp
 	p.URL = resp.URL
-	doc, perr := html.Parse(bytes.NewReader(resp.Content))
+	contentType := ""
+	if resp.Headers != nil {
+		contentType = resp.Headers.Get("Content-Type")
+	}
+	// charset.NewReader honours the Content-Type charset, a BOM and <meta
+	// charset>, transcoding to UTF-8 so non-UTF-8 pages are not mojibake.
+	body, berr := charset.NewReader(bytes.NewReader(resp.Content), contentType)
+	if berr != nil {
+		body = bytes.NewReader(resp.Content)
+	}
+	doc, perr := html.Parse(body)
 	if perr != nil {
 		return perr
 	}
@@ -223,7 +235,7 @@ func (p *Page) runExternalScript(el *html.Node, src string) {
 		p.log("warn", "page load budget exceeded; skipped "+src)
 		return
 	}
-	abs := resolveURL(p.URL, src)
+	abs := resolveURL(p.baseURL(), src)
 	if p.loadedScripts[abs] {
 		return
 	}
@@ -252,6 +264,22 @@ func (p *Page) scripts() []*html.Node {
 func attrOf(n *html.Node, key string) string {
 	v, _ := getAttr(n, key)
 	return v
+}
+
+// baseURL returns the document base URL: the first <base href> resolved
+// against the document URL, or the document URL itself.
+func (p *Page) baseURL() string {
+	href := ""
+	for _, b := range getElementsByTagName(p.doc, "base") {
+		if v, ok := getAttr(b, "href"); ok && v != "" {
+			href = v
+			break
+		}
+	}
+	if href == "" {
+		return p.URL
+	}
+	return resolveURL(p.URL, href)
 }
 
 // documentWrite implements document.write(ln): parse and append to the body.

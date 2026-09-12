@@ -68,7 +68,7 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 		}
 	}
 
-	rawURL = resolveURL(e.page.URL, rawURL)
+	rawURL = resolveURL(e.page.baseURL(), rawURL)
 	resp, err := e.doRequest(method, rawURL, headers, body)
 	if err != nil {
 		return e.rejectedPromise(err)
@@ -191,7 +191,7 @@ func (e *jsEnv) newXHR() *goja.Object {
 
 	_ = o.Set("open", func(call goja.FunctionCall) goja.Value {
 		method = strings.ToUpper(argString(call.Argument(0)))
-		url = resolveURL(e.page.URL, argString(call.Argument(1)))
+		url = resolveURL(e.page.baseURL(), argString(call.Argument(1)))
 		_ = o.Set("readyState", 1)
 		fire("readystatechange")
 		return goja.Undefined()

@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 // A browser is a shared context: cookies set by a response, and cookies set by
@@ -88,5 +91,87 @@ func TestConcurrentPages(t *testing.T) {
 	}
 	if b.sess.Cookies().Len() != n {
 		t.Fatalf("cookie jar has %d cookies, want %d", b.sess.Cookies().Len(), n)
+	}
+}
+
+// A <base href> changes how relative URLs resolve for links, element
+// properties and fetch.
+func TestBaseHref(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Path {
+		case "/root/":
+			fmt.Fprintf(w, `<html><head><base href="%s/root/"></head><body>
+<div id="app">loading</div><a href="/one">rel</a>
+<script>
+  fetch('data').then(function (r) { return r.text(); }).then(function (t) {
+    document.getElementById('app').textContent = t;
+  });
+</script></body></html>`, srvURL(r))
+		case "/root/data":
+			_, _ = w.Write([]byte("from-base"))
+		default:
+			_, _ = w.Write([]byte("wrong"))
+		}
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/root/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// fetch('data') must resolve against the base, not the document URL
+	if got := textContent(p.Query("#app")); got != "from-base" {
+		t.Fatalf("fetch did not use base href: app=%q", got)
+	}
+	links := p.Links()
+	if len(links) != 1 || links[0].Href != srv.URL+"/one" {
+		t.Fatalf("link href = %+v, want %s/one", links, srv.URL)
+	}
+	v, _ := p.Eval("document.querySelector('a').href")
+	if v.String() != srv.URL+"/one" {
+		t.Fatalf("element.href = %q, want %s/one", v.String(), srv.URL)
+	}
+}
+
+func srvURL(r *http.Request) string {
+	return "http://" + r.Host
+}
+
+// Non-UTF-8 documents must be decoded, whether the charset comes from the
+// Content-Type header or a <meta> tag.
+func TestCharsetDecoding(t *testing.T) {
+	const want = "こんにちは世界"
+	enc := japanese.ShiftJIS.NewEncoder()
+	body, _, err := transform.Bytes(enc, []byte("<html><body><p>"+want+"</p></body></html>"))
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/meta" {
+			w.Header().Set("Content-Type", "text/html")
+			head := []byte("<html><head><meta charset=\"shift_jis\"></head><body><p>" + want + "</p></body></html>")
+			encBody, _, _ := transform.Bytes(enc, head)
+			_, _ = w.Write(encBody)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=shift_jis")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	for _, path := range []string{"/header", "/meta"} {
+		p, err := b.Open(srv.URL + path)
+		if err != nil {
+			t.Fatalf("%s: open: %v", path, err)
+		}
+		if got := p.Text(); !strings.Contains(got, want) {
+			t.Fatalf("%s: decoded text %q does not contain %q", path, got, want)
+		}
 	}
 }

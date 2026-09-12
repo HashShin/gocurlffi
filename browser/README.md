@@ -67,6 +67,10 @@ make gobrowser
 
 ## What works
 
+- Document decoding: the Content-Type charset, a BOM or `<meta charset>` is
+  honoured (via `x/net/html/charset`), so non-UTF-8 pages are not mojibake.
+  A `<base href>` sets the base for relative URLs, used by script `src`,
+  `href`/`src` properties, `fetch`, `XMLHttpRequest`, links and markdown.
 - HTML5 parsing and a mutable DOM: `createElement`, `appendChild`,
   `insertBefore`, `innerHTML`/`outerHTML`, `textContent`, attributes,
   `classList`, `dataset`, `style`, `cloneNode`.

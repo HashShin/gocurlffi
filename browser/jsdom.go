@@ -564,13 +564,16 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 			if n == nil || n.Type != html.ElementNode {
 				return e.vm.ToValue("")
 			}
+			// href/src are resolved against the document base URL, which is
+			// the <base href> when present.
+			if prop == "href" || prop == "src" {
+				if v, ok := getAttr(n, prop); ok && v != "" {
+					return e.vm.ToValue(resolveURL(e.page.baseURL(), v))
+				}
+				return e.vm.ToValue("")
+			}
 			if v, ok := getAttr(n, prop); ok {
 				return e.vm.ToValue(v)
-			}
-			if prop == "href" || prop == "src" {
-				if v, ok := getAttr(n, prop); ok {
-					return e.vm.ToValue(resolveURL(e.page.URL, v))
-				}
 			}
 			if prop == "value" && n.Data == "textarea" {
 				return e.vm.ToValue(textContent(n))
