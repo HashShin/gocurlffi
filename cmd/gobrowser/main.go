@@ -57,6 +57,7 @@ flags:
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
+      --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
 }
