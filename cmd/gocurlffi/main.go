@@ -31,7 +31,7 @@ Methods:
   get, post, put, patch, delete, head, options, trace
 
 Flags:
-  -i, --impersonate NAME   browser to impersonate (default: none)
+  -i, --impersonate NAME   browser to impersonate, or "native"/"curl" (default: native)
   -H, --header "K: V"      add a request header (repeatable)
   -P, --param "k=v"        add a query parameter (repeatable)
   -d, --data BODY          request body (string, @file, or key=value pairs)

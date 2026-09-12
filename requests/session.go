@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	tls_client "github.com/bogdanfinn/tls-client"
-
 	"gocurlffi/impersonate"
 )
 
@@ -22,7 +20,7 @@ type Session struct {
 	mu      sync.Mutex
 	cfg     config
 	jar     *Cookies
-	clients map[clientKey]tls_client.HttpClient
+	clients map[clientKey]httpDoer
 	closed  bool
 }
 
@@ -36,7 +34,7 @@ func NewSession(opts ...Option) *Session {
 	s := &Session{
 		cfg:     cfg,
 		jar:     NewCookies(nil),
-		clients: map[clientKey]tls_client.HttpClient{},
+		clients: map[clientKey]httpDoer{},
 	}
 	// Cookies passed to the session constructor go into the jar.
 	s.jar.Update(cfg.cookies)
@@ -67,7 +65,7 @@ func (s *Session) Close() {
 	for _, c := range s.clients {
 		c.CloseIdleConnections()
 	}
-	s.clients = map[clientKey]tls_client.HttpClient{}
+	s.clients = map[clientKey]httpDoer{}
 }
 
 // Cookies returns the live session cookie jar.
@@ -116,7 +114,7 @@ func (s *Session) Request(method, rawURL string, opts ...Option) (*Response, err
 	return nil, lastErr
 }
 
-func (s *Session) getClient(key clientKey, cfg *config) (tls_client.HttpClient, error) {
+func (s *Session) getClient(key clientKey, cfg *config) (httpDoer, error) {
 	s.mu.Lock()
 	if c, ok := s.clients[key]; ok {
 		s.mu.Unlock()
@@ -135,7 +133,7 @@ func (s *Session) getClient(key clientKey, cfg *config) (tls_client.HttpClient, 
 
 func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, error) {
 	var preset *impersonate.Preset
-	if cfg.impersonate != "" {
+	if !isNativeImpersonation(cfg.impersonate) && !isCurlImpersonation(cfg.impersonate) {
 		p, err := impersonate.Get(cfg.impersonate)
 		if err != nil {
 			return nil, &ImpersonateError{newError(err.Error(), 0, nil)}
@@ -157,7 +155,7 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 	// Browsers send Accept-Encoding as part of their header set, which keeps
 	// it in the fingerprint position; only add the libcurl default when the
 	// user did not choose one and no preset supplied it.
-	if !cfg.acceptEncodingSet && !baseHeaders.Has("Accept-Encoding") {
+	if !cfg.acceptEncodingSet && !isCurlImpersonation(cfg.impersonate) && !baseHeaders.Has("Accept-Encoding") {
 		baseHeaders.Set("Accept-Encoding", "gzip, deflate, br")
 	}
 

@@ -55,11 +55,30 @@ length, which makes BoringSSL add the padding extension only when the
 ClientHello is short; the comparison therefore ignores padding, exactly as the
 behaviour varies in curl_cffi too.
 
-Note that heavily protected sites still need more than a matching fingerprint.
-For example `www.adidas.co.uk` returns 403 to curl_cffi, to a plain `curl` with
-a Chrome user agent, and to this client, while `www.adidas.co.uk/robots.txt`
-returns 200: Akamai's bot rules on that path require the JavaScript sensor
-(and/or a less suspicious IP), which no HTTP-only client can satisfy.
+Note that heavily protected sites still need more than a matching fingerprint,
+and their decisions are stateful. `www.adidas.co.uk/api/...` returned 404 to
+`curl` for a while and then started returning 403 to `curl`, plain Go, curl_cffi
+and this client alike; the block moved with the IP/rate state, not the client.
+When such a site prefers a non-browser client, use one of the two
+non-impersonating targets below.
+
+## Impersonation targets
+
+Besides the browser presets there are two non-browser targets:
+
+- `native` (also `none`, `go`, or simply no impersonation): Go's own TLS and
+  HTTP stack, plus the default `Accept-Encoding`. This matches curl_cffi's
+  behaviour when no `impersonate` is set.
+- `curl`: reproduces the system curl's OpenSSL 3.x ClientHello and its HTTP/2
+  settings exactly. Its JA4 and Akamai hash are identical to curl's
+  (`t13d3013h2_1d37bd780c83_8537cf56674e`, `3:100;4:65536;2:0|1048510465|0|m,s,a,p`),
+  which is useful for APIs that allow a generic curl-like client but challenge
+  browser fingerprints.
+
+```sh
+gocurlffi get https://example.com/api --impersonate curl
+gocurlffi get https://example.com/api -i native
+```
 
 ## Packages
 

@@ -102,10 +102,34 @@ func effectiveProxy(cfg *config) string {
 
 var noopLogger = tls_client.NewNoopLogger()
 
-// newTransportClient builds (or returns a cached) tls_client transport.
-func newTransportClient(cfg *config) (tls_client.HttpClient, error) {
+// isNativeImpersonation reports whether the config requests the non-browser
+// (Go) transport. An empty name means no impersonation, which mirrors
+// curl_cffi's behaviour of using libcurl's default (non-browser) TLS stack.
+func isNativeImpersonation(name string) bool {
+	switch strings.ToLower(name) {
+	case "", "native", "none", "go":
+		return true
+	}
+	return false
+}
+
+// newTransportClient builds a transport for the given config.
+func newTransportClient(cfg *config) (httpDoer, error) {
+	if isNativeImpersonation(cfg.impersonate) {
+		return newNativeClient(
+			normalizeHTTPVersion(cfg.httpVersion) == "v1",
+			!cfg.verify,
+			effectiveProxy(cfg),
+			cfg.interfaceName,
+		)
+	}
+
 	profileName := "chrome_150"
 	var preset *impersonate.Preset
+	if isCurlImpersonation(cfg.impersonate) {
+		base := profiles.MappedTLSClients["chrome_150"]
+		return newTLSClient(cfg, curlClientProfile(base))
+	}
 	if cfg.impersonate != "" {
 		p, err := impersonate.Get(cfg.impersonate)
 		if err != nil {
@@ -129,6 +153,11 @@ func newTransportClient(cfg *config) (tls_client.HttpClient, error) {
 	// pseudo header order and header priority match curl-impersonate exactly.
 	base = profileForPreset(preset, base)
 
+	return newTLSClient(cfg, base)
+}
+
+// newTLSClient builds a tls-client transport around a ClientProfile.
+func newTLSClient(cfg *config, base profiles.ClientProfile) (httpDoer, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithClientProfile(base),
 		tls_client.WithNotFollowRedirects(),

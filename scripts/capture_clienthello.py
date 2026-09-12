@@ -76,6 +76,8 @@ def parse_client_hello(data: bytes) -> dict:
             elen = int.from_bytes(body[p + 2:p + 4], "big")
             edata = body[p + 4:p + 4 + elen]
             exts.append(etype)
+            if os.environ.get("CAPTURE_HEX"):
+                print(f"    ext {etype}: {edata.hex()}")
             if etype == 10 and len(edata) >= 2:
                 n = int.from_bytes(edata[0:2], "big")
                 curves = [
@@ -102,15 +104,10 @@ def parse_client_hello(data: bytes) -> dict:
     }
 
 
-def capture(impersonate: str) -> dict | None:
+def capture_with_runner(runner) -> dict | None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        srv.bind(("127.0.0.1", 0))
-        host = "localhost"
-    except OSError:
-        srv.bind(("::", 0))
-        host = "localhost"
+    srv.bind(("127.0.0.1", 0))
     srv.listen(1)
     port = srv.getsockname()[1]
     captured: dict = {}
@@ -124,7 +121,32 @@ def capture(impersonate: str) -> dict | None:
 
     t = threading.Thread(target=serve, daemon=True)
     t.start()
+    runner(port)
+    t.join(timeout=6)
+    srv.close()
+    raw = captured.get("raw")
+    if not raw:
+        return None
+    return parse_client_hello(raw)
 
+
+def capture(impersonate: str) -> dict | None:
+    if impersonate == "curl":
+        return capture_with_runner(_run_curl)
+    return capture_with_runner(lambda port: _run_curl_cffi(impersonate, port))
+
+
+def _run_curl(port: int) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["curl", "-s", "--http2", "-k", "-o", os.devnull, f"https://localhost:{port}/"],
+        capture_output=True,
+        timeout=8,
+    )
+
+
+def _run_curl_cffi(impersonate: str, port: int) -> None:
     from curl_cffi import requests
 
     try:
@@ -136,12 +158,6 @@ def capture(impersonate: str) -> dict | None:
         )
     except Exception:
         pass
-    t.join(timeout=6)
-    srv.close()
-    raw = captured.get("raw")
-    if not raw:
-        return None
-    return parse_client_hello(raw)
 
 
 def main() -> int:
