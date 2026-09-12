@@ -3,6 +3,7 @@ package browser
 import (
 	"bytes"
 	"strings"
+	"sync"
 
 	"github.com/andybalholm/cascadia"
 	"golang.org/x/net/html"
@@ -289,9 +290,41 @@ func createElement(tag string) *html.Node {
 
 // --- Selector helpers (cascadia) ---
 
-func querySelector(n *html.Node, sel string) *html.Node {
+// Selector compilation is comparatively expensive and pages call
+// querySelector/tAll thousands of times, so results are cached. Invalid
+// selectors are cached too, so they are not re-parsed on every call.
+var (
+	selectorCacheMu sync.RWMutex
+	selectorCache   = map[string]cascadia.Selector{}
+	selectorInvalid = map[string]bool{}
+)
+
+func compileSelector(sel string) (cascadia.Selector, bool) {
+	selectorCacheMu.RLock()
+	if m, ok := selectorCache[sel]; ok {
+		selectorCacheMu.RUnlock()
+		return m, true
+	}
+	if selectorInvalid[sel] {
+		selectorCacheMu.RUnlock()
+		return nil, false
+	}
+	selectorCacheMu.RUnlock()
+
 	m, err := cascadia.Compile(sel)
+	selectorCacheMu.Lock()
 	if err != nil {
+		selectorInvalid[sel] = true
+	} else {
+		selectorCache[sel] = m
+	}
+	selectorCacheMu.Unlock()
+	return m, err == nil
+}
+
+func querySelector(n *html.Node, sel string) *html.Node {
+	m, ok := compileSelector(sel)
+	if !ok {
 		return nil
 	}
 	for _, c := range m.MatchAll(n) {
@@ -303,8 +336,8 @@ func querySelector(n *html.Node, sel string) *html.Node {
 }
 
 func querySelectorAll(n *html.Node, sel string) []*html.Node {
-	m, err := cascadia.Compile(sel)
-	if err != nil {
+	m, ok := compileSelector(sel)
+	if !ok {
 		return nil
 	}
 	out := make([]*html.Node, 0, 8)
@@ -320,8 +353,8 @@ func matches(n *html.Node, sel string) bool {
 	if n == nil || n.Type != html.ElementNode {
 		return false
 	}
-	m, err := cascadia.Compile(sel)
-	if err != nil {
+	m, ok := compileSelector(sel)
+	if !ok {
 		return false
 	}
 	return m.Match(n)

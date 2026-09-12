@@ -46,7 +46,7 @@ func (e *jsEnv) setupWeb() {
 		return e.newObserver(call.Argument(0))
 	})
 	_ = rt.Set("IntersectionObserver", func(call goja.ConstructorCall) *goja.Object {
-		return e.newObserver(call.Argument(0))
+		return e.newIntersectionObserver(call.Argument(0))
 	})
 	_ = rt.Set("ResizeObserver", func(call goja.ConstructorCall) *goja.Object {
 		return e.newObserver(call.Argument(0))
@@ -450,6 +450,88 @@ func (e *jsEnv) newEventCtor(typ string, init goja.Value) *goja.Object {
 }
 
 // --- observers ---
+
+// jsIntersectionObserver records observed targets and reports them once as
+// intersecting after load, which is what reveals lazy-loaded content in a
+// headless context (there is no viewport to scroll).
+type jsIntersectionObserver struct {
+	cb      goja.Callable
+	obj     *goja.Object
+	targets []*html.Node
+}
+
+func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
+	o := e.vm.NewObject()
+	obs := &jsIntersectionObserver{obj: o}
+	if fn, ok := goja.AssertFunction(cbValue); ok {
+		obs.cb = fn
+	}
+	e.observers = append(e.observers, obs)
+
+	_ = o.Set("observe", func(call goja.FunctionCall) goja.Value {
+		if n := e.nodeArg(call.Argument(0)); n != nil {
+			obs.targets = append(obs.targets, n)
+		}
+		return goja.Undefined()
+	})
+	_ = o.Set("unobserve", func(call goja.FunctionCall) goja.Value {
+		n := e.nodeArg(call.Argument(0))
+		for i, t := range obs.targets {
+			if t == n {
+				obs.targets = append(obs.targets[:i], obs.targets[i+1:]...)
+				break
+			}
+		}
+		return goja.Undefined()
+	})
+	_ = o.Set("disconnect", func(goja.FunctionCall) goja.Value {
+		obs.targets = nil
+		return goja.Undefined()
+	})
+	_ = o.Set("takeRecords", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
+	_ = o.Set("root", goja.Null())
+	_ = o.Set("rootMargin", "0px")
+	_ = o.Set("thresholds", e.vm.NewArray(0))
+	return o
+}
+
+// flushIntersection reports observed elements as intersecting, then clears
+// them so a repeated flush does not re-fire.
+func (e *jsEnv) flushIntersection() {
+	for _, obs := range e.observers {
+		if obs.cb == nil || len(obs.targets) == 0 {
+			continue
+		}
+		targets := obs.targets
+		obs.targets = nil
+		entries := e.vm.NewArray()
+		for i, t := range targets {
+			entry := e.vm.NewObject()
+			_ = entry.Set("target", e.wrap(t))
+			_ = entry.Set("isIntersecting", true)
+			_ = entry.Set("intersectionRatio", 1)
+			_ = entry.Set("time", 0)
+			rect := e.zeroRect()
+			_ = entry.Set("boundingClientRect", rect)
+			_ = entry.Set("intersectionRect", rect)
+			_ = entry.Set("rootBounds", rect)
+			_ = entries.Set(strconv.Itoa(i), entry)
+		}
+		func() {
+			defer func() { _ = recover() }()
+			_, _ = obs.cb(goja.Undefined(), entries, e.vm.ToValue(obs.obj))
+		}()
+	}
+}
+
+// zeroRect is a placeholder ClientRect, since there is no layout engine.
+func (e *jsEnv) zeroRect() *goja.Object {
+	r := e.vm.NewObject()
+	for _, k := range []string{"x", "y", "top", "left", "right", "bottom", "width", "height"} {
+		_ = r.Set(k, 0)
+	}
+	return r
+}
 
 func (e *jsEnv) newObserver(cb goja.Value) *goja.Object {
 	o := e.vm.NewObject()

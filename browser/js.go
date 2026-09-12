@@ -33,6 +33,8 @@ type jsEnv struct {
 	timerSeq int64
 
 	protosRef *protos
+
+	observers []*jsIntersectionObserver
 }
 
 type jsListener struct {

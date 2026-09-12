@@ -22,7 +22,8 @@ anywhere Go does, including Android/Termux on `arm64`.
 
 The DOM *is* the `*html.Node` tree. There is no separate wrapper model, so
 `html.Parse`, script mutation, CSS matching and serialization all operate on the
-same nodes.
+same nodes. Compiled CSS selectors are cached process-wide, because pages issue
+thousands of `querySelector` calls and compilation dominates the cost.
 
 Network requests go through `gocurlffi/requests`, so the document, external
 scripts, `fetch()` and `XMLHttpRequest` all carry the selected browser's
@@ -79,8 +80,10 @@ make gobrowser
   returning `Promise`s that resolve after a synchronous request.
 - Web platform globals: `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `AbortController`/`AbortSignal`, `Event`/`CustomEvent`,
-  `MutationObserver`/`IntersectionObserver`/`ResizeObserver` (stubs),
-  `performance`, `crypto.getRandomValues`/`randomUUID`, `structuredClone`,
+  `IntersectionObserver` (reports observed elements as intersecting after
+  load, so lazy content materialises), `MutationObserver`/`ResizeObserver`
+  (inert stubs), `performance`, `crypto.getRandomValues`/`randomUUID`,
+  `structuredClone`,
   `DOMParser`, `requestIdleCallback`, `customElements` (registry stub).
 - `document.implementation.createHTMLDocument`/`createDocument`, `Range`
   (`createContextualFragment`), `createEvent`, `importNode`/`adoptNode`,

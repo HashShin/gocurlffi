@@ -206,6 +206,8 @@ func (p *Page) run() error {
 
 	p.readyState = "complete"
 	p.env.fireLoad()
+	p.debugf("flushing intersection observers")
+	p.env.flushIntersection()
 	p.debugf("running timers (load)")
 	p.env.runTimers(1000)
 	p.debugf("page load complete")
