@@ -10,6 +10,9 @@ import (
 
 // domNodeType maps x/net/html node types to DOM Level 2 nodeType numbers.
 func domNodeType(n *html.Node) int {
+	if isFragment(n) {
+		return 11
+	}
 	switch n.Type {
 	case html.ElementNode:
 		return 1
@@ -25,7 +28,14 @@ func domNodeType(n *html.Node) int {
 	return 0
 }
 
+func isFragment(n *html.Node) bool {
+	return n != nil && n.Type == html.ElementNode && n.Data == "#document-fragment"
+}
+
 func nodeNameOf(n *html.Node) string {
+	if isFragment(n) {
+		return "#document-fragment"
+	}
 	switch n.Type {
 	case html.ElementNode:
 		return strings.ToUpper(n.Data)
@@ -470,6 +480,17 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 		return goja.Null()
 	})
 
+	e.method(p, "attachShadow", func(call goja.FunctionCall) goja.Value {
+		// No real shadow DOM: expose the host so component code keeps working.
+		return e.wrap(e.thisNode(call))
+	})
+	e.accessor(p, "shadowRoot", func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}, nil)
+	e.accessor(p, "assignedSlot", func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}, nil)
+
 	// Interaction / geometry stubs
 	e.method(p, "click", func(call goja.FunctionCall) goja.Value {
 		n := e.thisNode(call)
@@ -587,26 +608,36 @@ func (e *jsEnv) defineTextProto(p *goja.Object) {
 
 // --- Document prototype ---
 
+// docOf returns the document the method was invoked on, falling back to the
+// page document. This keeps sub-documents created by DOMParser or
+// implementation.createHTMLDocument working correctly.
+func (e *jsEnv) docOf(call goja.FunctionCall) *html.Node {
+	if n := e.thisNode(call); n != nil {
+		return n
+	}
+	return e.page.doc
+}
+
 func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 	e.method(p, "getElementById", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(getElementById(e.page.doc, argString(call.Argument(0))))
+		return e.wrap(getElementById(e.docOf(call), argString(call.Argument(0))))
 	})
 	e.method(p, "getElementsByTagName", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByTagName(e.page.doc, argString(call.Argument(0))))
+		return e.nodeList(getElementsByTagName(e.docOf(call), argString(call.Argument(0))))
 	})
 	e.method(p, "getElementsByClassName", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByClassName(e.page.doc, argString(call.Argument(0))))
+		return e.nodeList(getElementsByClassName(e.docOf(call), argString(call.Argument(0))))
 	})
 	e.method(p, "querySelector", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(querySelector(e.page.doc, argString(call.Argument(0))))
+		return e.wrap(querySelector(e.docOf(call), argString(call.Argument(0))))
 	})
 	e.method(p, "querySelectorAll", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(querySelectorAll(e.page.doc, argString(call.Argument(0))))
+		return e.nodeList(querySelectorAll(e.docOf(call), argString(call.Argument(0))))
 	})
 	e.method(p, "getElementsByName", func(call goja.FunctionCall) goja.Value {
 		name := argString(call.Argument(0))
 		var out []*html.Node
-		for _, el := range descendants(e.page.doc) {
+		for _, el := range descendants(e.docOf(call)) {
 			if v, _ := getAttr(el, "name"); v == name {
 				out = append(out, el)
 			}
@@ -626,11 +657,23 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.wrap(&html.Node{Type: html.CommentNode, Data: argString(call.Argument(0))})
 	})
 	e.method(p, "createDocumentFragment", func(call goja.FunctionCall) goja.Value {
-		frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
-		o := e.wrap(frag)
-		if obj, ok := o.(*goja.Object); ok {
-			_ = obj.SetPrototype(e.protosRef.fragment)
-		}
+		return e.newDocumentFragment()
+	})
+	e.method(p, "createAttribute", func(call goja.FunctionCall) goja.Value {
+		o := e.vm.NewObject()
+		_ = o.Set("name", argString(call.Argument(0)))
+		_ = o.Set("value", "")
+		return o
+	})
+	e.method(p, "createRange", func(call goja.FunctionCall) goja.Value {
+		return e.newRange()
+	})
+	e.method(p, "createEvent", func(call goja.FunctionCall) goja.Value {
+		o := e.newEvent("")
+		_ = o.Set("initEvent", func(call goja.FunctionCall) goja.Value {
+			_ = o.Set("type", argString(call.Argument(0)))
+			return goja.Undefined()
+		})
 		return o
 	})
 	e.method(p, "write", func(call goja.FunctionCall) goja.Value {
@@ -650,28 +693,46 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		e.page.documentWrite(b.String())
 		return goja.Undefined()
 	})
+	e.method(p, "importNode", func(call goja.FunctionCall) goja.Value {
+		n := e.nodeArg(call.Argument(0))
+		if n == nil {
+			return goja.Null()
+		}
+		return e.wrap(cloneNode(n, call.Argument(1).ToBoolean()))
+	})
+	e.method(p, "adoptNode", func(call goja.FunctionCall) goja.Value {
+		n := e.nodeArg(call.Argument(0))
+		if n == nil {
+			return goja.Null()
+		}
+		removeChild(n)
+		return e.wrap(n)
+	})
+	e.method(p, "elementFromPoint", func(goja.FunctionCall) goja.Value { return goja.Null() })
+	e.method(p, "elementsFromPoint", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
 
 	e.accessor(p, "currentScript", func(call goja.FunctionCall) goja.Value {
 		return e.wrap(e.page.currentScript)
 	}, nil)
 	e.accessor(p, "documentElement", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(findElement(e.page.doc, "html"))
+		return e.wrap(findElement(e.docOf(call), "html"))
 	}, nil)
 	e.accessor(p, "head", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(findElement(e.page.doc, "head"))
+		return e.wrap(findElement(e.docOf(call), "head"))
 	}, nil)
 	e.accessor(p, "body", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(findElement(e.page.doc, "body"))
+		return e.wrap(findElement(e.docOf(call), "body"))
 	}, nil)
 	e.accessor(p, "title", func(call goja.FunctionCall) goja.Value {
-		if t := findElement(e.page.doc, "title"); t != nil {
+		if t := findElement(e.docOf(call), "title"); t != nil {
 			return e.vm.ToValue(textContent(t))
 		}
 		return e.vm.ToValue("")
 	}, func(call goja.FunctionCall) goja.Value {
-		t := findElement(e.page.doc, "title")
+		doc := e.docOf(call)
+		t := findElement(doc, "title")
 		if t == nil {
-			head := findElement(e.page.doc, "head")
+			head := findElement(doc, "head")
 			if head == nil {
 				return goja.Undefined()
 			}
@@ -708,6 +769,12 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 	e.accessor(p, "contentType", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue("text/html")
 	}, nil)
+	e.accessor(p, "compatMode", func(call goja.FunctionCall) goja.Value {
+		return e.vm.ToValue("CSS1Compat")
+	}, nil)
+	e.accessor(p, "implementation", func(call goja.FunctionCall) goja.Value {
+		return e.newImplementation()
+	}, nil)
 	e.accessor(p, "location", func(call goja.FunctionCall) goja.Value {
 		return e.locationObject()
 	}, nil)
@@ -715,20 +782,43 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.vm.GlobalObject()
 	}, nil)
 	e.accessor(p, "activeElement", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(findElement(e.page.doc, "body"))
+		return e.wrap(findElement(e.docOf(call), "body"))
 	}, nil)
 	e.accessor(p, "forms", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByTagName(e.page.doc, "form"))
+		return e.nodeList(getElementsByTagName(e.docOf(call), "form"))
 	}, nil)
 	e.accessor(p, "links", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByTagName(e.page.doc, "a"))
+		return e.nodeList(getElementsByTagName(e.docOf(call), "a"))
 	}, nil)
 	e.accessor(p, "images", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByTagName(e.page.doc, "img"))
+		return e.nodeList(getElementsByTagName(e.docOf(call), "img"))
 	}, nil)
 	e.accessor(p, "scripts", func(call goja.FunctionCall) goja.Value {
-		return e.nodeList(getElementsByTagName(e.page.doc, "script"))
+		return e.nodeList(getElementsByTagName(e.docOf(call), "script"))
 	}, nil)
+	e.accessor(p, "styleSheets", func(call goja.FunctionCall) goja.Value {
+		return e.vm.NewArray()
+	}, nil)
+	e.accessor(p, "fonts", func(call goja.FunctionCall) goja.Value {
+		o := e.vm.NewObject()
+		_ = o.Set("ready", e.resolvedPromise(goja.Undefined()))
+		_ = o.Set("status", "loaded")
+		_ = o.Set("check", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+		_ = o.Set("add", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		_ = o.Set("forEach", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		return o
+	}, nil)
+}
+
+// newDocumentFragment creates a document fragment node with the fragment
+// prototype.
+func (e *jsEnv) newDocumentFragment() goja.Value {
+	frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
+	o := e.wrap(frag)
+	if obj, ok := o.(*goja.Object); ok {
+		_ = obj.SetPrototype(e.protosRef.fragment)
+	}
+	return o
 }
 
 // --- classList / style / dataset ---

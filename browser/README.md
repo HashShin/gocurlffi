@@ -80,7 +80,13 @@ make gobrowser
 - Web platform globals: `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
   `AbortController`/`AbortSignal`, `Event`/`CustomEvent`,
   `MutationObserver`/`IntersectionObserver`/`ResizeObserver` (stubs),
-  `performance`, `crypto.getRandomValues`/`randomUUID`, `structuredClone`.
+  `performance`, `crypto.getRandomValues`/`randomUUID`, `structuredClone`,
+  `DOMParser`, `requestIdleCallback`, `customElements` (registry stub).
+- `document.implementation.createHTMLDocument`/`createDocument`, `Range`
+  (`createContextualFragment`), `createEvent`, `importNode`/`adoptNode`,
+  `document.fonts`, `attachShadow` (returns the host). Sub-documents created
+  through `DOMParser` or `implementation` keep their own tree: document
+  methods operate on the receiver, not the page document.
 - `window`, `document` (including `document.currentScript`, which bundlers use
   to resolve chunk paths), `navigator`, `location`, `console`, `history`,
   `localStorage`, `matchMedia`, `atob`/`btoa`.
@@ -119,9 +125,13 @@ This is a browsing *core*, not a rendering engine. There is no layout, paint,
 screenshot or PDF output, and no image decoding. Specifically absent:
 
 - ES modules (`<script type="module">`, `import`/`export`) are skipped.
-- `for await (... of ...)` and async generators are not understood by the
-  JavaScript parser, so bundles that use them (part of the Bluesky web app,
-  for example) fail to execute even though their page still loads.
+- The JavaScript engine has no async generators or `for await (... of ...)`
+  (goja reports "Async generators are not supported yet"). Bundles that rely
+  on them, such as the Bluesky web app's main chunk, stop at that point even
+  though the page still loads. Async functions and top-level `await` work.
+- No iframe browsing context: `iframe.contentWindow`/`contentDocument` are
+  absent, so third-party scripts that reach into an iframe throw (and are
+  logged). This does not stop the page from rendering.
 - CSS is not cascaded: no `getComputedStyle` computation, no `offsetWidth`.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
 

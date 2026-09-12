@@ -204,6 +204,12 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("localStorage", e.storageObject())
 	_ = rt.Set("sessionStorage", e.storageObject())
 
+	_ = rt.Set("isSecureContext", true)
+	_ = rt.Set("origin", e.page.originString())
+	_ = rt.Set("name", "")
+	_ = rt.Set("status", "")
+	_ = rt.Set("closed", false)
+	_ = rt.Set("frameElement", goja.Null())
 	_ = rt.Set("innerWidth", 1280)
 	_ = rt.Set("innerHeight", 720)
 	_ = rt.Set("outerWidth", 1280)
@@ -309,6 +315,14 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 	_ = o.Set("hardwareConcurrency", 4)
 	_ = o.Set("maxTouchPoints", 0)
 	_ = o.Set("webdriver", false)
+	uad := e.vm.NewObject()
+	_ = uad.Set("mobile", strings.Contains(ua, "Mobile"))
+	_ = uad.Set("platform", e.page.platform)
+	_ = uad.Set("brands", e.vm.NewArray())
+	_ = uad.Set("getHighEntropyValues", func(goja.FunctionCall) goja.Value {
+		return e.resolvedPromise(e.vm.NewObject())
+	})
+	_ = o.Set("userAgentData", uad)
 	return o
 }
 
@@ -317,7 +331,10 @@ func (e *jsEnv) locationObject() *goja.Object {
 	set := func(name, val string) { _ = o.Set(name, val) }
 	href := e.page.URL
 	set("href", href)
-	set("toString", href)
+	// toString/valueOf must be callable so `location + ''` and friends work.
+	_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
+	_ = o.Set("valueOf", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
+	_ = o.Set("toJSON", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
 	u := parseLocation(href)
 	set("protocol", u.scheme)
 	set("host", u.host)

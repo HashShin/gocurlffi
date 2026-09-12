@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dop251/goja"
+	"golang.org/x/net/html"
 )
 
 // setupWeb installs the web-platform globals that page bundles expect:
@@ -61,6 +62,169 @@ func (e *jsEnv) setupWeb() {
 	_ = rt.Set("structuredClone", func(call goja.FunctionCall) goja.Value {
 		return e.structuredClone(call.Argument(0))
 	})
+	_ = rt.Set("DOMParser", func(call goja.ConstructorCall) *goja.Object {
+		return e.newDOMParser()
+	})
+	_ = rt.Set("requestIdleCallback", func(call goja.FunctionCall) goja.Value {
+		return e.addIdleCallback(call)
+	})
+	_ = rt.Set("cancelIdleCallback", func(call goja.FunctionCall) goja.Value {
+		e.clearTimer(argString(call.Argument(0)))
+		return goja.Undefined()
+	})
+	_ = rt.Set("customElements", e.customElementsObject())
+}
+
+// newDOMParser implements new DOMParser().parseFromString(html, type).
+func (e *jsEnv) newDOMParser() *goja.Object {
+	o := e.vm.NewObject()
+	_ = o.Set("parseFromString", func(call goja.FunctionCall) goja.Value {
+		doc, err := html.Parse(strings.NewReader(argString(call.Argument(0))))
+		if err != nil {
+			panic(e.vm.NewGoError(err))
+		}
+		return e.wrap(doc)
+	})
+	return o
+}
+
+// newFragmentFromHTML parses HTML into a document fragment with the fragment
+// prototype, using the body as the parsing context.
+func (e *jsEnv) newFragmentFromHTML(htmlStr string) goja.Value {
+	ctx := findElement(e.page.doc, "body")
+	if ctx == nil {
+		ctx = e.page.doc
+	}
+	frag := &html.Node{Type: html.ElementNode, Data: "#document-fragment"}
+	nodes, err := html.ParseFragment(strings.NewReader(htmlStr), ctx)
+	if err == nil {
+		for _, c := range nodes {
+			c.Parent = nil
+			appendChild(frag, c)
+		}
+	}
+	v := e.wrap(frag)
+	if obj, ok := v.(*goja.Object); ok {
+		_ = obj.SetPrototype(e.protosRef.fragment)
+	}
+	return v
+}
+
+// newImplementation implements document.implementation. Frameworks such as
+// jQuery use createHTMLDocument to parse HTML fragments.
+func (e *jsEnv) newImplementation() *goja.Object {
+	o := e.vm.NewObject()
+	_ = o.Set("createHTMLDocument", func(call goja.FunctionCall) goja.Value {
+		return e.wrap(e.newHTMLDocument(argString(call.Argument(0))))
+	})
+	_ = o.Set("createDocument", func(call goja.FunctionCall) goja.Value {
+		return e.wrap(e.newHTMLDocument(""))
+	})
+	_ = o.Set("createDocumentType", func(call goja.FunctionCall) goja.Value {
+		return e.wrap(&html.Node{Type: html.DoctypeNode, Data: argString(call.Argument(0))})
+	})
+	_ = o.Set("hasFeature", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+	return o
+}
+
+// newHTMLDocument builds a minimal html/head/body document tree.
+func (e *jsEnv) newHTMLDocument(title string) *html.Node {
+	doc := &html.Node{Type: html.DocumentNode}
+	root := createElement("html")
+	head := createElement("head")
+	body := createElement("body")
+	appendChild(doc, root)
+	appendChild(root, head)
+	appendChild(root, body)
+	if title != "" {
+		t := createElement("title")
+		setTextContent(t, title)
+		appendChild(head, t)
+	}
+	return doc
+}
+
+// newRange implements the parts of DOM Range that libraries use.
+func (e *jsEnv) newRange() *goja.Object {
+	o := e.vm.NewObject()
+	contextual := func(htmlStr string) goja.Value {
+		return e.newFragmentFromHTML(htmlStr)
+	}
+	_ = o.Set("setStart", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("setEnd", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("setStartBefore", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("setStartAfter", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("setEndBefore", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("setEndAfter", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("selectNode", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("selectNodeContents", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("collapse", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("detach", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("deleteContents", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("insertNode", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("surroundContents", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("cloneContents", func(goja.FunctionCall) goja.Value { return e.newDocumentFragment() })
+	_ = o.Set("extractContents", func(goja.FunctionCall) goja.Value { return e.newDocumentFragment() })
+	_ = o.Set("createContextualFragment", func(call goja.FunctionCall) goja.Value {
+		return contextual(argString(call.Argument(0)))
+	})
+	_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue("") })
+	_ = o.Set("collapsed", true)
+	_ = o.Set("commonAncestorContainer", e.wrap(findElement(e.page.doc, "body")))
+	rect := func(goja.FunctionCall) goja.Value {
+		r := e.vm.NewObject()
+		for _, k := range []string{"x", "y", "top", "left", "right", "bottom", "width", "height"} {
+			_ = r.Set(k, 0)
+		}
+		return r
+	}
+	_ = o.Set("getBoundingClientRect", rect)
+	_ = o.Set("getClientRects", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
+	return o
+}
+
+// addIdleCallback schedules cb as a timer with an IdleDeadline argument.
+func (e *jsEnv) addIdleCallback(call goja.FunctionCall) goja.Value {
+	fn, ok := goja.AssertFunction(call.Argument(0))
+	if !ok {
+		return e.vm.ToValue(0)
+	}
+	e.timerSeq++
+	id := e.timerSeq
+	deadline := e.vm.NewObject()
+	_ = deadline.Set("didTimeout", false)
+	_ = deadline.Set("timeRemaining", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(50) })
+	wrapper, _ := goja.AssertFunction(e.vm.ToValue(func(goja.FunctionCall) goja.Value {
+		_, _ = fn(goja.Undefined(), deadline)
+		return goja.Undefined()
+	}))
+	e.timers = append(e.timers, &jsTimer{id: id, due: time.Now(), fn: wrapper})
+	return e.vm.ToValue(id)
+}
+
+// customElementsObject is a registry stub; enough for registrations to succeed.
+func (e *jsEnv) customElementsObject() *goja.Object {
+	o := e.vm.NewObject()
+	registry := map[string]goja.Value{}
+	_ = o.Set("define", func(call goja.FunctionCall) goja.Value {
+		name := argString(call.Argument(0))
+		if _, exists := registry[name]; exists {
+			panic(e.vm.NewTypeError("custom element already defined: " + name))
+		}
+		registry[name] = call.Argument(1)
+		return goja.Undefined()
+	})
+	_ = o.Set("get", func(call goja.FunctionCall) goja.Value {
+		if v, ok := registry[argString(call.Argument(0))]; ok {
+			return v
+		}
+		return goja.Undefined()
+	})
+	_ = o.Set("whenDefined", func(goja.FunctionCall) goja.Value {
+		return e.resolvedPromise(goja.Undefined())
+	})
+	_ = o.Set("upgrade", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	return o
 }
 
 // --- URL ---

@@ -75,6 +75,12 @@ func (p *Page) Document() *html.Node { return p.doc }
 // DocumentNode satisfies internal callers.
 func (p *Page) docNode() *html.Node { return p.doc }
 
+// originString returns the page origin (scheme://host).
+func (p *Page) originString() string {
+	l := parseLocation(p.URL)
+	return l.origin
+}
+
 // Response returns the document response, if loaded over the network.
 func (p *Page) Response() *requests.Response { return p.resp }
 
