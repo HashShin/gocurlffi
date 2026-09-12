@@ -2,6 +2,8 @@ package browser
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -37,6 +39,13 @@ type Page struct {
 
 	resp    *requests.Response
 	console []ConsoleEntry
+
+	// currentScript is the <script> element being executed, exposed as
+	// document.currentScript. Bundlers use it to resolve chunk paths.
+	currentScript *html.Node
+
+	// deadline bounds the script-loading phase (see Options.LoadTimeout).
+	deadline time.Time
 
 	loadedScripts map[string]bool
 }
@@ -82,6 +91,13 @@ func (p *Page) log(level, message string) {
 	p.console = append(p.console, ConsoleEntry{Level: level, Message: message, Time: time.Now()})
 	if p.browser != nil && p.browser.opts.Console != nil {
 		p.browser.opts.Console(level, message)
+	}
+}
+
+// debugf logs a page-load phase when Options.Debug is set.
+func (p *Page) debugf(format string, args ...any) {
+	if p.browser != nil && p.browser.opts.Debug {
+		fmt.Fprintf(os.Stderr, "[browser] "+format+"\n", args...)
 	}
 }
 
@@ -138,8 +154,19 @@ func (p *Page) run() error {
 	}
 	p.env = newJSEnv(p)
 
+	budget := p.browser.opts.LoadTimeout
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	p.deadline = time.Now().Add(budget)
+
 	scripts := p.scripts()
+	p.debugf("run: %d script(s), budget %s", len(scripts), budget)
 	for _, s := range scripts {
+		if p.outOfBudget() {
+			p.log("warn", "page load budget exceeded; skipped remaining scripts")
+			break
+		}
 		typ := strings.ToLower(strings.TrimSpace(strings.Split(attrOf(s, "type"), ";")[0]))
 		if typ == "module" {
 			p.log("warn", "skipping ES module script (not supported)")
@@ -156,34 +183,55 @@ func (p *Page) run() error {
 		if strings.TrimSpace(src) == "" {
 			continue
 		}
-		if err := p.env.runScript(src, p.URL); err != nil {
+		p.debugf("inline script: %d bytes", len(src))
+		p.currentScript = s
+		err := p.env.runScript(src, p.URL)
+		p.currentScript = nil
+		if err != nil {
 			p.log("error", "script error: "+err.Error())
 		}
 	}
 
 	p.readyState = "interactive"
+	p.debugf("scripts done; firing DOMContentLoaded")
 	p.env.fireDOMContentLoaded()
+	p.debugf("running timers (interactive)")
 	p.env.runTimers(1000)
 
 	p.readyState = "complete"
 	p.env.fireLoad()
+	p.debugf("running timers (load)")
 	p.env.runTimers(1000)
+	p.debugf("page load complete")
 	return nil
 }
 
+func (p *Page) outOfBudget() bool {
+	return !p.deadline.IsZero() && time.Now().After(p.deadline)
+}
+
 func (p *Page) runExternalScript(el *html.Node, src string) {
+	if p.outOfBudget() {
+		p.log("warn", "page load budget exceeded; skipped "+src)
+		return
+	}
 	abs := resolveURL(p.URL, src)
 	if p.loadedScripts[abs] {
 		return
 	}
 	p.loadedScripts[abs] = true
+	p.debugf("external script: %s", abs)
 	resp, err := p.browser.get(abs, map[string]string{"Accept": "*/*"})
 	if err != nil {
 		p.log("error", "failed to load script "+abs+": "+err.Error())
 		return
 	}
 	code := string(resp.Content)
-	if err := p.env.runScript(code, abs); err != nil {
+	p.debugf("loaded %d bytes from %s", len(code), abs)
+	p.currentScript = el
+	err = p.env.runScript(code, abs)
+	p.currentScript = nil
+	if err != nil {
 		p.log("error", "script error in "+abs+": "+err.Error())
 	}
 }

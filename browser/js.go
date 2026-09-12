@@ -2,7 +2,10 @@ package browser
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/url"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +13,10 @@ import (
 	"github.com/dop251/goja"
 	"golang.org/x/net/html"
 )
+
+// maxCallStackSize bounds JS recursion depth, matching what a browser engine
+// allows closely enough while turning runaway recursion into an error.
+const maxCallStackSize = 10000
 
 // jsEnv is the per-page JavaScript environment: a goja VM plus the DOM
 // bindings that let page scripts read and mutate the x/net/html tree.
@@ -63,6 +70,10 @@ func newJSEnv(page *Page) *jsEnv {
 		winListeners:  map[string][]jsListener{},
 	}
 	e.vm.SetFieldNameMapper(goja.TagFieldNameMapper("js", true))
+	// goja defaults to an effectively unlimited call stack, so runaway
+	// recursion (a polyfill loop, for example) spins forever. Cap it like a
+	// real engine so deep recursion throws a RangeError instead of hanging.
+	e.vm.SetMaxCallStackSize(maxCallStackSize)
 	e.setupPrototypes()
 	e.setupGlobals()
 	return e
@@ -280,6 +291,7 @@ func (e *jsEnv) setupGlobals() {
 	})
 
 	e.setupNetwork()
+	e.setupWeb()
 }
 
 func (e *jsEnv) navigatorObject() *goja.Object {
@@ -440,7 +452,11 @@ func (e *jsEnv) addTimer(call goja.FunctionCall, repeat bool) goja.Value {
 	if d < 0 {
 		d = 0
 	}
-	t := &jsTimer{id: id, due: time.Now().Add(d), fn: fn, args: call.Arguments[2:]}
+	var extra []goja.Value
+	if len(call.Arguments) > 2 {
+		extra = call.Arguments[2:]
+	}
+	t := &jsTimer{id: id, due: time.Now().Add(d), fn: fn, args: extra}
 	if repeat {
 		t.repeat = d
 	}
@@ -651,18 +667,48 @@ func (e *jsEnv) newEvent(typ string) *goja.Object {
 // --- script execution ---
 
 // runScript evaluates JS source, returning any error. The filename is used in
-// compile and runtime error messages.
-func (e *jsEnv) runScript(src, filename string) error {
+// compile and runtime error messages. A panic inside a native binding is
+// converted into an error so a broken page script cannot crash the process.
+func (e *jsEnv) runScript(src, filename string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in %s: %v", filename, r)
+		}
+	}()
 	prog, err := goja.Compile(filename, src, false)
+	e.page.debugf("compile %s: err=%v", filename, err != nil)
+	if err != nil {
+		// Some bundlers ship classic scripts using top-level await, which is
+		// only valid inside a module (and which the parser reports as a
+		// generic error). Retry wrapped in an async IIFE. Only accept the
+		// wrapped form if it actually parses, so genuine syntax errors keep
+		// their original message.
+		wrapped := "(async function(){\n" + src + "\n}).call(globalThis).catch(function(e){" +
+			"if (typeof console !== 'undefined' && console.error) console.error(String(e));" +
+			"});"
+		if p2, err2 := goja.Compile(filename, wrapped, false); err2 == nil {
+			prog = p2
+			err = nil
+			e.page.debugf("using async-wrap for %s", filename)
+		}
+	}
 	if err != nil {
 		return err
 	}
+	e.page.debugf("run %s", filename)
 	timeout := e.page.maxScriptTime()
 	if timeout <= 0 {
-		_, err := e.vm.RunProgram(prog)
+		_, err = e.vm.RunProgram(prog)
 		return err
 	}
-	timer := time.AfterFunc(timeout, func() { e.vm.Interrupt("script timeout") })
+	timer := time.AfterFunc(timeout, func() {
+		if e.page.browser.opts.Debug {
+			buf := make([]byte, 1<<20)
+			n := runtime.Stack(buf, true)
+			fmt.Fprintf(os.Stderr, "[browser] script timeout; goroutine dump:\n%s\n", buf[:n])
+		}
+		e.vm.Interrupt("script timeout")
+	})
 	defer timer.Stop()
 	_, err = e.vm.RunProgram(prog)
 	return err

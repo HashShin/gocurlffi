@@ -77,13 +77,41 @@ make gobrowser
   after load (bounded by a 2s budget).
 - `fetch()` and `XMLHttpRequest`, both through the impersonating transport,
   returning `Promise`s that resolve after a synchronous request.
-- `window`, `document`, `navigator`, `location`, `console`, `history`,
+- Web platform globals: `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`,
+  `AbortController`/`AbortSignal`, `Event`/`CustomEvent`,
+  `MutationObserver`/`IntersectionObserver`/`ResizeObserver` (stubs),
+  `performance`, `crypto.getRandomValues`/`randomUUID`, `structuredClone`.
+- `window`, `document` (including `document.currentScript`, which bundlers use
+  to resolve chunk paths), `navigator`, `location`, `console`, `history`,
   `localStorage`, `matchMedia`, `atob`/`btoa`.
+- Classic scripts that use top-level `await` are retried wrapped in an async
+  function, since some bundlers ship them as classic scripts.
+- Recursion is capped like a browser engine (`Options.LoadTimeout` and a
+  ~10000-frame call stack), so a polyfill loop throws `RangeError` instead of
+  spinning forever, and a slow subresource cannot stall the load past the
+  budget.
 - Extraction helpers: `HTML()`, `Text()`, `Links()`, `Markdown()`.
 
-Verified live: `quotes.toscrape.com/js/` (JS-rendered quotes fully materialise)
-and `react.dev` (the React bundle hydrates and renders; `fetch`, `matchMedia`
-and external scripts all load).
+Verified live:
+
+| Site | Result |
+| --- | --- |
+| `quotes.toscrape.com/js/` | all 10 JS-rendered quotes materialise |
+| `react.dev` | React hydrates and renders; no console errors |
+| `www.gocomics.com` | Next.js bundle runs; full page renders |
+| `www.foodnetwork.com` | 200, ~330 KB rendered |
+| `bsky.app` | shell renders (~408 chars); its main chunk uses `for await` and stops |
+
+## Checking sites
+
+`scripts/check_sites.sh -B` runs the same site/target matrix with the headless
+browser instead of the plain HTTP client, and shows the rendered size per cell.
+Comparing the two modes shows which sites actually need JavaScript:
+
+```sh
+bash scripts/check_sites.sh -B -i chrome131,custom
+bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
+```
 
 ## Not implemented
 
@@ -91,6 +119,9 @@ This is a browsing *core*, not a rendering engine. There is no layout, paint,
 screenshot or PDF output, and no image decoding. Specifically absent:
 
 - ES modules (`<script type="module">`, `import`/`export`) are skipped.
+- `for await (... of ...)` and async generators are not understood by the
+  JavaScript parser, so bundles that use them (part of the Bluesky web app,
+  for example) fail to execute even though their page still loads.
 - CSS is not cascaded: no `getComputedStyle` computation, no `offsetWidth`.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
 
@@ -103,5 +134,27 @@ it is enough.
 
 - `browser/browser/` is the reference Lightpanda checkout and is gitignored. It
   is the source material for behaviour, not a build input.
-- Scripts run in the same goroutine as `Open`, so a runaway script is bounded
-  by `Options.JavaScriptTimeout` (default 10s).
+- Scripts run in the same goroutine as `Open`. A runaway script is bounded by
+  `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
+  bounded by `Options.LoadTimeout` (default 30s).
+- All network traffic, including `fetch`, `XMLHttpRequest` and external
+  scripts, goes through one shared session, so a browser-like flow works
+  across hosts (see the note on the ClientHello fix in the repository README).
+
+### CLI flags
+
+```sh
+gobrowser get URL \
+  -i chrome131          # impersonation target
+  -f html|text|markdown|links
+  -o FILE               # write output to FILE
+  --eval 'JS'           # evaluate JS and print the result
+  --wait SELECTOR       # wait for a selector before extracting
+  --timeout 30s         # per-request timeout
+  --load-timeout 30s    # script-loading budget per page
+  --no-js               # disable JavaScript
+  --console             # print console.* to stderr
+  --status              # print HTTP status to stderr
+  --debug               # log page-load phases to stderr
+  -H 'K: V'             # extra header (repeatable)
+```

@@ -651,6 +651,9 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return goja.Undefined()
 	})
 
+	e.accessor(p, "currentScript", func(call goja.FunctionCall) goja.Value {
+		return e.wrap(e.page.currentScript)
+	}, nil)
 	e.accessor(p, "documentElement", func(call goja.FunctionCall) goja.Value {
 		return e.wrap(findElement(e.page.doc, "html"))
 	}, nil)

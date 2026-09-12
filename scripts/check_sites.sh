@@ -16,6 +16,8 @@
 #       --all-targets    use every target from `gocurlffi list`
 #   -t, --timeout SECS   per-request timeout (default 30)
 #   -m, --method METHOD  HTTP method (default GET)
+#   -B, --browser        use the pure-Go headless browser (gobrowser) and run
+#                        page JavaScript; cells show status/rendered-size
 #   -b, --best           after the matrix, print the first working target per site
 #   -o, --only-ok        only show targets that returned a 2xx/3xx status
 #   -H, --header "K: V"  extra header to send (repeatable)
@@ -25,12 +27,15 @@
 # Environment:
 #   GOCURLFFI_BIN   path to the gocurlffi binary (default: <repo>/bin/gocurlffi,
 #                   built automatically if missing)
+#   GOBROWSER_BIN   path to the gobrowser binary used by -B (default:
+#                   <repo>/bin/gobrowser, built automatically if missing)
 #
 # Examples:
 #   scripts/check_sites.sh
 #   scripts/check_sites.sh https://www.marriott.com/ https://bsky.app/
 #   scripts/check_sites.sh -i chrome131,custom --all-targets example.com
 #   scripts/check_sites.sh -b -t 15
+#   scripts/check_sites.sh -B -i chrome131,custom https://bsky.app/
 
 set -u
 
@@ -55,10 +60,15 @@ METHOD="GET"
 SHOW_BEST=0
 ONLY_OK=0
 QUIET=0
+BROWSER=0
 HEADERS=()
 SITES=()
 
-usage() { sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() {
+  awk 'NR==1 { next }
+       /^#/ { sub(/^# ?/, ""); print; next }
+       { exit }' "${BASH_SOURCE[0]}"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -66,6 +76,7 @@ while [ $# -gt 0 ]; do
     --all-targets) USE_ALL_TARGETS=1; shift ;;
     -t|--timeout) TIMEOUT="$2"; shift 2 ;;
     -m|--method) METHOD="$2"; shift 2 ;;
+    -B|--browser) BROWSER=1; shift ;;
     -b|--best) SHOW_BEST=1; shift ;;
     -o|--only-ok) ONLY_OK=1; shift ;;
     -H|--header) HEADERS+=("${2:-}"); shift 2 ;;
@@ -81,11 +92,27 @@ while [ $# -gt 0 ]; do
 done
 
 # --- locate or build the binary -------------------------------------------
-BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
-if [ ! -x "$BIN" ]; then
-  echo "building gocurlffi..." >&2
-  (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
-  BIN="$ROOT_DIR/bin/gocurlffi"
+if [ "$BROWSER" -eq 1 ]; then
+  BIN="${GOBROWSER_BIN:-$ROOT_DIR/bin/gobrowser}"
+  if [ ! -x "$BIN" ]; then
+    echo "building gobrowser..." >&2
+    (cd "$ROOT_DIR" && go build -o bin/gobrowser ./cmd/gobrowser) || exit 1
+    BIN="$ROOT_DIR/bin/gobrowser"
+  fi
+else
+  BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
+  if [ ! -x "$BIN" ]; then
+    echo "building gocurlffi..." >&2
+    (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
+    BIN="$ROOT_DIR/bin/gocurlffi"
+  fi
+fi
+
+# A hard wall-clock guard for browser mode, where a page loads many
+# subresources and its scripts can outlive the per-request timeout.
+RUNNER=()
+if [ "$BROWSER" -eq 1 ] && command -v timeout >/dev/null 2>&1; then
+  RUNNER=(timeout "$((TIMEOUT * 6))")
 fi
 
 # --- resolve the target list ----------------------------------------------
@@ -107,6 +134,10 @@ declare -A STATUS
 declare -A CODES
 site_col=24
 
+if [ "$BROWSER" -eq 1 ]; then
+  echo "mode: headless browser (cells are status/rendered-size)"
+fi
+
 printf "%-${site_col}s" "site"
 for t in "${TARGETS[@]}"; do printf "%-16s" "$t"; done
 printf "\n"
@@ -116,22 +147,40 @@ for s in "${SITES[@]}"; do
   printf "%-${site_col}s" "${s#https://}"
   for t in "${TARGETS[@]}"; do
     total=$((total + 1))
-    args=("$METHOD" "$s" -i "$t" --headers -t "$TIMEOUT")
-    if [ "${#HEADERS[@]}" -gt 0 ]; then
-      for h in "${HEADERS[@]}"; do args+=(-H "$h"); done
-    fi
     if [ "$QUIET" -eq 0 ] && [ -t 2 ]; then printf "." >&2; fi
-    out="$("$BIN" "${args[@]}" 2>/dev/null | head -1)"
-    code="$(echo "$out" | awk '{print $2}')"
-    [ -z "$code" ] && code="ERR"
+    if [ "$BROWSER" -eq 1 ]; then
+      tmpout="$(mktemp)"; tmperr="$(mktemp)"
+      bargs=(get "$s" -i "$t" --status --timeout "${TIMEOUT}s" -o "$tmpout")
+      for h in "${HEADERS[@]:-}"; do
+        [ -n "$h" ] && bargs+=(-H "$h")
+      done
+      if [ "${#RUNNER[@]}" -gt 0 ]; then
+        "${RUNNER[@]}" "$BIN" "${bargs[@]}" >/dev/null 2>"$tmperr" || true
+      else
+        "$BIN" "${bargs[@]}" >/dev/null 2>"$tmperr" || true
+      fi
+      code="$(sed -n 's/^status: \([0-9][0-9]*\).*/\1/p' "$tmperr" | head -1)"
+      size=0
+      [ -f "$tmpout" ] && size="$(wc -c <"$tmpout" 2>/dev/null || echo 0)"
+      rm -f "$tmpout" "$tmperr"
+      [ -z "$code" ] && code="ERR"
+      cell="$code/$((size / 1024))k"
+    else
+      args=("$METHOD" "$s" -i "$t" --headers -t "$TIMEOUT")
+      if [ "${#HEADERS[@]}" -gt 0 ]; then
+        for h in "${HEADERS[@]}"; do args+=(-H "$h"); done
+      fi
+      out="$("$BIN" "${args[@]}" 2>/dev/null | head -1)"
+      code="$(echo "$out" | awk '{print $2}')"
+      [ -z "$code" ] && code="ERR"
+      cell="$code"
+    fi
     CODES["$s|$t"]="$code"
     if [ "$ONLY_OK" -eq 1 ]; then
       cell=""
       case "$code" in
         2*|3*) cell="$code" ;;
       esac
-    else
-      cell="$code"
     fi
     printf "%-16s" "${cell:0:15}"
   done

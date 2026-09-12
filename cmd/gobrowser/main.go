@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gocurlffi/browser"
+	"gocurlffi/impersonate"
 )
 
 func main() {
@@ -24,6 +25,10 @@ func main() {
 	switch cmd {
 	case "get", "fetch", "open":
 		runGet(args)
+	case "list", "targets":
+		for _, t := range impersonate.Targets() {
+			fmt.Println(t)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -38,6 +43,7 @@ func usage() {
 
 usage:
   gobrowser get <url> [flags]
+  gobrowser list
 
 flags:
   -i, --impersonate NAME   TLS/HTTP fingerprint target (chrome, chrome131, custom, ...)
@@ -47,9 +53,11 @@ flags:
       --wait SELECTOR      wait for a selector before extracting
       --wait-timeout DUR   timeout for --wait (default 10s)
       --timeout DUR        per-request timeout (default 30s)
+      --load-timeout DUR   script-loading budget per page (default 30s)
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
+  -H, --header "K: V"      extra header to send (repeatable)
 `)
 }
 
@@ -66,10 +74,14 @@ func runGet(args []string) {
 		wait         = fs.String("wait", "", "selector to wait for")
 		waitTimeout  = fs.Duration("wait-timeout", 10*time.Second, "selector wait timeout")
 		timeout      = fs.Duration("timeout", 30*time.Second, "request timeout")
+		loadTimeout  = fs.Duration("load-timeout", 30*time.Second, "script-loading budget")
 		noJS         = fs.Bool("no-js", false, "disable JavaScript")
 		showConsole  = fs.Bool("console", false, "print console output")
 		showStatus   = fs.Bool("status", false, "print HTTP status")
+		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 	)
+	var headers headerList
+	fs.Var(&headers, "H", "extra header \"K: V\" (repeatable)")
 	_ = fs.Parse(reorderFlags(args))
 
 	target := fs.Arg(0)
@@ -94,7 +106,20 @@ func runGet(args []string) {
 	opts := browser.Options{
 		Impersonate: *impersonate,
 		Timeout:     *timeout,
+		LoadTimeout: *loadTimeout,
 		RunScripts:  &runScripts,
+		Debug:       *debug,
+	}
+	if len(headers) > 0 {
+		opts.Headers = map[string]string{}
+		for _, h := range headers {
+			k, v, ok := strings.Cut(h, ":")
+			if !ok {
+				fmt.Fprintf(os.Stderr, "error: bad header %q, want \"K: V\"\n", h)
+				os.Exit(2)
+			}
+			opts.Headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
 	}
 	if *showConsole {
 		opts.Console = func(level, message string) {
@@ -165,11 +190,22 @@ func runGet(args []string) {
 
 func isUndefined(v any) bool { return v == nil }
 
+// headerList collects repeatable -H "K: V" flags.
+type headerList []string
+
+func (h *headerList) String() string { return strings.Join(*h, ", ") }
+
+func (h *headerList) Set(v string) error {
+	*h = append(*h, v)
+	return nil
+}
+
 // boolFlags are options that take no value.
 var boolFlags = map[string]bool{
 	"-no-js": true, "--no-js": true,
 	"-console": true, "--console": true,
 	"-status": true, "--status": true,
+	"-debug": true, "--debug": true,
 	"-h": true, "--help": true,
 }
 

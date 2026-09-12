@@ -35,7 +35,21 @@ func elementChildren(n *html.Node) []*html.Node {
 	return out
 }
 
+// isAncestor reports whether a is b or an ancestor of b.
+func isAncestor(a, b *html.Node) bool {
+	for cur := b; cur != nil; cur = cur.Parent {
+		if cur == a {
+			return true
+		}
+	}
+	return false
+}
+
 func appendChild(parent, child *html.Node) *html.Node {
+	if parent == nil || child == nil || isAncestor(child, parent) {
+		// Refuse to create a cycle, which a real DOM also rejects.
+		return child
+	}
 	if child.Parent != nil {
 		removeChild(child)
 	}
@@ -76,6 +90,9 @@ func insertBefore(parent, child, ref *html.Node) *html.Node {
 	if ref == nil {
 		return appendChild(parent, child)
 	}
+	if parent == nil || child == nil || isAncestor(child, parent) {
+		return child
+	}
 	if child.Parent != nil {
 		removeChild(child)
 	}
@@ -92,6 +109,9 @@ func insertBefore(parent, child, ref *html.Node) *html.Node {
 }
 
 func replaceChild(parent, newNode, oldNode *html.Node) *html.Node {
+	if parent == nil || newNode == nil || oldNode == nil || isAncestor(newNode, parent) {
+		return oldNode
+	}
 	insertBefore(parent, newNode, oldNode)
 	removeChild(oldNode)
 	return oldNode

@@ -50,11 +50,19 @@ type Options struct {
 	// JavaScriptTimeout bounds a single script evaluation. Default 10s.
 	JavaScriptTimeout time.Duration
 
+	// LoadTimeout bounds the whole script-loading phase (document scripts and
+	// external bundles). Default 30s. A slow or hanging subresource is dropped
+	// once the budget is spent, so a page always finishes loading.
+	LoadTimeout time.Duration
+
 	// Console receives console.* output. nil discards it.
 	Console func(level, message string)
 
 	// Insecure skips TLS verification when true.
 	Insecure bool
+
+	// Debug logs page-load phases to stderr.
+	Debug bool
 }
 
 func (o Options) scriptsEnabled() bool { return o.RunScripts == nil || *o.RunScripts }

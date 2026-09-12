@@ -133,7 +133,7 @@ impersonate/            browser presets, aliases, TLS profile mapping
                         LICENSE + captured_clienthellos.txt (reference data)
 internal/genpresets/    parses impersonate.c -> presets_gen.go
 internal/capturehello/  captures/parses a ClientHello from any command
-scripts/check_sites.sh  site/target status matrix
+scripts/check_sites.sh  site/target status matrix (add -B for the browser)
 ```
 
 Only `impersonate/upstream/impersonate.c` is an external build input; it is
@@ -215,6 +215,10 @@ make sites
 
 Defaults to these sites: `marriott.com`, `ritzcarlton.com`, `foodnetwork.com`,
 `gocomics.com`, `bsky.app`, `mstdn.social`, `ubiqueros.com`.
+
+Pass `-B` to run the same matrix with the headless browser
+(`cmd/gobrowser`) instead of the plain HTTP client; cells then show
+`status/rendered-size`, which makes it obvious which sites need JavaScript.
 
 Observed results (marriott is the discriminating site):
 
