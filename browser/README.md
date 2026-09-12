@@ -121,6 +121,22 @@ Verified live:
 | `www.foodnetwork.com` | 200, ~330 KB rendered |
 | `bsky.app` | shell renders (~408 chars); its main chunk uses `for await` and stops |
 
+Rendered through the default impersonation targets, via
+`scripts/check_sites.sh -B`:
+
+| Site | Target | Result |
+| --- | --- | --- |
+| `www.marriott.com` | `custom` | 200, ~1.1 MB rendered |
+| `www.marriott.com` | `chrome131` | 403 |
+| `www.ritzcarlton.com` | any | 200, ~330 KB |
+| `mstdn.social` | any | 200, ~53 KB |
+| `ubiqueros.com` | any | 200, ~10 KB |
+
+Marriott behaves the same way in the browser as it does with the plain HTTP
+client: `custom` is accepted where a plain Chrome fingerprint is challenged.
+That is expected, because the browser renders through the same impersonating
+transport, and it is a good check that the two stay consistent.
+
 ## Checking sites
 
 `scripts/check_sites.sh -B` runs the same site/target matrix with the headless
