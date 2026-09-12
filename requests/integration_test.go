@@ -1,22 +1,59 @@
 package requests
 
 import (
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
 
-// browserleaks mirrors the fingerprint curl_cffi reports, which is what this
-// port aims to reproduce. These expectations were captured from the installed
+// browserleaks mirrors the fingerprints curl_cffi reports, which is what this
+// port aims to reproduce. The expected values were captured from the installed
 // curl_cffi (see scripts/compare_fingerprints.py).
+//
+// JA4 is deliberately not asserted: presets that send GREASE ECH randomise the
+// ECH payload length, so the padding extension (and therefore the JA4
+// extension count) varies per connection in both curl_cffi and this port.
+// JA3N is compared with padding removed for the same reason.
 var liveFingerprints = map[string]struct {
-	ja4        string
-	ja3nHash   string
+	ja3n       string
 	akamaiHash string
 }{
-	"chrome131":  {"t13d1516h2_8daaf6152771_02713d6af862", "dee19b855b658c6aa0f575eda2525e19", "52d84b11737d980aef856699f885ca86"},
-	"firefox135": {"t13d1717h2_5b57614c22b0_3cbfd9057e0d", "e4147a4860c1f347354f0a84d8787c02", "6ea73faa8fc5aac76bded7bd238f6433"},
-	"safari180":  {"t13d2014h2_a09f3c656075_e42f34c56612", "44f7ed5185d22c92b96da72dbe68d307", "d4a2dcbfde511b5040ed5a5190a8d78b"},
-	"tor145":     {"t13d1513h2_8daaf6152771_748f4c70de1c", "7b0f620d5ed159195cfe1b7e75b25ef3", "6ea73faa8fc5aac76bded7bd238f6433"},
+	"chrome131": {
+		"771|4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53|0-10-11-13-16-17513-18-23-27-35-43-45-5-51-65037-65281|4588-29-23-24|0",
+		"52d84b11737d980aef856699f885ca86",
+	},
+	"firefox135": {
+		"771|4865-4867-4866-49195-49199-52393-52392-49196-49200-49162-49161-49171-49172-156-157-47-53|0-10-11-13-16-18-23-27-28-34-35-43-45-5-51-65037-65281|4588-29-23-24-25-256-257|0",
+		"6ea73faa8fc5aac76bded7bd238f6433",
+	},
+	"safari180": {
+		"771|4865-4866-4867-49196-49195-52393-49200-49199-52392-49162-49161-49172-49171-157-156-53-47-49160-49170-10|0-10-11-13-16-18-23-27-43-45-5-51-65281|29-23-24-25|0",
+		"d4a2dcbfde511b5040ed5a5190a8d78b",
+	},
+	"tor145": {
+		"771|4865-4867-4866-49195-49199-52393-52392-49196-49200-49171-49172-156-157-47-53|0-10-11-13-16-23-28-34-43-5-51-65037-65281|29-23-24-25-256-257|0",
+		"6ea73faa8fc5aac76bded7bd238f6433",
+	},
+}
+
+// normalizeJA3N drops the padding extension (21) so comparisons are not
+// affected by ECH payload randomness.
+func normalizeJA3N(text string) string {
+	parts := strings.Split(text, ",")
+	if len(parts) < 5 {
+		return text
+	}
+	exts := strings.Split(parts[2], "-")
+	kept := exts[:0]
+	for _, e := range exts {
+		if e != "" && e != "21" {
+			kept = append(kept, e)
+		}
+	}
+	sort.Strings(kept)
+	parts[2] = strings.Join(kept, "-")
+	return strings.Join(parts, "|")
 }
 
 func TestLiveFingerprints(t *testing.T) {
@@ -36,15 +73,12 @@ func TestLiveFingerprints(t *testing.T) {
 			if err := rsp.JSON(&out); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			checks := map[string]string{
-				"ja4":         want.ja4,
-				"ja3n_hash":   want.ja3nHash,
-				"akamai_hash": want.akamaiHash,
+			gotJA3N, _ := out["ja3n_text"].(string)
+			if got := normalizeJA3N(gotJA3N); got != want.ja3n {
+				t.Errorf("ja3n:\n got %s\nwant %s", got, want.ja3n)
 			}
-			for key, expected := range checks {
-				if got, _ := out[key].(string); got != expected {
-					t.Errorf("%s: got %q want %q", key, got, expected)
-				}
+			if got, _ := out["akamai_hash"].(string); got != want.akamaiHash {
+				t.Errorf("akamai_hash: got %q want %q", got, want.akamaiHash)
 			}
 		})
 	}

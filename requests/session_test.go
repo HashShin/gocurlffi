@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gocurlffi/impersonate"
 )
 
 func newTestServer() *httptest.Server {
@@ -62,6 +64,25 @@ func newTestServer() *httptest.Server {
 	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second)
 		fmt.Fprint(w, "late")
+	})
+	mux.HandleFunc("/redirect-set-cookie", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "redirected", Value: "yes", Path: "/"})
+		http.Redirect(w, r, "/echo-cookie2", http.StatusFound)
+	})
+	mux.HandleFunc("/echo-cookie2", func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("redirected")
+		if err != nil {
+			fmt.Fprint(w, "none")
+			return
+		}
+		fmt.Fprint(w, c.Value)
+	})
+	mux.HandleFunc("/large", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		chunk := strings.Repeat("abcdefghij", 1000) // 10 KiB
+		for i := 0; i < 30; i++ {
+			io.WriteString(w, chunk)
+		}
 	})
 	return httptest.NewServer(mux)
 }
@@ -309,5 +330,57 @@ func TestDefaultHeadersOverride(t *testing.T) {
 	// Browser default headers that the user did not override are still present.
 	if got := out.Headers["Sec-Ch-Ua-Platform"]; len(got) == 0 {
 		t.Errorf("expected impersonated headers, got %v", out.Headers)
+	}
+}
+
+func TestRedirectSetCookieForwarded(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+	s := NewSession()
+	defer s.Close()
+	rsp, err := s.Get(ts.URL + "/redirect-set-cookie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rsp.Text() != "yes" {
+		t.Fatalf("cookie set by redirect was not sent on the next hop: got %q", rsp.Text())
+	}
+}
+
+func TestLargeResponseNotCancelled(t *testing.T) {
+	ts := newTestServer()
+	defer ts.Close()
+	s := NewSession()
+	defer s.Close()
+	// The 5s timeout is far longer than the transfer; a buggy early context
+	// cancel would truncate the body with "context canceled".
+	rsp, err := s.Get(ts.URL+"/large", WithTimeout(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rsp.Content) != 300*1000 {
+		t.Fatalf("body length = %d, want %d", len(rsp.Content), 300*1000)
+	}
+}
+
+func TestAcceptEncodingKeepsBrowserPosition(t *testing.T) {
+	p, _ := impersonate.Get("chrome131")
+	h := buildFinalHeaders(NewHeaders(nil), "", p)
+	items := h.MultiItems()
+	// The preset lists accept-encoding second to last, after sec-fetch-dest.
+	if items[0].Name == "Accept-Encoding" {
+		t.Fatalf("accept-encoding must not be reordered to the front: %v", items)
+	}
+	wantIdx := -1
+	for i, it := range items {
+		if strings.EqualFold(it.Name, "Accept-Encoding") {
+			wantIdx = i
+		}
+	}
+	if wantIdx == -1 {
+		t.Fatal("accept-encoding missing")
+	}
+	if !strings.EqualFold(items[wantIdx-1].Name, "Sec-Fetch-Dest") {
+		t.Errorf("accept-encoding position changed: %v", items)
 	}
 }

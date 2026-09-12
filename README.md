@@ -40,18 +40,26 @@ set and order, GREASE, ALPS, cert compression, record size limit, key shares),
 the HTTP/2 settings/pseudo-header order/stream priority, the HTTP/3 settings and
 the default browser headers are reproduced from that data.
 
-This was verified against the installed curl_cffi by comparing JA3N, JA4 and
-Akamai hashes reported by `tls.browserleaks.com`:
+This was verified against the installed curl_cffi by comparing the JA3N cipher
+and extension sets, curves, Akamai HTTP/2 hash and, via `tls.peet.ws`, the full
+HTTP/2 header order:
 
 ```
-edge99 .. chrome142, safari*, firefox*, tor145 ...  40/41 presets: exact match
-chrome120                                           version drift (see below)
+41/41 presets: exact match (0 mismatches)
 ```
 
-`scripts/compare_fingerprints.py` runs the comparison. The one mismatch is a
-curl-impersonate data difference: `chrome120` in the current upstream source
-lists 16 cipher suites while the installed curl_cffi build lists 17. This port
-follows the vendored upstream data.
+`scripts/compare_fingerprints.py` runs the comparison, and
+`scripts/parity_check.py` compares HTTP status codes against curl_cffi across a
+set of real sites. Presets that send GREASE ECH randomise the ECH payload
+length, which makes BoringSSL add the padding extension only when the
+ClientHello is short; the comparison therefore ignores padding, exactly as the
+behaviour varies in curl_cffi too.
+
+Note that heavily protected sites still need more than a matching fingerprint.
+For example `www.adidas.co.uk` returns 403 to curl_cffi, to a plain `curl` with
+a Chrome user agent, and to this client, while `www.adidas.co.uk/robots.txt`
+returns 200: Akamai's bot rules on that path require the JavaScript sensor
+(and/or a less suspicious IP), which no HTTP-only client can satisfy.
 
 ## Packages
 

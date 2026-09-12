@@ -70,10 +70,11 @@ type config struct {
 	proxies       map[string]string
 	proxyAuth     *BasicAuth
 
-	discardCookies bool
-	raiseForStatus bool
-	dohURL         string
-	debug          bool
+	discardCookies    bool
+	raiseForStatus    bool
+	dohURL            string
+	debug             bool
+	acceptEncodingSet bool
 
 	// per-request only
 	data            any
@@ -223,6 +224,7 @@ func WithReferer(r string) Option {
 // remove it and let the transport handle decompression.
 func WithAcceptEncoding(v string) Option {
 	return func(c *config) {
+		c.acceptEncodingSet = true
 		if v == "" {
 			c.headers.Del("Accept-Encoding")
 			return

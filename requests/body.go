@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"context"
 	"io"
 	"strings"
 
@@ -139,3 +140,19 @@ type closingReader struct {
 }
 
 func (c *closingReader) Close() error { return c.closeFn() }
+
+// cancelReadCloser releases the per-request context when a streaming body is
+// closed, so the timeout does not abort an in-progress body read.
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelReadCloser) Close() error {
+	err := c.ReadCloser.Close()
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	return err
+}

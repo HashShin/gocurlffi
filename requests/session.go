@@ -153,36 +153,25 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 		return nil, err
 	}
 
-	acceptEncoding := ""
-	if preset != nil {
-		for _, h := range preset.HTTPHeaders {
-			if strings.EqualFold(h.Name, "Accept-Encoding") {
-				acceptEncoding = h.Value
-			}
-		}
+	baseHeaders := buildFinalHeaders(cfg.headers, contentType, preset)
+	// Browsers send Accept-Encoding as part of their header set, which keeps
+	// it in the fingerprint position; only add the libcurl default when the
+	// user did not choose one and no preset supplied it.
+	if !cfg.acceptEncodingSet && !baseHeaders.Has("Accept-Encoding") {
+		baseHeaders.Set("Accept-Encoding", "gzip, deflate, br")
 	}
-	headers := buildFinalHeaders(cfg.headers, contentType, acceptEncoding, preset)
 
+	authHeader := ""
 	if cfg.auth != nil {
 		token := base64.StdEncoding.EncodeToString([]byte(cfg.auth.Username + ":" + cfg.auth.Password))
-		headers.Set("Authorization", "Basic "+token)
+		authHeader = "Basic " + token
 	}
 	if len(body) > 0 {
-		headers.Set("Content-Length", itoa64(int64(len(body))))
+		baseHeaders.Set("Content-Length", itoa64(int64(len(body))))
 	}
 
 	jar := s.jar
-	merged := NewCookies(nil)
-	u, _ := url.Parse(finalURL)
-	if u != nil {
-		for _, ck := range jar.matching(u) {
-			merged.SetCookie(ck)
-		}
-		for _, ck := range cfg.cookies.matching(u) {
-			merged.SetCookie(ck)
-		}
-	}
-	applyCookieHeader(headers, merged, preset)
+	originalHost := hostOf(finalURL)
 
 	client, err := s.getClient(keyFor(cfg), cfg)
 	if err != nil {
@@ -199,6 +188,14 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 	var finalResp *Response
 
 	for redirects := 0; ; redirects++ {
+		// Headers are rebuilt for every hop so that cookies set by a redirect
+		// response are sent on the next request, matching libcurl.
+		headers := baseHeaders.Clone()
+		if authHeader != "" && hostOf(currentURL) == originalHost {
+			headers.Set("Authorization", authHeader)
+		}
+		applyCookieHeader(headers, mergedCookiesFor(jar, cfg.cookies, currentURL), preset)
+
 		var reader io.Reader
 		if currentStream != nil {
 			reader = currentStream
@@ -215,10 +212,10 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 		req = req.WithContext(ctx)
 
 		httpRsp, err := client.Do(req)
-		if cancel != nil {
-			cancel()
-		}
 		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
 			if isTimeoutErr(err) {
 				return nil, &Timeout{newError(err.Error(), 28, nil)}
 			}
@@ -252,7 +249,10 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 			// leave the body for the caller; only follow redirects when there
 			// is no body consumed yet.
 			if !(cfg.allowRedirects && rsp.IsRedirect() && httpRsp.Header.Get("location") != "") {
-				rsp.Body = decodingReader(httpRsp.Body, rsp.Headers)
+				rsp.Body = &cancelReadCloser{
+					ReadCloser: decodingReader(httpRsp.Body, rsp.Headers),
+					cancel:     cancel,
+				}
 				rsp.Elapsed = time.Since(start)
 				rsp.RedirectCount = len(history)
 				rsp.History = history
@@ -261,9 +261,15 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 			}
 			io.Copy(io.Discard, httpRsp.Body)
 			httpRsp.Body.Close()
+			if cancel != nil {
+				cancel()
+			}
 		} else {
 			data, rerr := readBody(httpRsp.Body, rsp.Headers, cfg.contentCallback, cfg.maxRecvSpeed)
 			httpRsp.Body.Close()
+			if cancel != nil {
+				cancel()
+			}
 			if rerr != nil {
 				return nil, NewRequestException(rerr.Error(), 0, nil)
 			}
@@ -297,8 +303,8 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 				currentMethod = "GET"
 				currentBody = nil
 				currentStream = nil
-				headers.Del("Content-Length")
-				headers.Del("Content-Type")
+				baseHeaders.Del("Content-Length")
+				baseHeaders.Del("Content-Type")
 			}
 			currentURL = next
 			continue
@@ -322,6 +328,7 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 
 func applyCookieHeader(headers *Headers, cookies *Cookies, preset *impersonate.Preset) {
 	if cookies.Len() == 0 {
+		headers.Del("Cookie")
 		return
 	}
 	headers.Del("Cookie")
@@ -332,6 +339,32 @@ func applyCookieHeader(headers *Headers, cookies *Cookies, preset *impersonate.P
 		return
 	}
 	headers.Set("Cookie", cookies.String())
+}
+
+// hostOf returns the lower-cased host of a URL, or "" if it cannot be parsed.
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
+// mergedCookiesFor combines the session jar with request-level cookies that
+// apply to rawURL.
+func mergedCookiesFor(jar, requestCookies *Cookies, rawURL string) *Cookies {
+	merged := NewCookies(nil)
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return merged
+	}
+	for _, ck := range jar.matching(u) {
+		merged.SetCookie(ck)
+	}
+	for _, ck := range requestCookies.matching(u) {
+		merged.SetCookie(ck)
+	}
+	return merged
 }
 
 func resolveLocation(base, loc string) (string, error) {

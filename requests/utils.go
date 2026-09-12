@@ -145,16 +145,12 @@ func resolveURL(baseURL, rawURL string, params Params) (string, error) {
 // buildFinalHeaders produces the ordered header set for a request, merging the
 // session/request headers with the impersonated browser defaults. User headers
 // always win, matching curl_cffi's default_headers behaviour.
-func buildFinalHeaders(user *Headers, contentType, acceptEncoding string, preset *impersonate.Preset) *Headers {
+func buildFinalHeaders(user *Headers, contentType string, preset *impersonate.Preset) *Headers {
 	out := &Headers{}
 	seen := map[string]bool{}
 	for _, it := range user.MultiItems() {
 		out.Set(it.Name, it.Value)
 		seen[strings.ToLower(it.Name)] = true
-	}
-	if acceptEncoding != "" && !seen["accept-encoding"] {
-		out.Set("Accept-Encoding", acceptEncoding)
-		seen["accept-encoding"] = true
 	}
 	if contentType != "" && !seen["content-type"] {
 		out.Set("Content-Type", contentType)
@@ -178,7 +174,6 @@ func buildFinalHeaders(user *Headers, contentType, acceptEncoding string, preset
 	return out
 }
 
-// parseSetCookies parses Set-Cookie values and records any new session cookie.
 // parseSetCookies parses Set-Cookie values and records any new session cookie.
 func parseSetCookies(rspHeaders *Headers, jar *Cookies, reqURL *url.URL) {
 	for _, line := range rspHeaders.GetList("set-cookie") {
