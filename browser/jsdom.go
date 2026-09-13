@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
@@ -1095,3 +1096,58 @@ func removeStr(s []string, v string) []string {
 	}
 	return out
 }
+
+// computedStyleObject exposes a cascaded style as a CSSStyleDeclaration-like
+// object, for getComputedStyle.
+func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
+	o := e.vm.NewObject()
+	props := map[string]string{
+		"display":              cs.display,
+		"visibility":           cs.visibility,
+		"color":                cssColorString(cs.textColor),
+		"background-color":     cssColorString(cs.background),
+		"font-size":            formatPx(cs.fontSize),
+		"font-weight":          map[bool]string{true: "700", false: "400"}[cs.bold],
+		"font-style":           map[bool]string{true: "italic", false: "normal"}[cs.italic],
+		"font-family":          map[bool]string{true: "monospace", false: "sans-serif"}[cs.mono],
+		"text-align":           cs.textAlign,
+		"text-decoration-line": map[bool]string{true: "underline", false: "none"}[cs.underline],
+		"white-space":          cs.whiteSpace,
+		"margin-top":           formatPx(cs.marginTop),
+		"margin-bottom":        formatPx(cs.marginBottom),
+		"margin-left":          formatPx(cs.marginLeft),
+		"padding-left":         formatPx(cs.paddingLeft),
+	}
+	if cs.lineHeight > 0 {
+		props["line-height"] = formatPx(cs.lineHeight)
+	} else {
+		props["line-height"] = "normal"
+	}
+	if cs.hasBackground {
+		props["background-color"] = cssColorString(cs.background)
+	} else {
+		props["background-color"] = "rgba(0, 0, 0, 0)"
+	}
+	_ = o.Set("getPropertyValue", func(call goja.FunctionCall) goja.Value {
+		return e.vm.ToValue(props[strings.ToLower(strings.TrimSpace(argString(call.Argument(0))))])
+	})
+	_ = o.Set("length", len(props))
+	_ = o.Set("cssText", "")
+	for _, camel := range []struct{ js, css string }{
+		{"display", "display"}, {"visibility", "visibility"}, {"color", "color"},
+		{"backgroundColor", "background-color"}, {"fontSize", "font-size"},
+		{"fontWeight", "font-weight"}, {"fontStyle", "font-style"},
+		{"fontFamily", "font-family"}, {"textAlign", "text-align"},
+		{"whiteSpace", "white-space"}, {"lineHeight", "line-height"},
+	} {
+		val := props[camel.css]
+		_ = o.Set(camel.js, val)
+	}
+	return o
+}
+
+func cssColorString(c color.RGBA) string {
+	return "rgba(" + itoaSmall(int(c.R)) + ", " + itoaSmall(int(c.G)) + ", " + itoaSmall(int(c.B)) + ", " + strconv.FormatFloat(float64(c.A)/255, 'f', 3, 64) + ")"
+}
+
+func itoaSmall(n int) string { return strconv.Itoa(n) }

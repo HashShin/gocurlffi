@@ -307,7 +307,12 @@ func (e *jsEnv) setupGlobals() {
 		return m
 	})
 	_ = rt.Set("getComputedStyle", func(call goja.FunctionCall) goja.Value {
-		return e.newStyleObject(nil)
+		n := e.nodeArg(call.Argument(0))
+		cs := e.page.computedStyle(n)
+		if cs == nil {
+			return e.newStyleObject(nil)
+		}
+		return e.computedStyleObject(cs)
 	})
 
 	_ = rt.Set("atob", func(call goja.FunctionCall) goja.Value {

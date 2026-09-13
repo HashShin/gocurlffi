@@ -67,6 +67,12 @@ make gobrowser
 
 ## What works
 
+- CSS: `<style>` blocks and `<link rel=stylesheet>` sheets are fetched and
+  cascaded (specificity, `!important`, source order, inheritance, simple
+  `@media` width queries, a user-agent default sheet), and drive both
+  `getComputedStyle` and the screenshot renderer. Loading is lazy: loading a
+  page or extracting text never touches stylesheets; the first style-dependent
+  operation fetches them once and caches them.
 - Document decoding: the Content-Type charset, a BOM or `<meta charset>` is
   honoured (via `x/net/html/charset`), so non-UTF-8 pages are not mojibake.
   A `<base href>` sets the base for relative URLs, used by script `src`,
@@ -188,9 +194,18 @@ GOBROWSER_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 ## Screenshots
 
 `Page.Screenshot` renders the page to a PNG, mirroring what Lightpanda's
-screenshot does: it flows the document at a given width and draws headings,
-paragraphs, lists with markers, preformatted blocks, blockquotes, rules, and
-styled runs (bold, italic, monospace, links, underlines, inline colors).
+screenshot does: it applies the page's CSS first, then flows the document at a
+given width and draws headings, paragraphs, lists with markers, preformatted
+blocks, blockquotes, rules, and styled runs (bold, italic, monospace, links,
+underlines, inline colors), with flat block background colours and
+`text-align`.
+
+Verified against a live page rather than by eye: on
+`quotes.toscrape.com/js/` the cascade reproduces that site's own CSS exactly -
+`.quote span.text` at 19.2px italic (`font-size: large`), `.quote small.author`
+at weight 700 in `#3677E8`, `.quote` with 30px bottom margin and 10px padding,
+and `body` in `sans-serif`. Applying it grows the render from 1100px to 1496px,
+which is that CSS's margin and padding taking effect.
 
 ```go
 png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
@@ -209,9 +224,12 @@ png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
 It is deliberately the same class of renderer as the Zig reference, with the
 same honest limits:
 
-- Text only. No `<img>` content (an `alt` is drawn as `[alt]`), no CSS
-  backgrounds, borders, shadows, floats or positioning, and no stylesheet
-  cascade: styling comes from tag defaults and inline `style` attributes.
+- Text only. No `<img>` content (an `alt` is drawn as `[alt]`). CSS is
+  cascaded for typography, colour, display, spacing, alignment and flat block
+  backgrounds, but there is no box model: no borders, shadows, floats,
+  positioning, gradients or images. `float` and `position` are ignored, so
+  sidebars and menus that a browser would place beside the content flow inline
+  or in document order.
 - Not pixel-identical to a browser. Two fonts are embedded (Go regular/bold/
   italic and Go Mono) rather than the page's fonts.
 

@@ -274,10 +274,11 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   `warning:`. Server-rendered alternatives that do return linkable HTML:
   `https://www.bing.com/search?q=...`, `https://search.brave.com/search?q=...`,
   `https://lite.duckduckgo.com/lite/?q=...`.
-- `browser` has no CSS cascade, box model, images or WebSockets, and no PDF
-  output. It runs scripts and mutates the DOM, which covers scraping. It can
-  render a page to a PNG with `Screenshot`, but that is a document renderer
-  (flowed text, headings, lists, quotes), not a web renderer.
+- `browser` has no CSS box model (no borders, shadows, floats, positioning or
+  images), no WebSockets and no PDF output. It cascades the page's CSS for
+  typography, colour, display and spacing, and can render a page to a PNG with
+  `Screenshot`, but that is a document renderer (flowed text, headings, lists,
+  quotes, flat backgrounds), not a web renderer.
 
 ## License
 

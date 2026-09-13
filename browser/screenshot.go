@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
-	"math"
-	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -26,12 +24,17 @@ type ScreenshotOptions struct {
 
 // Screenshot renders the page to a PNG.
 //
-// This is a document renderer: it flows text at the requested width and draws
-// headings, paragraphs, lists, preformatted blocks, quotes and rules, with
-// bold/italic/monospace runs, link styling and inline colors. It is not a web
-// renderer: there is no CSS box model, no images, no backgrounds and no
-// borders. Layout, font parsing and rasterization happen only in this call, so
-// loading pages is unaffected.
+// The page's CSS is applied first: <style> blocks and <link rel=stylesheet>
+// sheets are fetched, parsed and cascaded (specificity, !important, source
+// order, inheritance, simple media queries), including the user-agent defaults.
+// The renderer then flows the document at the requested width and draws
+// headings, paragraphs, lists, preformatted blocks, blockquotes, rules and
+// styled runs, with flat block background colours and text alignment.
+//
+// It is still a document renderer, not a web renderer: there is no CSS box
+// model, no images, no borders or shadows, and no positioning or floats.
+// Layout, stylesheet loading, font parsing and rasterization all happen inside
+// this call, so loading pages is unaffected.
 func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 	if p.doc == nil {
 		return nil, errors.New("browser: page has no document")
@@ -55,16 +58,144 @@ func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 		maxHeight = 20000
 	}
 
-	base := defaultRenderStyle()
-	c := &collector{style: base}
+	eng := p.styleEngineFor(float64(width))
+	c := &collector{engine: eng}
 	c.walkChildren(p.doc)
 	c.flush()
 
-	doc := layoutBlocks(c.blocks, width, base.size)
+	doc := layoutBlocks(c.blocks, width, eng.baseSize)
 	if doc.height > maxHeight {
 		doc.height = maxHeight
 	}
-	return renderPNG(doc, scale)
+
+	// The document background comes from <html> or <body>.
+	pageBG := renderPageBG
+	if bg, ok := p.documentBackground(eng); ok {
+		pageBG = bg
+	}
+	return renderPNG(doc, scale, pageBG)
+}
+
+func (p *Page) documentBackground(eng *styleEngine) (color.RGBA, bool) {
+	for _, tag := range []string{"body", "html"} {
+		if n := findElement(p.doc, tag); n != nil {
+			if cs := eng.compute(n); cs != nil && cs.hasBackground {
+				return cs.background, true
+			}
+		}
+	}
+	return color.RGBA{}, false
+}
+
+// --- stylesheet loading ---
+
+// cssTexts returns the page's CSS in document order, with @imports resolved.
+// It is cached: sources are fetched at most once per page.
+func (p *Page) cssTexts() []string {
+	if p.styleSources != nil {
+		return p.styleSources
+	}
+	var sources []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode {
+				switch c.Data {
+				case "style":
+					if cssMediaMatches(attrOf(c, "media"), 0) {
+						sources = append(sources, textContent(c))
+					}
+				case "link":
+					if isStylesheetLink(c) {
+						href := resolveURL(p.baseURL(), attrOf(c, "href"))
+						if resp, err := p.browser.get(href, nil); err == nil {
+							sources = append(sources, string(resp.Content))
+						}
+					}
+				}
+			}
+			walk(c)
+		}
+	}
+	walk(p.doc)
+
+	expanded := make([]string, 0, len(sources))
+	for _, src := range sources {
+		order := 0
+		_, imports := parseCSSStylesheet(src, 0, &order)
+		for _, imp := range imports {
+			if isFontOnlyStylesheet(imp) {
+				// We render with embedded fonts, so a font provider's CSS is a
+				// wasted request.
+				continue
+			}
+			if resp, err := p.browser.get(resolveURL(p.baseURL(), imp), nil); err == nil {
+				expanded = append(expanded, string(resp.Content))
+			}
+		}
+		expanded = append(expanded, src)
+	}
+	p.styleSources = expanded
+	return expanded
+}
+
+func isFontOnlyStylesheet(u string) bool {
+	l := strings.ToLower(u)
+	return strings.Contains(l, "fonts.googleapis.com") || strings.Contains(l, "fonts.gstatic.com")
+}
+
+func isStylesheetLink(n *html.Node) bool {
+	rel := strings.ToLower(attrOf(n, "rel"))
+	isSheet := false
+	for _, tok := range strings.Fields(rel) {
+		if tok == "stylesheet" {
+			isSheet = true
+		}
+	}
+	if !isSheet || hasAttr(n, "disabled") {
+		return false
+	}
+	if attrOf(n, "href") == "" {
+		return false
+	}
+	return cssMediaMatches(attrOf(n, "media"), 0)
+}
+
+func cssMediaMatches(q string, width float64) bool {
+	if strings.TrimSpace(q) == "" {
+		return true
+	}
+	p := &cssParser{mediaWidth: width}
+	return p.matchMedia(q)
+}
+
+// styleEngineFor builds (and caches) the cascade for a layout width, because
+// media queries depend on it.
+func (p *Page) styleEngineFor(width float64) *styleEngine {
+	if p.styleEngines == nil {
+		p.styleEngines = map[float64]*styleEngine{}
+	}
+	if e, ok := p.styleEngines[width]; ok {
+		return e
+	}
+	order := 0
+	var rules []cssRule
+	for _, src := range p.cssTexts() {
+		rs, _ := parseCSSStylesheet(src, width, &order)
+		rules = append(rules, rs...)
+	}
+	e := newStyleEngine(rules, width)
+	p.styleEngines[width] = e
+	return e
+}
+
+// computedStyle returns the cascaded style of an element, loading the page's
+// stylesheets on first use. It is what getComputedStyle is built on.
+func (p *Page) computedStyle(n *html.Node) *computedStyle {
+	if n == nil || n.Type != html.ElementNode {
+		return nil
+	}
+	return p.styleEngineFor(1280).compute(n)
 }
 
 // --- DOM to blocks ---
@@ -75,39 +206,29 @@ type listState struct {
 }
 
 type collector struct {
-	blocks []renderBlock
-	cur    *renderBlock
-	style  renderStyle
-	indent float64
-	quote  int
-	pre    bool
-	lists  []listState
-	marker string
+	engine  *styleEngine
+	blocks  []renderBlock
+	cur     *renderBlock
+	style   renderStyle
+	content float64 // left edge of the parent's content box
+	quote   int
+	pre     bool
+	lists   []listState
+	marker  string
+
+	// bg is the background inherited from the nearest ancestor block that has
+	// one; a descendant block paints it too, which is how a parent's
+	// background shows behind its children.
+	bg    color.RGBA
+	hasBG bool
 }
 
-var renderHeadingSizes = map[string]float64{
-	"h1": 32, "h2": 26, "h3": 22, "h4": 19, "h5": 17, "h6": 15,
-}
-
-var renderBlockTags = map[string]bool{
-	"address": true, "article": true, "aside": true, "blockquote": true,
-	"body": true, "dd": true, "div": true, "dl": true, "dt": true,
-	"fieldset": true, "figcaption": true, "figure": true, "footer": true,
-	"form": true, "header": true, "html": true, "li": true, "main": true,
-	"nav": true, "ol": true, "p": true, "pre": true, "section": true,
-	"table": true, "tbody": true, "td": true, "tfoot": true, "th": true,
-	"thead": true, "tr": true, "ul": true, "hgroup": true, "details": true,
-	"summary": true, "caption": true,
-}
-
-var renderSkipTags = map[string]bool{
-	"script": true, "style": true, "noscript": true, "template": true,
-	"head": true, "title": true, "meta": true, "link": true, "base": true,
-	"iframe": true, "svg": true, "canvas": true, "audio": true, "video": true,
-	"object": true, "embed": true, "input": true, "textarea": true,
-	"select": true, "option": true, "source": true, "track": true,
-	"area": true, "map": true, "col": true, "colgroup": true, "param": true,
-	"dialog": true, "slot": true, "math": true,
+func isBlockDisplay(d string) bool {
+	switch d {
+	case "block", "flex", "grid", "list-item", "table", "table-row", "table-cell", "inline-flex":
+		return true
+	}
+	return false
 }
 
 func (c *collector) walkChildren(n *html.Node) {
@@ -125,23 +246,26 @@ func (c *collector) walkNode(n *html.Node) {
 	}
 }
 
-func (c *collector) leading() float64 {
-	if len(c.blocks) == 0 && c.cur == nil {
-		return 0
-	}
-	return 10
-}
-
-func (c *collector) ensure() *renderBlock {
+func (c *collector) ensure(cs *computedStyle) *renderBlock {
 	if c.cur == nil {
-		c.cur = &renderBlock{
+		b := &renderBlock{
 			kind:    blockText,
-			indent:  c.indent,
+			boxLeft: c.content,
+			textX:   c.content,
 			quote:   c.quote,
 			pre:     c.pre,
 			marker:  c.marker,
-			leading: c.leading(),
 		}
+		if cs != nil {
+			b.align = cs.textAlign
+			b.lineH = cs.lineHeight
+		}
+		if c.hasBG {
+			b.bg = c.bg
+			b.hasBG = true
+			b.bgFull = true
+		}
+		c.cur = b
 		c.marker = ""
 	}
 	return c.cur
@@ -158,8 +282,8 @@ func (c *collector) addText(s string) {
 	if s == "" {
 		return
 	}
-	if c.pre {
-		b := c.ensure()
+	if c.pre || c.style.mono && c.cur != nil && c.cur.pre {
+		b := c.ensure(nil)
 		b.spans = append(b.spans, renderSpan{text: s, style: c.style})
 		return
 	}
@@ -167,60 +291,75 @@ func (c *collector) addText(s string) {
 	if collapsed == "" {
 		return
 	}
-	b := c.ensure()
+	b := c.ensure(nil)
 	b.spans = append(b.spans, renderSpan{text: collapsed, style: c.style})
 }
 
 func (c *collector) walkElement(el *html.Node) {
-	tag := strings.ToLower(el.Data)
-	if renderSkipTags[tag] {
+	cs := c.engine.compute(el)
+	if cs == nil {
 		return
 	}
-	if hasAttr(el, "hidden") {
+	if cs.display == "none" || cs.visibility == "hidden" {
 		return
+	}
+	tag := strings.ToLower(el.Data)
+
+	saved := struct {
+		style   renderStyle
+		content float64
+		quote   int
+		pre     bool
+		bg      color.RGBA
+		hasBG   bool
+	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG}
+
+	if cs.hasBackground {
+		c.bg = cs.background
+		c.hasBG = true
 	}
 
-	// A block's own style, then children on top of it.
-	savedStyle := c.style
-	st := c.style
-	if s, ok := getAttr(el, "style"); ok {
-		inl := parseInlineStyle(s)
-		if inl.hidden {
-			return
-		}
-		applyInlineStyle(&st, inl)
+	c.style = renderStyle{
+		size:      cs.fontSize,
+		bold:      cs.bold,
+		italic:    cs.italic,
+		mono:      cs.mono,
+		link:      cs.link,
+		underline: cs.underline,
+		strike:    cs.strike,
+		color:     cs.textColor,
 	}
-	c.style = st
-	defer func() { c.style = savedStyle }()
+	block := isBlockDisplay(cs.display)
+	if block {
+		// Box edges: margin then padding, relative to the parent's content box.
+		boxLeft := c.content + cs.marginLeft
+		c.content = boxLeft + cs.paddingLeft
+	}
+	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
+	c.pre = c.pre || pre
+
+	defer func() {
+		c.style, c.content, c.quote, c.pre = saved.style, saved.content, saved.quote, saved.pre
+		c.bg, c.hasBG = saved.bg, saved.hasBG
+	}()
 
 	switch tag {
 	case "br":
-		// A hard break ends the current visual block.
 		c.flush()
 		return
 	case "hr":
 		c.flush()
 		c.blocks = append(c.blocks, renderBlock{
-			kind: blockRule, indent: c.indent, quote: c.quote, leading: 10,
+			kind: blockRule, boxLeft: c.content, textX: c.content,
+			quote: c.quote,
 		})
 		return
 	case "img":
 		if alt, ok := getAttr(el, "alt"); ok && strings.TrimSpace(alt) != "" {
 			s := c.style
 			s.italic = true
-			c.ensure().spans = append(c.ensure().spans, renderSpan{text: "[" + strings.TrimSpace(alt) + "]", style: s})
+			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: "[" + strings.TrimSpace(alt) + "]", style: s})
 		}
-		return
-	}
-
-	if size, ok := renderHeadingSizes[tag]; ok {
-		c.flush()
-		c.style.size = size
-		c.style.bold = true
-		c.style.mono = false
-		c.cur = &renderBlock{kind: blockText, indent: c.indent, quote: c.quote, leading: 20}
-		c.walkChildren(el)
-		c.flush()
 		return
 	}
 
@@ -234,210 +373,59 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	case "li":
 		c.flush()
-		if n := len(c.lists); n > 0 && c.lists[n-1].ordered {
-			c.lists[n-1].index++
-			c.marker = fmt.Sprintf("%d.", c.lists[n-1].index)
-		} else {
-			c.marker = "\u2022"
+		if cs.listStyle != "none" {
+			if n := len(c.lists); n > 0 && c.lists[n-1].ordered {
+				c.lists[n-1].index++
+				c.marker = fmt.Sprintf("%d.", c.lists[n-1].index)
+			} else {
+				c.marker = listMarker(cs.listStyle)
+			}
 		}
-		savedIndent := c.indent
-		c.indent += 22
+		if block {
+			c.cur = nil
+			c.ensure(cs)
+			c.cur.leading = cs.marginTop
+			c.cur.trailing = cs.marginBottom
+		}
 		c.walkChildren(el)
 		c.flush()
-		c.indent = savedIndent
 		return
 	case "blockquote":
 		c.flush()
-		savedIndent, savedQuote := c.indent, c.quote
-		c.indent += 10
 		c.quote++
 		c.walkChildren(el)
-		c.indent, c.quote = savedIndent, savedQuote
-		c.flush()
-		return
-	case "pre":
-		c.flush()
-		savedPre := c.pre
-		c.pre = true
-		c.style.mono = true
-		if c.style.size > 15 {
-			c.style.size = 14
-		}
-		c.walkChildren(el)
-		c.pre = savedPre
 		c.flush()
 		return
 	}
 
-	if renderBlockTags[tag] {
+	if block {
 		c.flush()
+		c.ensure(cs)
+		c.cur.leading = cs.marginTop
+		c.cur.trailing = cs.marginBottom
+		c.cur.pre = c.pre
+		c.cur.nowrap = cs.whiteSpace == "nowrap"
 		c.walkChildren(el)
 		c.flush()
 		return
-	}
-
-	// Inline elements adjust the current style only.
-	switch tag {
-	case "b", "strong":
-		c.style.bold = true
-	case "i", "em", "cite", "var", "dfn":
-		c.style.italic = true
-	case "code", "kbd", "samp", "tt":
-		c.style.mono = true
-	case "u", "ins":
-		c.style.underline = true
-	case "s", "del", "strike":
-		c.style.underline = true
-	case "a":
-		if href, ok := getAttr(el, "href"); ok && href != "" && !strings.HasPrefix(strings.TrimSpace(href), "javascript:") {
-			if !c.style.link {
-				c.style.color = renderLinkColor
-			}
-			c.style.link = true
-			c.style.underline = true
-		}
-	case "small":
-		c.style.size = math.Max(10, c.style.size-2)
-	case "big":
-		c.style.size += 2
 	}
 	c.walkChildren(el)
 }
 
-// --- inline style parsing ---
-
-type inlineStyle struct {
-	hidden    bool
-	color     string
-	fontSize  float64
-	fontBold  bool
-	fontItal  bool
-	underline bool
-	mono      bool
-}
-
-func parseInlineStyle(s string) inlineStyle {
-	var out inlineStyle
-	for _, decl := range strings.Split(s, ";") {
-		key, val, ok := strings.Cut(decl, ":")
-		if !ok {
-			continue
-		}
-		key = strings.ToLower(strings.TrimSpace(key))
-		val = strings.TrimSpace(val)
-		low := strings.ToLower(val)
-		switch key {
-		case "display":
-			if low == "none" {
-				out.hidden = true
-			}
-		case "visibility":
-			if low == "hidden" {
-				out.hidden = true
-			}
-		case "color":
-			out.color = low
-		case "font-size":
-			if px, ok := parseCSSPx(low); ok {
-				out.fontSize = px
-			}
-		case "font-weight":
-			if low == "bold" || low == "bolder" {
-				out.fontBold = true
-			} else if n, err := strconv.Atoi(low); err == nil && n >= 600 {
-				out.fontBold = true
-			}
-		case "font-style":
-			if strings.Contains(low, "italic") || strings.Contains(low, "oblique") {
-				out.fontItal = true
-			}
-		case "text-decoration", "text-decoration-line":
-			if strings.Contains(low, "underline") {
-				out.underline = true
-			}
-		case "font-family":
-			if strings.Contains(low, "mono") || strings.Contains(low, "courier") || strings.Contains(low, "consol") {
-				out.mono = true
-			}
-		}
-	}
-	return out
-}
-
-func parseCSSPx(v string) (float64, bool) {
-	v = strings.TrimSpace(v)
-	v = strings.TrimSuffix(v, "px")
-	v = strings.TrimSuffix(v, "pt")
-	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-	if err != nil || f <= 0 {
-		return 0, false
-	}
-	if f > 96 {
-		f = 96
-	}
-	return f, true
-}
-
-func applyInlineStyle(st *renderStyle, in inlineStyle) {
-	if in.color != "" {
-		if c, ok := parseCSSColor(in.color); ok {
-			st.color = c
-		}
-	}
-	if in.fontSize > 0 {
-		st.size = in.fontSize
-	}
-	if in.fontBold {
-		st.bold = true
-	}
-	if in.fontItal {
-		st.italic = true
-	}
-	if in.underline {
-		st.underline = true
-	}
-	if in.mono {
-		st.mono = true
-	}
-}
-
-// parseCSSColor understands #rgb, #rrggbb and a few keyword colors.
-func parseCSSColor(v string) (color.RGBA, bool) {
-	v = strings.TrimSpace(strings.ToLower(v))
-	switch v {
-	case "black":
-		return color.RGBA{0, 0, 0, 0xff}, true
-	case "white":
-		return color.RGBA{0xff, 0xff, 0xff, 0xff}, true
-	case "red":
-		return color.RGBA{0xc0, 0x39, 0x2b, 0xff}, true
-	case "gray", "grey":
-		return color.RGBA{0x80, 0x80, 0x80, 0xff}, true
-	case "blue":
-		return color.RGBA{0x0b, 0x57, 0xd0, 0xff}, true
-	case "green":
-		return color.RGBA{0x1e, 0x7e, 0x34, 0xff}, true
-	}
-	if !strings.HasPrefix(v, "#") {
-		return color.RGBA{}, false
-	}
-	hexs := v[1:]
-	switch len(hexs) {
-	case 3:
-		r := hexs[0:1]
-		g := hexs[1:2]
-		b := hexs[2:3]
-		hexs = r + r + g + g + b + b
-	case 6:
+func listMarker(style string) string {
+	switch style {
+	case "none":
+		return ""
+	case "circle":
+		return "\u25e6"
+	case "square":
+		return "\u25aa"
 	default:
-		return color.RGBA{}, false
+		return "\u2022"
 	}
-	n, err := strconv.ParseUint(hexs, 16, 32)
-	if err != nil {
-		return color.RGBA{}, false
-	}
-	return color.RGBA{uint8(n >> 16), uint8(n >> 8), uint8(n), 0xff}, true
 }
+
+// --- text helpers ---
 
 func collapseWhitespace(s string) string {
 	trimmedLeft := strings.TrimLeft(s, " \t\r\n\f\v")

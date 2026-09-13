@@ -53,6 +53,11 @@ type Page struct {
 	// content, which is kept out of the document tree.
 	templateContent map[*html.Node]*html.Node
 
+	// styleSources holds the page's CSS, fetched on first use, and
+	// styleEngines caches the cascade per layout width.
+	styleSources []string
+	styleEngines map[float64]*styleEngine
+
 	loadedScripts map[string]bool
 }
 
