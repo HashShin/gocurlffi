@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/andybalholm/cascadia"
 	"golang.org/x/net/html"
@@ -46,6 +47,16 @@ func isAncestor(a, b *html.Node) bool {
 	return false
 }
 
+// domMutations counts DOM insertions, removals and attribute writes. A page
+// compares it with the value its style caches were built at, so that a script
+// which adds a <style> element or a <link rel=stylesheet>, or changes an
+// inline style, is picked up instead of being answered from stale data. It is
+// only ever used to invalidate, so it does not matter that the counter is
+// process-wide and shared between pages.
+var domMutations atomic.Uint64
+
+func markDOMMutation() { domMutations.Add(1) }
+
 func appendChild(parent, child *html.Node) *html.Node {
 	if parent == nil || child == nil || isAncestor(child, parent) {
 		// Refuse to create a cycle, which a real DOM also rejects.
@@ -63,6 +74,7 @@ func appendChild(parent, child *html.Node) *html.Node {
 		parent.FirstChild = child
 	}
 	parent.LastChild = child
+	markDOMMutation()
 	return child
 }
 
@@ -84,6 +96,7 @@ func removeChild(child *html.Node) *html.Node {
 	child.Parent = nil
 	child.PrevSibling = nil
 	child.NextSibling = nil
+	markDOMMutation()
 	return child
 }
 
@@ -106,6 +119,7 @@ func insertBefore(parent, child, ref *html.Node) *html.Node {
 		parent.FirstChild = child
 	}
 	ref.PrevSibling = child
+	markDOMMutation()
 	return child
 }
 
@@ -137,11 +151,15 @@ func setAttr(n *html.Node, key, val string) {
 	}
 	for i := range n.Attr {
 		if n.Attr[i].Key == key {
-			n.Attr[i].Val = val
+			if n.Attr[i].Val != val {
+				n.Attr[i].Val = val
+				markDOMMutation()
+			}
 			return
 		}
 	}
 	n.Attr = append(n.Attr, html.Attribute{Key: key, Val: val})
+	markDOMMutation()
 }
 
 func removeAttr(n *html.Node, key string) {
@@ -151,6 +169,7 @@ func removeAttr(n *html.Node, key string) {
 	for i := range n.Attr {
 		if n.Attr[i].Key == key {
 			n.Attr = append(n.Attr[:i], n.Attr[i+1:]...)
+			markDOMMutation()
 			return
 		}
 	}

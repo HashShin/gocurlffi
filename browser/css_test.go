@@ -528,3 +528,251 @@ func TestCSSMonospaceSizeAndInherit(t *testing.T) {
 		}
 	}
 }
+
+// A fingerprinted build asset linked from a nested page with a root-relative
+// href, plus the integrity and crossorigin attributes a static site generator
+// emits. The path must resolve against the origin, not against the page's
+// directory, and the extra attributes must not stop the sheet being used.
+func TestCSSRootRelativeHashedAssetLink(t *testing.T) {
+	const asset = "/static-assets/css/main.min.25ad059cc60643b238e15af1e04f401113b2bc27f054ca6a091fe87a4be47330.css"
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == asset {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = w.Write([]byte(`body { background-color: #102030; color: #ffffff }
+				article h1 { font-size: 2em; color: #ffcc00 }
+				article p { font-size: 18px }`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head>
+			<link rel="stylesheet" href="` + asset + `" integrity="sha256-Ja0FnMYGQ7I44Vrx4E9AEROyvCfwVMpqCR/oekvkczA=" crossorigin="anonymous" />
+			</head><body><article><h1>Title</h1><p>Body</p></article></body></html>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	// Fetched from a nested directory, so a naive join would look for
+	// /blog/post/static-assets/...
+	p, err := b.Open(srv.URL + "/blog/post/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cases := []struct{ expr, want string }{
+		{`getComputedStyle(document.body).backgroundColor`, "rgba(16, 32, 48, 1.000)"},
+		{`getComputedStyle(document.body).color`, "rgba(255, 255, 255, 1.000)"},
+		{`getComputedStyle(document.querySelector('h1')).fontSize`, "32px"},
+		{`getComputedStyle(document.querySelector('h1')).color`, "rgba(255, 204, 0, 1.000)"},
+		{`getComputedStyle(document.querySelector('p')).fontSize`, "18px"},
+		{`document.styleSheets.length`, "1"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("the stylesheet was fetched %d times, want 1", got)
+	}
+}
+
+// document.styleSheets reports the sheets the page declared, with their rules,
+// so a page can check its own CSS. Reading an href must not fetch anything.
+func TestCSSStyleSheetsObject(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/a.css" {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = w.Write([]byte("p { color: #123456; }\n.lead { font-size: 20px !important; }"))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><head>
+			<style>h1 { color: red }</style>
+			<link rel="stylesheet" href="/a.css">
+			<link rel="stylesheet" href="/print.css" media="print">
+			</head><body><h1>h</h1><p class="lead">p</p></body></html>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// A print-only sheet is still a declared sheet, and a browser lists it in
+	// document.styleSheets even though it does not apply.
+	if got := evalString(t, p, `document.styleSheets.length`); got != "3" {
+		t.Fatalf("styleSheets.length = %s, want 3", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[2].media.mediaText`); got != "print" {
+		t.Fatalf("print sheet media = %s", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[2].cssRules.length`); got != "0" {
+		t.Fatalf("a print sheet must not be fetched or parsed, got %s rules", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[0].href`); got != "null" {
+		t.Fatalf("inline sheet href = %s, want null", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].href`); got != srv.URL+"/a.css" {
+		t.Fatalf("linked sheet href = %s", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].ownerNode.tagName`); got != "LINK" {
+		t.Fatalf("ownerNode = %s, want LINK", got)
+	}
+	// Listing sheets and reading their hrefs must not fetch anything.
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Fatalf("reading hrefs fetched the sheet %d times; it must be lazy", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[0].cssRules[0].selectorText`); got != "h1" {
+		t.Fatalf("selectorText = %s, want h1", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].cssRules.length`); got != "2" {
+		t.Fatalf("cssRules.length = %s, want 2", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].cssRules[1].selectorText`); got != ".lead" {
+		t.Fatalf("second rule selector = %s", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].cssRules[0].style.getPropertyValue('color')`); got != "#123456" {
+		t.Fatalf("declared color = %s", got)
+	}
+	if got := evalString(t, p, `document.styleSheets[1].cssRules[1].style.getPropertyPriority('font-size')`); got != "important" {
+		t.Fatalf("priority = %s, want important", got)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("cssRules fetched the sheet %d times, want 1", got)
+	}
+}
+
+// A stylesheet the page adds from JavaScript is part of the page's own CSS, so
+// it must be applied, not answered from a cache taken before it existed.
+func TestCSSAddedByScript(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/late.css" {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = w.Write([]byte("p { color: #00ff00; font-size: 22px }"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><style>p { color: #0000ff }</style></head>
+			<body><p id="p">text</p>
+			<script>
+				// Read the style first, so a naive cache would be built here.
+				var before = getComputedStyle(document.getElementById('p')).color;
+				var link = document.createElement('link');
+				link.rel = 'stylesheet';
+				link.href = '/late.css';
+				document.head.appendChild(link);
+				var style = document.createElement('style');
+				style.textContent = 'p { font-size: 30px }';
+				document.head.appendChild(style);
+				document.getElementById('p').style.fontStyle = 'italic';
+				window.__before = before;
+			</script></body></html>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cases := []struct{ expr, want string }{
+		{`window.__before`, "rgba(0, 0, 255, 1.000)"},
+		// The linked sheet wins on colour, the later <style> on size, and the
+		// inline write on style, all of which arrived after the first read.
+		{`getComputedStyle(document.getElementById('p')).color`, "rgba(0, 255, 0, 1.000)"},
+		{`getComputedStyle(document.getElementById('p')).fontSize`, "30px"},
+		{`getComputedStyle(document.getElementById('p')).fontStyle`, "italic"},
+		{`document.styleSheets.length`, "3"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("the script-added sheet was fetched %d times, want 1", got)
+	}
+	// A screenshot must see the same styles as getComputedStyle.
+	if _, err := p.Screenshot(ScreenshotOptions{Width: 400}); err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+}
+
+func evalString(t *testing.T, p *Page, expr string) string {
+	t.Helper()
+	v, err := p.Eval(expr)
+	if err != nil {
+		t.Fatalf("%s: %v", expr, err)
+	}
+	return v.String()
+}
+
+// StyleSheets is the Go view of what the page declared: every sheet, whether it
+// applied, and why not when it did not.
+func TestPageStyleSheets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok.css":
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = w.Write([]byte("p { color: red }\n.lead { font-size: 20px }"))
+		case "/print.css":
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = w.Write([]byte("p { color: black }"))
+		default:
+			if strings.HasSuffix(r.URL.Path, ".css") {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write([]byte(`<html><head>
+				<style>h1 { color: navy }</style>
+				<link rel="stylesheet" href="/ok.css">
+				<link rel="stylesheet" href="/print.css" media="print">
+				<link rel="stylesheet" href="/missing.css">
+				</head><body><h1>h</h1><p id="p">p</p></body></html>`))
+		}
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	got := p.StyleSheets()
+	want := []StyleSheet{
+		{Inline: true, Bytes: 18, Rules: 1},
+		{Href: srv.URL + "/ok.css", Bytes: 42, Rules: 2},
+		{Href: srv.URL + "/print.css", Media: "print", Err: "media print does not match"},
+		{Href: srv.URL + "/missing.css", Err: "404 Not Found"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d sheets, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sheet %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// Only the applied sheets reach the cascade: the print sheet's colour and
+	// the missing sheet must not apply.
+	if v := evalString(t, p, `getComputedStyle(document.querySelector('p')).color`); v != "rgba(255, 0, 0, 1.000)" {
+		t.Errorf("paragraph colour = %s, want the applied sheet's red", v)
+	}
+}

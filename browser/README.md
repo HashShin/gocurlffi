@@ -73,6 +73,24 @@ make gobrowser
   `getComputedStyle` and the screenshot renderer. Loading is lazy: loading a
   page or extracting text never touches stylesheets; the first style-dependent
   operation fetches them once and caches them.
+- The page's own stylesheets, and nothing else: every `<style>` element and
+  every `<link rel=stylesheet>` the document contains, in document order, with
+  relative and root-relative (`/assets/main.min.<hash>.css`) hrefs resolved
+  against the page, whatever `integrity` or `crossorigin` attributes they carry.
+  A sheet added by a script is picked up too, because the style caches are
+  invalidated when the DOM changes. `Page.StyleSheets` and `--sheets` report
+  each one with its size and rule count, or the reason it was not applied:
+
+  ```sh
+  ./bin/gobrowser get https://quotes.toscrape.com/js/ --sheets
+  applied      https://quotes.toscrape.com/static/bootstrap.min.css   2012 rules, 125934 bytes
+  applied      https://quotes.toscrape.com/static/main.css            22 rules, 1368 bytes
+  applied      inline <style>                                         5 rules, 145 bytes
+  ```
+- `document.styleSheets` (with `href`, `media`, `ownerNode` and `cssRules`,
+  including each rule's `selectorText` and `style.getPropertyValue`), so a page
+  can inspect its own CSS. Reading a sheet's URL never fetches it; reading its
+  rules does.
 - CSS custom properties and `var(--name, fallback)`, including inheritance and
   nested references. Modern sites theme everything this way: Wikipedia's body
   colour is `color: var(--color-base, #202122)` and Bootstrap 5 styles every
@@ -385,6 +403,7 @@ gobrowser get URL \
   --no-js               # disable JavaScript
   --console             # print console.* to stderr
   --status              # print HTTP status to stderr
+  --sheets              # list the page's own stylesheets and exit
   --debug               # log page-load phases to stderr
   -H 'K: V'             # extra header (repeatable)
 ```

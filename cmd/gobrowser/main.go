@@ -62,6 +62,7 @@ flags:
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
+      --sheets             list the page's own stylesheets (fetched, applied, skipped)
       --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
@@ -89,6 +90,7 @@ func runGet(args []string) {
 		noJS         = fs.Bool("no-js", false, "disable JavaScript")
 		showConsole  = fs.Bool("console", false, "print console output")
 		showStatus   = fs.Bool("status", false, "print HTTP status")
+		listSheets   = fs.Bool("sheets", false, "list the page's stylesheets and exit")
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 	)
 	var headers headerList
@@ -154,6 +156,28 @@ func runGet(args []string) {
 		if p.WaitForSelector(*wait, *waitTimeout) == nil {
 			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", *wait, *waitTimeout)
 		}
+	}
+
+	if *listSheets {
+		var sb strings.Builder
+		for _, s := range p.StyleSheets() {
+			url := s.Href
+			if url == "" {
+				url = "inline <style>"
+			}
+			switch {
+			case s.Err != "":
+				fmt.Fprintf(&sb, "NOT APPLIED  %-60s %s\n", url, s.Err)
+			default:
+				fmt.Fprintf(&sb, "applied      %-60s %d rules, %d bytes\n", url, s.Rules, s.Bytes)
+			}
+		}
+		if out := sb.String(); out != "" {
+			fmt.Print(out)
+		} else {
+			fmt.Println("this page declares no stylesheets")
+		}
+		return
 	}
 
 	if *screenshot != "" {

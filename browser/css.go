@@ -23,6 +23,8 @@ type cssRule struct {
 	spec  cascadia.Specificity
 	order int
 	decls []cssDecl
+	// text is the selector text, kept for document.styleSheets.
+	text string
 }
 
 // cssStats counts what a stylesheet contained, so a caller can tell whether a
@@ -273,7 +275,10 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 			continue
 		}
 		*p.order++
-		*out = append(*out, cssRule{sel: sel, spec: cssSpecificity(selText), order: *p.order, decls: decls})
+		*out = append(*out, cssRule{
+			sel: sel, spec: cssSpecificity(selText), order: *p.order,
+			decls: decls, text: selText,
+		})
 	}
 }
 

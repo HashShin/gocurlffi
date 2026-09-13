@@ -62,9 +62,19 @@ type Page struct {
 	templateContent map[*html.Node]*html.Node
 
 	// styleSources holds the page's CSS, fetched on first use, and
-	// styleEngines caches the cascade per layout width.
+	// styleEngines caches the cascade per layout width. Both are dropped when
+	// styleDirty is set, which the script-facing DOM helpers do: a script can
+	// add a <style> element or a <link rel=stylesheet> at any time, and the
+	// page's own CSS must then be picked up.
 	styleSources []string
 	styleEngines map[float64]*styleEngine
+	sheets       []*pageStyleSheet
+	styleDirty   bool
+	// styleStamp is the DOM mutation count the caches above were built at.
+	styleStamp uint64
+	// sheetSources caches a fetched <link>'s text by element, so a script that
+	// moves nodes around does not refetch.
+	sheetSources map[*html.Node]string
 
 	loadedScripts map[string]bool
 }
@@ -176,6 +186,8 @@ func (p *Page) load(rawURL string, headers map[string]string) error {
 	}
 	p.doc = doc
 	p.templateContent = extractTemplateContents(doc)
+	// A new document means the old stylesheets and rules are meaningless.
+	p.markStyleDirty()
 	return p.run()
 }
 
@@ -188,6 +200,8 @@ func (p *Page) SetContent(source, url string) error {
 	}
 	p.doc = doc
 	p.templateContent = extractTemplateContents(doc)
+	// A new document means the old stylesheets and rules are meaningless.
+	p.markStyleDirty()
 	return p.run()
 }
 
@@ -314,6 +328,26 @@ func (p *Page) baseURL() string {
 		return p.URL
 	}
 	return resolveURL(p.URL, href)
+}
+
+// markStyleDirty records that the set of stylesheets may have changed, so the
+// next style-dependent call re-reads the document. DOM writes do this on their
+// own (see domMutations); this is for the loader, which replaces the document.
+func (p *Page) markStyleDirty() {
+	p.styleDirty = true
+}
+
+// styleCacheValid reports whether the cached stylesheets and rules still
+// describe the document, dropping them if the DOM changed since they were read.
+func (p *Page) styleCacheValid() bool {
+	if p.styleStamp != domMutations.Load() {
+		p.styleStamp = domMutations.Load()
+		p.sheets = nil
+		p.styleSources = nil
+		p.styleEngines = nil
+		return false
+	}
+	return p.sheets != nil
 }
 
 // quirksMode reports whether the document is parsed in quirks mode, which a

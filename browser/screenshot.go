@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -95,19 +96,34 @@ const defaultLayoutWidth = 1280
 
 // --- stylesheet loading ---
 
-// cssTexts returns the page's CSS in document order, with @imports resolved.
-// It is cached: sources are fetched at most once per page.
-//
-// Only what the page itself declares is used - every <style> element and every
-// <link rel=stylesheet> it contains, in document order. Nothing is injected.
-// With Options.Debug each declaration is logged with what became of it, so a
-// page that renders unstyled can be diagnosed instead of guessed at.
-func (p *Page) cssTexts() []string {
-	if p.styleSources != nil {
-		return p.styleSources
+// pageStyleSheet is one stylesheet the document declares: a <style> element's
+// text, or a <link rel=stylesheet> whose text is fetched on first use.
+type pageStyleSheet struct {
+	href   string     // absolute URL, empty for an inline <style>
+	node   *html.Node // the <style> or <link> element that declared it
+	media  string
+	source string // the CSS text, once it is known
+	loaded bool   // source is valid
+	failed bool   // the fetch failed and must not be retried
+	err    string // why the sheet is not applied
+}
+
+// styleSheets lists the document's stylesheets in document order. Only what the
+// page itself declares is used: nothing is injected, and a sheet belongs here
+// because the page contains a <style> element or a <link rel=stylesheet>. The
+// list is re-read after a script touches the DOM, since the page's own styles
+// may arrive that way.
+func (p *Page) styleSheets() []*pageStyleSheet {
+	if !p.styleDirty && p.styleCacheValid() {
+		return p.sheets
 	}
-	var sources []string
-	declared, applied := 0, 0
+	if p.doc == nil {
+		return nil
+	}
+	// Skipped sheets stay in the list, marked with the reason, so the list is
+	// complete and in document order; cssTexts only uses the applicable ones.
+	var sheets []*pageStyleSheet
+	declared := 0
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -117,10 +133,14 @@ func (p *Page) cssTexts() []string {
 					declared++
 					if media := attrOf(c, "media"); !cssMediaMatches(media, 0) {
 						p.debugf("style element skipped: media %q does not match", media)
+						sheets = append(sheets, &pageStyleSheet{
+							node: c, media: media, failed: true,
+							err: "media " + media + " does not match",
+						})
 					} else {
-						applied++
-						p.debugf("style element: %d bytes", len(textContent(c)))
-						sources = append(sources, textContent(c))
+						sheets = append(sheets, &pageStyleSheet{
+							node: c, media: media, source: textContent(c), loaded: true,
+						})
 					}
 				case "link":
 					if !hasStylesheetRel(c) {
@@ -131,30 +151,100 @@ func (p *Page) cssTexts() []string {
 					switch {
 					case href == "":
 						p.debugf("stylesheet skipped: <link rel=stylesheet> without href")
+						sheets = append(sheets, &pageStyleSheet{
+							node: c, media: attrOf(c, "media"),
+							err: "no href", failed: true,
+						})
 						continue
 					case hasAttr(c, "disabled"):
 						p.debugf("stylesheet skipped: disabled (%s)", href)
+						sheets = append(sheets, &pageStyleSheet{
+							node: c, href: resolveURL(p.baseURL(), href), err: "disabled", failed: true,
+						})
 						continue
 					case !cssMediaMatches(attrOf(c, "media"), 0):
 						p.debugf("stylesheet skipped: media %q does not match (%s)", attrOf(c, "media"), href)
+						sheets = append(sheets, &pageStyleSheet{
+							node: c, href: resolveURL(p.baseURL(), href), media: attrOf(c, "media"),
+							err: "media " + attrOf(c, "media") + " does not match", failed: true,
+						})
 						continue
 					}
-					abs := resolveURL(p.baseURL(), href)
-					resp, err := p.browser.get(abs, nil)
-					if err != nil {
-						p.debugf("stylesheet FAILED: %s: %v", abs, err)
-						continue
-					}
-					applied++
-					p.debugf("stylesheet: %d bytes from %s", len(resp.Content), abs)
-					sources = append(sources, string(resp.Content))
+					sheets = append(sheets, &pageStyleSheet{
+						node: c, href: resolveURL(p.baseURL(), href), media: attrOf(c, "media"),
+					})
 				}
 			}
 			walk(c)
 		}
 	}
 	walk(p.doc)
-	p.debugf("page stylesheets: %d declared, %d applied", declared, applied)
+	usable := 0
+	for _, s := range sheets {
+		if !s.failed {
+			usable++
+		}
+	}
+	p.debugf("page stylesheets: %d declared, %d usable", declared, usable)
+	p.sheets = sheets
+	p.styleDirty = false
+	// The rule caches were built from the previous set.
+	p.styleSources = nil
+	p.styleEngines = nil
+	return p.sheets
+}
+
+// loadSheet fetches a linked stylesheet once. An inline <style> is already
+// loaded.
+func (p *Page) loadSheet(s *pageStyleSheet) bool {
+	if s.loaded {
+		return !s.failed
+	}
+	if s.failed {
+		return false
+	}
+	if cached, ok := p.sheetSources[s.node]; ok {
+		s.source, s.loaded = cached, true
+		return true
+	}
+	resp, err := p.browser.get(s.href, nil)
+	if err != nil {
+		s.failed, s.err = true, err.Error()
+		p.debugf("stylesheet FAILED: %s: %v", s.href, err)
+		return false
+	}
+	if resp.StatusCode >= 400 {
+		// A 4xx/5xx body is not a stylesheet; browsers do not apply one.
+		s.failed = true
+		s.err = strconv.Itoa(resp.StatusCode)
+		if reason := strings.TrimSpace(resp.Reason); reason != "" {
+			s.err += " " + reason
+		}
+		p.debugf("stylesheet FAILED: %s: HTTP %s", s.href, s.err)
+		return false
+	}
+	if p.sheetSources == nil {
+		p.sheetSources = map[*html.Node]string{}
+	}
+	s.source = string(resp.Content)
+	s.loaded = true
+	p.sheetSources[s.node] = s.source
+	p.debugf("stylesheet: %d bytes from %s", len(s.source), s.href)
+	return true
+}
+
+// cssTexts returns the page's CSS in document order, with @imports resolved,
+// fetching linked sheets on first use.
+func (p *Page) cssTexts() []string {
+	if p.styleSources != nil {
+		return p.styleSources
+	}
+	var sources []string
+	for _, s := range p.styleSheets() {
+		if p.loadSheet(s) {
+			sources = append(sources, s.source)
+		}
+	}
 
 	expanded := make([]string, 0, len(sources))
 	for _, src := range sources {
@@ -209,12 +299,12 @@ func cssMediaMatches(q string, width float64) bool {
 // styleEngineFor builds (and caches) the cascade for a layout width, because
 // media queries depend on it.
 func (p *Page) styleEngineFor(width float64) *styleEngine {
-	if p.styleEngines == nil {
-		p.styleEngines = map[float64]*styleEngine{}
-	}
+	p.styleCacheValid()
 	if e, ok := p.styleEngines[width]; ok {
 		return e
 	}
+	// cssTexts may drop the caches (a script changed the document), so the map
+	// is created after it, not before.
 	order := 0
 	var rules []cssRule
 	for i, src := range p.cssTexts() {
@@ -227,6 +317,9 @@ func (p *Page) styleEngineFor(width float64) *styleEngine {
 	}
 	p.debugf("style engine: %d rules at width %g", len(rules), width)
 	e := newStyleEngine(rules, width, p.quirksMode())
+	if p.styleEngines == nil {
+		p.styleEngines = map[float64]*styleEngine{}
+	}
 	p.styleEngines[width] = e
 	return e
 }
@@ -490,6 +583,48 @@ func collapseWhitespace(s string) string {
 	}
 	if trimmedRight != s {
 		out += " "
+	}
+	return out
+}
+
+// StyleSheet describes one stylesheet the document declares. It is the Go
+// answer to document.styleSheets, and the way to check that a page's own CSS
+// was loaded rather than guessed at.
+type StyleSheet struct {
+	// Href is the absolute URL, empty for an inline <style> element.
+	Href string
+	// Media is the media attribute, or the <style> element's.
+	Media string
+	// Inline is true for a <style> element.
+	Inline bool
+	// Bytes is the size of the CSS text.
+	Bytes int
+	// Rules is the number of rules parsed from it at the current layout width.
+	Rules int
+	// Err is why the sheet is not applied, empty when it is.
+	Err string
+}
+
+// StyleSheets lists the stylesheets the page itself declares, in document
+// order, fetching the linked ones the first time it is called. Nothing is
+// injected, and nothing the page declares is left out: a sheet that failed or
+// was skipped appears with Err set, so "the site's CSS did not load" can be
+// told apart from "the page has no CSS to load".
+func (p *Page) StyleSheets() []StyleSheet {
+	sheets := p.styleSheets()
+	out := make([]StyleSheet, 0, len(sheets))
+	for _, s := range sheets {
+		info := StyleSheet{Href: s.href, Media: s.media, Inline: s.href == ""}
+		if p.loadSheet(s) {
+			order := 0
+			rules, _, _ := parseCSSStylesheet(s.source, p.viewportWidth(), &order)
+			info.Bytes = len(s.source)
+			info.Rules = len(rules)
+		}
+		if info.Err = s.err; info.Err == "" && !s.loaded {
+			info.Err = "not loaded"
+		}
+		out = append(out, info)
 	}
 	return out
 }

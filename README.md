@@ -117,7 +117,8 @@ Verified: against that endpoint `-i custom` returns the same backend response
 - `browser` - a pure-Go headless browser that runs page JavaScript, so sites
   that render client-side can be scraped too. See `browser/README.md`.
 - `cmd/gocurlffi` - the command line tool.
-- `cmd/gobrowser` - the headless browser CLI.
+- `cmd/gobrowser` - the headless browser CLI. `--sheets` lists the stylesheets
+  the page itself declares, whether each was applied, and its rule count.
 
 ## Repository layout
 

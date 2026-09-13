@@ -857,7 +857,7 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.nodeList(getElementsByTagName(e.docOf(call), "script"))
 	}, nil)
 	e.accessor(p, "styleSheets", func(call goja.FunctionCall) goja.Value {
-		return e.vm.NewArray()
+		return e.styleSheetListObject()
 	}, nil)
 	e.accessor(p, "fonts", func(call goja.FunctionCall) goja.Value {
 		o := e.vm.NewObject()
