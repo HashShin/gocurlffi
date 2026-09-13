@@ -32,10 +32,15 @@ type cssRule struct {
 // sheet was consumed or silently dropped. A high skipped count means most of a
 // page's styling came from selectors the engine cannot compile.
 type cssStats struct {
-	rules      int
-	selectors  int
-	skipped    int
-	skipSample []string
+	rules     int
+	selectors int
+	skipped   int
+	// pseudoSkipped counts the skipped selectors that target a pseudo-element
+	// ("X::before", "::-webkit-inner-spin-button"). They carry no element
+	// styling, so they are not a loss, and counting them with the rest makes
+	// coverage look far worse than it is.
+	pseudoSkipped int
+	skipSample    []string
 }
 
 // parseCSSStylesheet parses CSS text into rules. mediaWidth is the layout width
@@ -47,19 +52,21 @@ func parseCSSStylesheet(src string, mediaWidth float64, order *int) (rules []css
 	stats.rules = len(rules)
 	stats.selectors = p.selectors
 	stats.skipped = p.skipped
+	stats.pseudoSkipped = p.pseudoSkipped
 	stats.skipSample = p.skipSample
 	return rules, imports, stats
 }
 
 type cssParser struct {
-	src          string
-	pos          int
-	order        *int
-	mediaWidth   float64
-	mediaHeightV float64
-	selectors    int      // selector texts considered
-	skipped      int      // selector texts cascadia could not compile
-	skipSample   []string // a few of those, for diagnostics
+	src           string
+	pos           int
+	order         *int
+	mediaWidth    float64
+	mediaHeightV  float64
+	selectors     int      // selector texts considered
+	skipped       int      // selector texts cascadia could not compile
+	pseudoSkipped int      // of those, the ones targeting a pseudo-element
+	skipSample    []string // a few of the rest, for diagnostics
 }
 
 func (p *cssParser) eof() bool { return p.pos >= len(p.src) }
@@ -294,7 +301,9 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 		sel, err := cascadia.Compile(selText)
 		if err != nil {
 			p.skipped++
-			if len(p.skipSample) < 12 {
+			if targetsPseudoElement(selText) {
+				p.pseudoSkipped++
+			} else if len(p.skipSample) < 12 {
 				p.skipSample = append(p.skipSample, selText)
 			}
 			continue
@@ -963,4 +972,19 @@ func unescapeCSSIdent(s string) string {
 		i += n
 	}
 	return b.String()
+}
+
+// targetsPseudoElement reports whether a selector's subject is a pseudo-element
+// such as "::before" or "::-webkit-inner-spin-button", which styles a generated
+// box rather than an element in the DOM.
+func targetsPseudoElement(sel string) bool {
+	if strings.Contains(sel, "::") {
+		return true
+	}
+	for _, prefix := range []string{":-webkit-", ":-moz-", ":-ms-", ":-o-"} {
+		if strings.Contains(sel, prefix) {
+			return true
+		}
+	}
+	return false
 }

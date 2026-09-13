@@ -400,7 +400,10 @@ func (p *Page) styleEngineFor(width float64) *styleEngine {
 	var rules []cssRule
 	for i, src := range p.cssTexts() {
 		rs, _, st := parseCSSStylesheet(src, width, &order)
-		p.debugf("stylesheet %d: %d rules, %d/%d selectors unsupported", i, st.rules, st.skipped, st.selectors)
+		// The width is part of the number: media queries are evaluated while
+		// parsing, so one sheet yields different rule counts at 900 and 1280.
+		p.debugf("stylesheet %d at width %g: %d rules, %d/%d selectors unsupported (%d target pseudo-elements)",
+			i, width, st.rules, st.skipped, st.selectors, st.pseudoSkipped)
 		for _, sel := range st.skipSample {
 			p.debugf("  unsupported selector: %s", sel)
 		}

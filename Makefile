@@ -10,9 +10,15 @@ all: build
 build:
 	go build -trimpath -o $(BIN) ./cmd/gocurlffi
 
+# Pure-Go headless browser CLI (see browser/README.md). The commit is embedded
+# so that --debug says which build produced a render: a stale binary that
+# predates a cascade fix looks exactly like a cascade bug.
+VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -X main.version=$(VERSION)
+
 # Pure-Go headless browser CLI (see browser/README.md).
 gobrowser:
-	go build -trimpath -o $(BIN_BROWSER) ./cmd/gobrowser
+	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_BROWSER) ./cmd/gobrowser
 
 # Regenerate impersonate/presets_gen.go from the vendored curl-impersonate
 # source. Pure Go, no Python.

@@ -14,6 +14,11 @@ import (
 	"gocurlffi/impersonate"
 )
 
+// version is the commit the binary was built from, set by the Makefile with
+// -ldflags. It is printed with --debug so that a stale build is visible: an
+// older binary that misses a cascade fix produces the same symptoms as a bug.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -117,6 +122,9 @@ func runGet(args []string) {
 		*format = *formatL
 	}
 
+	if *debug {
+		fmt.Fprintf(os.Stderr, "gobrowser %s\n", version)
+	}
 	runScripts := !*noJS
 	opts := browser.Options{
 		Impersonate: *impersonate,
