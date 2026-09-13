@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"fmt"
 	"image/color"
 	"strconv"
 	"strings"
@@ -1097,6 +1098,21 @@ func removeStr(s []string, v string) []string {
 	return out
 }
 
+// flexBasisString renders the two-part flex basis the way a browser reports it.
+func flexBasisString(cs *computedStyle) string {
+	if !cs.hasFlexBasis {
+		return "auto"
+	}
+	switch {
+	case cs.flexBasisPct != 0 && cs.flexBasisPx != 0:
+		return fmt.Sprintf("calc(%g%% + %gpx)", cs.flexBasisPct*100, cs.flexBasisPx)
+	case cs.flexBasisPct != 0:
+		return fmt.Sprintf("%g%%", cs.flexBasisPct*100)
+	default:
+		return formatPx(cs.flexBasisPx)
+	}
+}
+
 // computedFontFamily is the font-family getComputedStyle reports: the page's
 // own first family when it declared one, otherwise the generic default.
 func computedFontFamily(cs *computedStyle) string {
@@ -1133,6 +1149,13 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		"padding-left":         formatPx(cs.paddingLeft),
 		"text-transform":       cs.textTransform,
 		"letter-spacing":       formatPx(cs.letterSpacing),
+		"flex-grow":            strconv.FormatFloat(cs.flexGrow, 'g', -1, 64),
+		"flex-basis":           flexBasisString(cs),
+		"flex-direction":       map[bool]string{true: "column", false: "row"}[cs.flexDirection == "column"],
+		"flex-wrap":            map[bool]string{true: "wrap", false: "nowrap"}[cs.flexWrap],
+		"gap":                  formatPx(cs.columnGap),
+		"justify-content":      cs.justifyContent,
+		"align-items":          cs.alignItems,
 	}
 	if cs.lineHeight > 0 {
 		props["line-height"] = formatPx(cs.lineHeight)
@@ -1165,6 +1188,10 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		{"marginLeft", "margin-left"}, {"paddingTop", "padding-top"},
 		{"paddingBottom", "padding-bottom"}, {"paddingLeft", "padding-left"},
 		{"textTransform", "text-transform"}, {"letterSpacing", "letter-spacing"},
+		{"flexGrow", "flex-grow"}, {"flexBasis", "flex-basis"},
+		{"flexDirection", "flex-direction"}, {"flexWrap", "flex-wrap"},
+		{"gap", "gap"}, {"justifyContent", "justify-content"},
+		{"alignItems", "align-items"},
 	} {
 		val := props[camel.css]
 		_ = o.Set(camel.js, val)

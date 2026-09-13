@@ -140,6 +140,199 @@ func cssMathFunction(name, inner string, base, vw float64) (float64, bool) {
 	}
 }
 
+// cssSizeParts resolves a length that may be a percentage, a calc() over a
+// percentage and a fixed length, or a plain length. It returns the percentage
+// as a fraction (0.5 for 50%) plus the fixed px part.
+func cssSizeParts(v string, base, vw float64) (pct, px float64, ok bool) {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" || v == "auto" || v == "none" || v == "content" {
+		return 0, 0, false
+	}
+	if strings.HasSuffix(v, "%") {
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64); err == nil {
+			return f / 100, 0, true
+		}
+		return 0, 0, false
+	}
+	if name, inner, isFn := cssFunctionCall(v); isFn && name == "calc" {
+		return cssCalcParts(inner, vw)
+	}
+	if x, ok2 := cssLengthToPxV(v, base, vw); ok2 {
+		return 0, x, true
+	}
+	return 0, 0, false
+}
+
+// cssCalcParts resolves the inside of a calc() to a percentage plus a fixed
+// length, which is the form flex-basis and width need. Only addition and
+// subtraction of length atoms are understood.
+func cssCalcParts(inner string, vw float64) (pct, px float64, ok bool) {
+	terms, signs := splitCalcTerms(inner)
+	if len(terms) == 0 {
+		return 0, 0, false
+	}
+	for i, term := range terms {
+		p, x, okAtom := calcAtom(term, vw)
+		if !okAtom {
+			return 0, 0, false
+		}
+		pct += signs[i] * p
+		px += signs[i] * x
+	}
+	return pct, px, true
+}
+
+// splitCalcTerms splits a calc() body on top-level + and -, returning each term
+// and the sign that applies to it.
+func splitCalcTerms(s string) (terms []string, signs []float64) {
+	var cur strings.Builder
+	sign := 1.0
+	depth := 0
+	flush := func() {
+		if t := strings.TrimSpace(cur.String()); t != "" {
+			terms = append(terms, t)
+			signs = append(signs, sign)
+		}
+		cur.Reset()
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '(':
+			depth++
+			cur.WriteByte(c)
+		case c == ')':
+			depth--
+			cur.WriteByte(c)
+		case depth == 0 && (c == '+' || c == '-') && i > 0 && (s[i-1] == ' ' || s[i-1] == ')'):
+			flush()
+			if c == '-' {
+				sign = -1
+			} else {
+				sign = 1
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return terms, signs
+}
+
+// calcAtom resolves one term of a calc(): a percentage, or a length.
+func calcAtom(term string, vw float64) (pct, px float64, ok bool) {
+	term = strings.TrimSpace(strings.ToLower(term))
+	if strings.HasSuffix(term, "%") {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(term, "%"), 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return f / 100, 0, true
+	}
+	if x, ok2 := cssLengthToPxV(term, 16, vw); ok2 {
+		return 0, x, true
+	}
+	return 0, 0, false
+}
+
+// normalizeFlexAlign reduces the alignment keywords to the few the layout
+// distinguishes: start, center, end, stretch and the space-* values.
+func normalizeFlexAlign(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "center":
+		return "center"
+	case "flex-end", "end", "right":
+		return "end"
+	case "flex-start", "start", "left":
+		return "start"
+	case "space-between":
+		return "space-between"
+	case "space-around":
+		return "space-around"
+	case "space-evenly":
+		return "space-evenly"
+	case "stretch":
+		return "stretch"
+	case "baseline":
+		return "baseline"
+	}
+	return ""
+}
+
+// applyFlexShorthand reads the flex shorthand: the grow factor, the shrink
+// factor and the basis. "flex: 1" grows, "flex: none" does not, and a later
+// length or percentage is the basis.
+func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
+	lv := strings.ToLower(v)
+	// "flex: 0 0 calc(50% - 7px)" contains spaces inside calc(), so the value
+	// cannot be split on whitespace. Take the calc() expression whole and read
+	// the grow factor from the tokens before it.
+	if i := strings.Index(lv, "calc("); i >= 0 {
+		if head := strings.Fields(strings.TrimSpace(lv[:i])); len(head) > 0 {
+			if f, err := strconv.ParseFloat(head[0], 64); err == nil {
+				cs.flexGrow = f
+			}
+		}
+		if expr, ok := balancedCall(lv[i:]); ok {
+			if pct, px, ok2 := cssSizeParts(expr, base, vw); ok2 {
+				cs.flexBasisPct, cs.flexBasisPx, cs.hasFlexBasis = pct, px, true
+			}
+		}
+		return
+	}
+	fields := strings.Fields(v)
+	if len(fields) == 0 {
+		return
+	}
+	switch strings.ToLower(fields[0]) {
+	case "none":
+		cs.flexGrow = 0
+		return
+	case "auto":
+		cs.flexGrow = 1
+		return
+	}
+	if f, err := strconv.ParseFloat(fields[0], 64); err == nil {
+		cs.flexGrow = f
+	}
+	for _, tok := range fields[1:] {
+		if strings.EqualFold(tok, "auto") {
+			continue
+		}
+		// A bare number is the shrink factor, not the basis.
+		if _, unit := splitCSSNumber(strings.ToLower(tok)); unit == "" {
+			if _, err := strconv.ParseFloat(tok, 64); err == nil {
+				continue
+			}
+		}
+		if pct, px, ok := cssSizeParts(tok, base, vw); ok {
+			cs.flexBasisPct, cs.flexBasisPx, cs.hasFlexBasis = pct, px, true
+		}
+	}
+}
+
+// balancedCall returns the function call at the start of s, from its name
+// through the matching close parenthesis.
+func balancedCall(s string) (string, bool) {
+	open := strings.IndexByte(s, '(')
+	if open <= 0 {
+		return "", false
+	}
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return s[:i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
 func splitCSSNumber(v string) (num, unit string) {
 	i := 0
 	if i < len(v) && (v[i] == '+' || v[i] == '-') {
@@ -362,6 +555,24 @@ type computedStyle struct {
 	paddingBottom float64
 	paddingLeft   float64
 	listStyle     string
+
+	// Flex container and item properties the row layout uses.
+	flexDirection string // row (default), column
+	flexWrap      bool
+	flexGrow      float64
+	// flexBasisPx and flexBasisPct are the two parts of the item's main size:
+	// a percentage of the container plus a fixed length. calc() over the two
+	// is the common form ("flex: 0 0 calc(50% - 7px)").
+	flexBasisPx    float64
+	flexBasisPct   float64
+	hasFlexBasis   bool
+	widthPx        float64
+	widthPct       float64
+	hasWidth       bool
+	columnGap      float64
+	rowGap         float64
+	justifyContent string
+	alignItems     string
 
 	// monoDefault records that the user-agent sheet gave this element its
 	// 13px monospace size, which an author font-family takes away again.
@@ -848,10 +1059,75 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		cs.display = blockifyDisplay(cs.display)
 	}
 	// A flex or grid item is blockified too, which is why a <span> inside a
-	// flex container reports display:block in a browser. We do not lay flex
-	// out, but getComputedStyle must answer the same thing.
+	// flex container reports display:block in a browser.
 	if parent != nil && !outOfFlow && isFlexOrGridContainer(parent.display) {
 		cs.display = blockifyDisplay(cs.display)
+	}
+	// Flex container properties. Only a row is laid out specially; a column
+	// flex container behaves like ordinary block flow, which is what a
+	// column of blocks already is.
+	if v, ok := d["flex-direction"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		switch {
+		case strings.HasPrefix(lv, "column"):
+			cs.flexDirection = "column"
+		case strings.HasPrefix(lv, "row"):
+			cs.flexDirection = "row"
+		}
+	}
+	if v, ok := d["flex-wrap"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		cs.flexWrap = strings.Contains(lv, "wrap") && !strings.Contains(lv, "nowrap")
+	}
+	if v, ok := d["justify-content"]; ok {
+		cs.justifyContent = normalizeFlexAlign(v)
+	}
+	if v, ok := d["align-items"]; ok {
+		cs.alignItems = normalizeFlexAlign(v)
+	}
+	if v, ok := d["column-gap"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.columnGap = px
+		}
+	}
+	if v, ok := d["row-gap"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.rowGap = px
+		}
+	}
+	if v, ok := d["gap"]; ok {
+		parts := strings.Fields(v)
+		switch len(parts) {
+		case 1:
+			if px, ok2 := cssLengthToPxV(parts[0], base, e.width); ok2 {
+				cs.rowGap, cs.columnGap = px, px
+			}
+		case 2:
+			if px, ok2 := cssLengthToPxV(parts[0], base, e.width); ok2 {
+				cs.rowGap = px
+			}
+			if px, ok2 := cssLengthToPxV(parts[1], base, e.width); ok2 {
+				cs.columnGap = px
+			}
+		}
+	}
+	if v, ok := d["flex-basis"]; ok {
+		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
+			cs.flexBasisPct, cs.flexBasisPx, cs.hasFlexBasis = pct, px, true
+		}
+	}
+	if v, ok := d["width"]; ok {
+		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
+			cs.widthPct, cs.widthPx, cs.hasWidth = pct, px, true
+		}
+	}
+	if v, ok := d["flex-grow"]; ok {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			cs.flexGrow = f
+		}
+	}
+	if v, ok := d["flex"]; ok {
+		applyFlexShorthand(cs, v, base, e.width)
 	}
 	if v, ok := d["visibility"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))

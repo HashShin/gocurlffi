@@ -934,7 +934,10 @@ func expandShorthands(in []cssDecl) []cssDecl {
 		case "border", "border-top", "border-bottom", "border-left", "border-right":
 			// Borders are not rendered; ignoring them avoids false spacing.
 			continue
-		case "flex", "grid", "flex-flow", "place-items", "gap", "columns":
+		case "grid", "flex-flow", "place-items", "columns":
+			// Grid and the remaining flow shorthands are not laid out; skipping
+			// them avoids inventing spacing. gap and flex are kept: the cascade
+			// turns them into the row layout's inputs.
 			continue
 		default:
 			out = append(out, d)

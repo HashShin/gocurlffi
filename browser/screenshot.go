@@ -653,6 +653,10 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	}
 
+	if block && isFlexRowContainer(cs) && c.collectFlexRow(el, cs) {
+		return
+	}
+
 	if block {
 		c.flush()
 		start := len(c.blocks)
@@ -665,6 +669,97 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	}
 	c.walkChildren(el)
+}
+
+// isFlexRowContainer reports whether an element lays its children out in a row.
+// A column flex container needs no special handling: a column of blocks is what
+// ordinary flow already produces. Grid is left to stack.
+func isFlexRowContainer(cs *computedStyle) bool {
+	return (cs.display == "flex" || cs.display == "inline-flex") && cs.flexDirection != "column"
+}
+
+// collectFlexRow builds a flex row block from an element's children and appends
+// it, returning true when it produced at least one child. Each child is
+// collected with its offsets relative to its own left edge, so the row layout
+// can place it at any x.
+func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
+	c.flush()
+	b := renderBlock{
+		kind:       blockFlex,
+		flexRow:    true,
+		boxLeft:    c.content,
+		textX:      c.content,
+		quote:      c.quote,
+		gap:        cs.columnGap,
+		rowGap:     cs.rowGap,
+		wrap:       cs.flexWrap,
+		justify:    cs.justifyContent,
+		alignItems: cs.alignItems,
+		leading:    cs.marginTop + cs.paddingTop,
+		trailing:   cs.marginBottom + cs.paddingBottom,
+	}
+	if c.hasBG {
+		b.bg, b.hasBG, b.bgFull = c.bg, true, true
+	}
+	for ch := el.FirstChild; ch != nil; ch = ch.NextSibling {
+		var (
+			col   []renderBlock
+			child *computedStyle
+		)
+		switch ch.Type {
+		case html.TextNode:
+			if strings.TrimSpace(ch.Data) == "" {
+				continue
+			}
+			col = c.collectNode(ch)
+		case html.ElementNode:
+			child = c.engine.compute(ch)
+			if child == nil || child.display == "none" || child.visibility == "hidden" {
+				continue
+			}
+			col = c.collectNode(ch)
+		default:
+			continue
+		}
+		if len(col) == 0 {
+			continue
+		}
+		b.children = append(b.children, col)
+		grow, bx, bp, has := 0.0, 0.0, 0.0, false
+		if child != nil {
+			grow = child.flexGrow
+			switch {
+			case child.hasFlexBasis:
+				bx, bp, has = child.flexBasisPx, child.flexBasisPct, true
+			case child.hasWidth:
+				bx, bp, has = child.widthPx, child.widthPct, true
+			}
+		}
+		b.grow = append(b.grow, grow)
+		b.basisPx = append(b.basisPx, bx)
+		b.basisPct = append(b.basisPct, bp)
+		b.hasBasis = append(b.hasBasis, has)
+	}
+	if len(b.children) == 0 {
+		return false
+	}
+	c.blocks = append(c.blocks, b)
+	return true
+}
+
+// collectNode walks one node with its horizontal origin reset to zero, and
+// returns the blocks it produced (not appended to the main list).
+func (c *collector) collectNode(n *html.Node) []renderBlock {
+	saved := c.content
+	c.content = 0
+	c.flush()
+	start := len(c.blocks)
+	c.walkNode(n)
+	c.flush()
+	out := append([]renderBlock(nil), c.blocks[start:]...)
+	c.blocks = c.blocks[:start]
+	c.content = saved
+	return out
 }
 
 // applyBoxEdges adds an element's vertical margin and padding to the first and

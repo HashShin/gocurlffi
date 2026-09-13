@@ -369,6 +369,7 @@ const (
 	blockText renderBlockKind = iota
 	blockRule
 	blockImage
+	blockFlex
 )
 
 type renderSpan struct {
@@ -398,37 +399,63 @@ type renderBlock struct {
 	pic  *pageImage
 	picW float64 // natural width, 0 when unknown
 	picH float64 // natural height
+
+	// A flex row lays its children side by side. Each child is a column of
+	// blocks, with its own flex-grow and main-size basis. Basis is a fraction
+	// of the container (basisPct) plus a fixed length (basisPx), which covers
+	// "flex: 1" as well as "flex: 0 0 calc(50% - 7px)". Children are collected
+	// with their internal offsets relative to their own left edge.
+	flexRow    bool
+	children   [][]renderBlock
+	grow       []float64
+	basisPx    []float64
+	basisPct   []float64
+	hasBasis   []bool
+	gap        float64
+	rowGap     float64
+	wrap       bool
+	justify    string
+	alignItems string
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
 func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc {
-	const (
-		margin   = 24.0
-		lineFact = 1.45
-	)
+	const margin = 24.0
 	doc := &renderDoc{width: width, baseSize: baseSize}
-	y := margin
-	contentW := float64(width) - 2*margin
-	if contentW < 40 {
-		contentW = 40
+	// The right edge keeps the gutter the flat layout used, so a block at
+	// offset x can use colW-x without recomputing the page margin.
+	colW := float64(width) - margin
+	if colW < 40 {
+		colW = 40
 	}
+	lines, endY := layoutColumn(blocks, 0, colW, margin, baseSize)
+	doc.lines = lines
+	doc.height = int(endY + margin + 0.5)
+	if doc.height < 1 {
+		doc.height = 1
+	}
+	return doc
+}
 
+// layoutColumn flows a column of blocks starting at x=colX and wrapping text to
+// colW, returning the draw lines (absolute positions) and the y after the last
+// block. A block's own offsets (boxLeft, textX) are relative to the column.
+func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([]drawLine, float64) {
+	const lineFact = 1.45
+	var out []drawLine
+	y := startY
 	for _, b := range blocks {
 		y += b.leading
-		if b.kind == blockImage {
-			w := contentW - (b.boxLeft - margin)
-			if w < 40 {
-				w = 40
+		switch b.kind {
+		case blockImage:
+			w := colW - b.boxLeft
+			if w < 8 {
+				w = 8
 			}
-			if b.picW > 0 && b.picH > 0 {
-				// Scale to the available width, but never up past the natural
-				// size: a small icon should stay small.
-				if b.picW > w {
-					y = y
-					w = w
-				} else {
-					w = b.picW
-				}
+			// Scale down to the column, but never up past the natural size: a
+			// small icon should stay small.
+			if b.picW > 0 && b.picH > 0 && b.picW < w {
+				w = b.picW
 			}
 			h := 120.0
 			if b.picW > 0 && b.picH > 0 {
@@ -443,109 +470,313 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 			if h < 8 {
 				h = 8
 			}
-			doc.lines = append(doc.lines, drawLine{
-				y: y, height: h, pic: b.pic, picX: b.boxLeft, picW: w,
-			})
+			out = append(out, drawLine{y: y, height: h, pic: b.pic, picX: colX + b.boxLeft, picW: w})
 			y += h + b.trailing
-			continue
-		}
-		if b.kind == blockRule {
-			doc.lines = append(doc.lines, drawLine{
-				y:      y,
-				height: 1,
-				rule:   true,
-				ruleX:  b.boxLeft,
-				ruleW:  contentW - (b.boxLeft - margin),
+		case blockRule:
+			out = append(out, drawLine{
+				y: y, height: 1, rule: true,
+				ruleX: colX + b.boxLeft, ruleW: colW - b.boxLeft,
 			})
 			y += 12 + b.trailing
-			continue
-		}
-		textStart := b.textX
-		limit := float64(width) - margin - textStart
-		if limit < 40 {
-			limit = 40
-		}
-
-		var lines []renderSpan
-		switch {
-		case b.pre:
-			lines = splitPreLines(b.spans)
-		case b.nowrap:
-			lines = []renderSpan{{text: joinSpanText(b.spans), style: firstStyle(b.spans)}}
+		case blockFlex:
+			ls, h := layoutFlex(b, colX, colW, y, baseSize)
+			out = append(out, ls...)
+			y += h + b.trailing
 		default:
-			lines = wrapSpans(b.spans, limit)
-		}
-
-		for i, ln := range lines {
-			k := styleKey(ln.style)
-			ascent, _, h := lineMetrics(k)
-			lh := h * lineFact
-			if b.lineH > 0 {
-				lh = b.lineH
+			textStart := b.textX
+			limit := colW - b.textX
+			if limit < 40 {
+				limit = 40
 			}
-			if lh < ln.style.size {
-				lh = ln.style.size
+			var lines []renderSpan
+			switch {
+			case b.pre:
+				lines = splitPreLines(b.spans)
+			case b.nowrap:
+				lines = []renderSpan{{text: joinSpanText(b.spans), style: firstStyle(b.spans)}}
+			default:
+				lines = wrapSpans(b.spans, limit)
 			}
-			dl := drawLine{
-				y:        y,
-				height:   lh,
-				baseline: y + ascent + (lh-h)/2,
-				quote:    b.quote,
-				indent:   textStart,
-			}
-			if b.hasBG {
-				dl.bg = b.bg
-				dl.hasBG = true
-				if b.bgFull {
-					dl.bgX = b.boxLeft
-					dl.bgW = contentW - (b.boxLeft - margin)
-				} else {
-					wpx := textWidth(ln.style, ln.text)
-					dl.bgX = textStart
-					dl.bgW = wpx
+			for i, ln := range lines {
+				k := styleKey(ln.style)
+				ascent, _, h := lineMetrics(k)
+				lh := h * lineFact
+				if b.lineH > 0 {
+					lh = b.lineH
 				}
-				if dl.bgW < 0 {
-					dl.bgW = 0
+				if lh < ln.style.size {
+					lh = ln.style.size
 				}
-			}
-			runX := textStart
-			if b.align == "center" || b.align == "right" {
-				wpx := textWidth(ln.style, ln.text)
-				space := limit - wpx
-				if space > 0 {
-					if b.align == "center" {
-						runX += space / 2
+				dl := drawLine{
+					y:        y,
+					height:   lh,
+					baseline: y + ascent + (lh-h)/2,
+					quote:    b.quote,
+					indent:   colX + textStart,
+				}
+				if b.hasBG {
+					dl.bg = b.bg
+					dl.hasBG = true
+					if b.bgFull {
+						dl.bgX = colX + b.boxLeft
+						dl.bgW = colW - b.boxLeft
 					} else {
-						runX += space
+						dl.bgX = colX + textStart
+						dl.bgW = textWidth(ln.style, ln.text)
+					}
+					if dl.bgW < 0 {
+						dl.bgW = 0
 					}
 				}
+				runX := colX + textStart
+				if b.align == "center" || b.align == "right" {
+					wpx := textWidth(ln.style, ln.text)
+					space := limit - wpx
+					if space > 0 {
+						if b.align == "center" {
+							runX += space / 2
+						} else {
+							runX += space
+						}
+					}
+				}
+				if i == 0 && b.marker != "" {
+					dl.marker = b.marker
+					dl.markerX = colX + b.boxLeft
+				}
+				dl.runs = append(dl.runs, drawRun{x: runX, text: ln.text, style: ln.style})
+				out = append(out, dl)
+				y += lh
 			}
-			if i == 0 && b.marker != "" {
-				dl.marker = b.marker
-				dl.markerX = b.boxLeft
+			if len(lines) == 0 && b.marker != "" {
+				k := faceKey{size: baseSize}
+				_, _, h := lineMetrics(k)
+				lh := h * lineFact
+				out = append(out, drawLine{
+					y: y, height: lh, baseline: y + h*0.8,
+					marker: b.marker, markerX: colX + b.boxLeft, quote: b.quote, indent: colX + textStart,
+				})
+				y += lh
 			}
-			dl.runs = append(dl.runs, drawRun{x: runX, text: ln.text, style: ln.style})
-			doc.lines = append(doc.lines, dl)
-			y += lh
+			y += b.trailing
 		}
-		if len(lines) == 0 && b.marker != "" {
-			k := faceKey{size: baseSize}
-			_, _, h := lineMetrics(k)
-			lh := h * lineFact
-			doc.lines = append(doc.lines, drawLine{
-				y: y, height: lh, baseline: y + h*0.8,
-				marker: b.marker, markerX: b.boxLeft, quote: b.quote, indent: textStart,
-			})
-			y += lh
+	}
+	return out, y
+}
+
+// layoutFlex lays a flex row out inside the column, returning its lines and
+// height. Only the main size is distributed: children keep their natural height
+// and align-items positions them vertically.
+func layoutFlex(b renderBlock, colX, colW, y, baseSize float64) ([]drawLine, float64) {
+	n := len(b.children)
+	if n == 0 {
+		return nil, 0
+	}
+	contentX := colX + b.boxLeft
+	avail := colW - b.boxLeft
+	if avail < 10 {
+		avail = 10
+	}
+	base := make([]float64, n)
+	for i, col := range b.children {
+		if b.hasBasis[i] {
+			base[i] = b.basisPct[i]*avail + b.basisPx[i]
+		} else {
+			base[i] = intrinsicColumnWidth(col, avail, baseSize)
 		}
-		y += b.trailing
+		if base[i] < 0 {
+			base[i] = 0
+		}
 	}
-	y += margin
-	doc.height = int(y + 0.5)
-	if doc.height < 1 {
-		doc.height = 1
+
+	runs := flexRuns(base, b.gap, avail, b.wrap)
+
+	var (
+		lines []drawLine
+		total float64
+	)
+	rowGap := b.rowGap
+	if rowGap == 0 {
+		rowGap = b.gap
 	}
-	return doc
+	for ri, run := range runs {
+		if ri > 0 {
+			total += rowGap
+		}
+		ls, h := layoutFlexRun(b, run, base, contentX, avail, y+total, baseSize)
+		lines = append(lines, ls...)
+		total += h
+	}
+	// The container's own background spans the whole row.
+	if b.hasBG {
+		lines = append([]drawLine{{
+			y: y, height: total, hasBG: true, bg: b.bg, bgX: contentX, bgW: avail,
+		}}, lines...)
+	}
+	return lines, total
+}
+
+// flexRuns partitions item indexes into rows. Without wrap everything is one
+// run; with wrap, items are added until the run's base widths plus gaps exceed
+// the container.
+func flexRuns(base []float64, gap, avail float64, wrap bool) [][]int {
+	all := make([]int, len(base))
+	for i := range all {
+		all[i] = i
+	}
+	if !wrap {
+		return [][]int{all}
+	}
+	var runs [][]int
+	var cur []int
+	curW := 0.0
+	for i, w := range base {
+		add := w
+		if len(cur) > 0 {
+			add += gap
+		}
+		if len(cur) > 0 && curW+add > avail {
+			runs = append(runs, cur)
+			cur = nil
+			curW = 0
+			add = w
+		}
+		cur = append(cur, i)
+		curW += add
+	}
+	if len(cur) > 0 {
+		runs = append(runs, cur)
+	}
+	return runs
+}
+
+// layoutFlexRun distributes one row's widths and lays out its children.
+func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y, baseSize float64) ([]drawLine, float64) {
+	n := len(idx)
+	gap := b.gap
+	widths := make([]float64, n)
+	sum := 0.0
+	for i, ci := range idx {
+		widths[i] = base[ci]
+		sum += widths[i]
+	}
+	sumGaps := gap * float64(n-1)
+	if sum+sumGaps > avail {
+		// Shrink to fit the row.
+		room := avail - sumGaps
+		if room < 0 {
+			room = 0
+		}
+		if sum > 0 {
+			scale := room / sum
+			for i := range widths {
+				widths[i] *= scale
+			}
+		}
+	} else if room := avail - sum - sumGaps; room > 0 {
+		tg := 0.0
+		for _, ci := range idx {
+			tg += b.grow[ci]
+		}
+		if tg > 0 {
+			for i, ci := range idx {
+				widths[i] += room * b.grow[ci] / tg
+			}
+		}
+	}
+
+	// justify-content positions the row's content, adding extra gap for the
+	// space-* values.
+	used := sumGaps
+	for _, w := range widths {
+		used += w
+	}
+	offset := 0.0
+	if extra := avail - used; extra > 0 {
+		switch b.justify {
+		case "center":
+			offset = extra / 2
+		case "end":
+			offset = extra
+		case "space-between":
+			if n > 1 {
+				gap += extra / float64(n-1)
+			}
+		case "space-around":
+			offset = extra / float64(n) / 2
+			gap += extra / float64(n)
+		case "space-evenly":
+			offset = extra / float64(n+1)
+			gap += extra / float64(n+1)
+		}
+	}
+
+	x := contentX + offset
+	var lines []drawLine
+	childLines := make([][]drawLine, n)
+	childH := make([]float64, n)
+	maxH := 0.0
+	for i, ci := range idx {
+		cl, endY := layoutColumn(b.children[ci], x, widths[i], y, baseSize)
+		childLines[i] = cl
+		childH[i] = endY - y
+		if childH[i] > maxH {
+			maxH = childH[i]
+		}
+		x += widths[i] + gap
+	}
+	for i := range childLines {
+		dy := 0.0
+		switch b.alignItems {
+		case "center":
+			dy = (maxH - childH[i]) / 2
+		case "end":
+			dy = maxH - childH[i]
+		}
+		if dy != 0 {
+			for j := range childLines[i] {
+				childLines[i][j].y += dy
+			}
+		}
+		lines = append(lines, childLines[i]...)
+	}
+	return lines, maxH
+}
+
+// intrinsicColumnWidth measures a column's max-content width: the widest joined
+// text, image or nested row, capped at limit. It is the flex base size of an
+// item with no explicit basis.
+func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
+	w := 0.0
+	for _, b := range col {
+		switch b.kind {
+		case blockImage:
+			if tw := b.boxLeft + b.picW; tw > w {
+				w = tw
+			}
+		case blockFlex:
+			sub := b.boxLeft
+			for i, ch := range b.children {
+				if i > 0 {
+					sub += b.gap
+				}
+				sub += intrinsicColumnWidth(ch, limit, baseSize)
+			}
+			if sub > w {
+				w = sub
+			}
+		default:
+			// The block's own offset (margin + padding) is part of the item's
+			// width, or the text wraps inside its own padding.
+			if tw := b.boxLeft + textWidth(firstStyle(b.spans), joinSpanText(b.spans)); tw > w {
+				w = tw
+			}
+		}
+	}
+	if w > limit {
+		w = limit
+	}
+	return w
 }
 
 func firstStyle(spans []renderSpan) renderStyle {

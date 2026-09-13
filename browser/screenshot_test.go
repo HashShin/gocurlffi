@@ -8,6 +8,8 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -308,5 +310,126 @@ func TestScreenshotAppliesVerticalPadding(t *testing.T) {
 		if diff := c.img.Bounds().Dy() - plain.Bounds().Dy(); diff < 70 || diff > 90 {
 			t.Errorf("%s: height grew by %d, want about 80 from 40px top + 40px bottom padding", c.name, diff)
 		}
+	}
+}
+
+// outlinePositions parses RenderOutline output into a map from the drawn text
+// to its x and y, for asserting relative placement.
+func outlinePositions(t *testing.T, p *Page, width int) map[string][2]float64 {
+	t.Helper()
+	out, err := p.RenderOutline(ScreenshotOptions{Width: width, NoImages: true}, 200)
+	if err != nil {
+		t.Fatalf("RenderOutline: %v", err)
+	}
+	re := regexp.MustCompile(`^y=(-?\d+)\s+h=\d+\s+text\s+x=(-?\d+)\s+(.*)$`)
+	pos := map[string][2]float64{}
+	for _, line := range out {
+		m := re.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		y, _ := strconv.ParseFloat(m[1], 64)
+		x, _ := strconv.ParseFloat(m[2], 64)
+		text := strings.TrimSpace(m[3])
+		if i := strings.Index(text, " bg="); i >= 0 {
+			text = strings.TrimSpace(text[:i])
+		}
+		pos[text] = [2]float64{x, y}
+	}
+	return pos
+}
+
+func flexPage(t *testing.T, html string) *Page {
+	t.Helper()
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	if err := p.SetContent(html, "https://example.test/"); err != nil {
+		t.Fatalf("SetContent: %v", err)
+	}
+	return p
+}
+
+// A flex row places its children side by side on one line.
+func TestFlexRowPlacesChildrenSideBySide(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.row { display: flex; gap: 20px }
+	</style></head><body>
+		<div class="row"><div>Left</div><div>Right</div></div>
+	</body></html>`)
+	pos := outlinePositions(t, p, 400)
+	l, ok1 := pos["Left"]
+	r, ok2 := pos["Right"]
+	if !ok1 || !ok2 {
+		t.Fatalf("missing items in outline: %v", pos)
+	}
+	if l[1] != r[1] {
+		t.Errorf("children not on the same line: Left y=%g, Right y=%g", l[1], r[1])
+	}
+	if r[0] <= l[0] {
+		t.Errorf("Right x=%g is not right of Left x=%g", r[0], l[0])
+	}
+}
+
+// flex-grow splits the free space; two "flex: 1" items end up equal halves.
+func TestFlexGrowSplitsSpace(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.row { display: flex }
+		.row > div { flex: 1 }
+	</style></head><body>
+		<div class="row"><div>A</div><div>B</div></div>
+	</body></html>`)
+	pos := outlinePositions(t, p, 400)
+	a, ok1 := pos["A"]
+	b, ok2 := pos["B"]
+	if !ok1 || !ok2 {
+		t.Fatalf("missing items: %v", pos)
+	}
+	// B starts near the middle of the 400px page.
+	if b[0] < 150 || b[0] > 250 {
+		t.Errorf("grow did not split the row: B x=%g, want about 200", b[0])
+	}
+	if a[0] > 30 {
+		t.Errorf("A x=%g, want it at the left edge", a[0])
+	}
+}
+
+// flex-basis with calc() sets the main size, and flex-wrap breaks to a new row
+// when the items no longer fit.
+func TestFlexBasisCalcAndWrap(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.wrap { display: flex; flex-wrap: wrap }
+		.wrap > div { flex: 0 0 calc(50% - 5px) }
+	</style></head><body>
+		<div class="wrap"><div>one</div><div>two</div><div>three</div></div>
+	</body></html>`)
+	pos := outlinePositions(t, p, 400)
+	one, ok1 := pos["one"]
+	two, ok2 := pos["two"]
+	three, ok3 := pos["three"]
+	if !ok1 || !ok2 || !ok3 {
+		t.Fatalf("missing items: %v", pos)
+	}
+	if one[1] != two[1] {
+		t.Errorf("one and two should share the first row: y=%g, %g", one[1], two[1])
+	}
+	if three[1] <= one[1] {
+		t.Errorf("three should wrap to a later row: y=%g, want > %g", three[1], one[1])
+	}
+	if two[0] < 180 {
+		t.Errorf("two x=%g, want it in the right half", two[0])
+	}
+}
+
+// justify-content: center centers the row's content.
+func TestFlexJustifyCenter(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.row { display: flex; justify-content: center; gap: 10px }
+	</style></head><body>
+		<div class="row"><div>xx</div></div>
+	</body></html>`)
+	pos := outlinePositions(t, p, 400)
+	x := pos["xx"][0]
+	if x < 150 {
+		t.Errorf("centered item x=%g, want it near the middle", x)
 	}
 }

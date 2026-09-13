@@ -1008,3 +1008,85 @@ func TestApplyTextTransform(t *testing.T) {
 		}
 	}
 }
+
+func TestCSSSizeParts(t *testing.T) {
+	cases := []struct {
+		in      string
+		vw      float64
+		pct, px float64
+		ok      bool
+	}{
+		{"50%", 0, 0.5, 0, true},
+		{"12px", 0, 0, 12, true},
+		{"calc(50% - 7px)", 0, 0.5, -7, true},
+		{"calc(33.333% - 10px)", 0, 0.33333, -10, true},
+		{"calc(50% + 4px)", 0, 0.5, 4, true},
+		{"auto", 0, 0, 0, false},
+	}
+	for _, c := range cases {
+		pct, px, ok := cssSizeParts(c.in, 16, c.vw)
+		if ok != c.ok {
+			t.Errorf("cssSizeParts(%q) ok = %v, want %v", c.in, ok, c.ok)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if diff(pct, c.pct) > 1e-4 || diff(px, c.px) > 1e-4 {
+			t.Errorf("cssSizeParts(%q) = (%g, %g), want (%g, %g)", c.in, pct, px, c.pct, c.px)
+		}
+	}
+}
+
+func diff(a, b float64) float64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func TestFlexShorthand(t *testing.T) {
+	cases := []struct {
+		in       string
+		grow     float64
+		basisPct float64
+		basisPx  float64
+		hasBasis bool
+	}{
+		{"1", 1, 0, 0, false},
+		{"none", 0, 0, 0, false},
+		{"0 0 auto", 0, 0, 0, false},
+		{"0 0 calc(50% - 7px)", 0, 0.5, -7, true},
+		{"1 1 calc(33.333% - 10px)", 1, 0.33333, -10, true},
+		{"2 1 40%", 2, 0.4, 0, true},
+	}
+	for _, c := range cases {
+		var cs computedStyle
+		applyFlexShorthand(&cs, c.in, 16, 0)
+		if cs.flexGrow != c.grow {
+			t.Errorf("flex %q grow = %g, want %g", c.in, cs.flexGrow, c.grow)
+		}
+		if cs.hasFlexBasis != c.hasBasis {
+			t.Errorf("flex %q hasBasis = %v, want %v", c.in, cs.hasFlexBasis, c.hasBasis)
+			continue
+		}
+		if c.hasBasis && (diff(cs.flexBasisPct, c.basisPct) > 1e-4 || diff(cs.flexBasisPx, c.basisPx) > 1e-4) {
+			t.Errorf("flex %q basis = (%g, %g), want (%g, %g)", c.in, cs.flexBasisPct, cs.flexBasisPx, c.basisPct, c.basisPx)
+		}
+	}
+}
+
+// The cascade must keep gap and flex; expandShorthands used to drop them.
+func TestGapAndFlexSurviveShorthandExpansion(t *testing.T) {
+	out := expandShorthands([]cssDecl{
+		{prop: "gap", val: "14px"},
+		{prop: "flex", val: "0 0 calc(50% - 7px)"},
+	})
+	got := map[string]bool{}
+	for _, d := range out {
+		got[d.prop] = true
+	}
+	if !got["gap"] || !got["flex"] {
+		t.Errorf("gap/flex dropped by expandShorthands: %v", out)
+	}
+}

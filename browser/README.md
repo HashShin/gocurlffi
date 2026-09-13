@@ -287,7 +287,7 @@ element both engines produce:
 
 The remaining Wikipedia differences are mostly `display: flex`/`flow-root`
 style rules behind `:is()`/`:has()` selectors that cascadia cannot compile, and
-grid/flex layout the renderer does not use.
+grid layout the renderer does not use.
 
 ```go
 png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
@@ -342,8 +342,13 @@ same honest limits:
   cascaded for typography, colour, display, spacing, alignment and flat block
   backgrounds. `float` and `position` are ignored for layout, so sidebars and
   menus that a browser would place beside the content flow inline or in document
-  order (their *computed* values are still reported correctly), and a flex or
-  grid row renders as a stack.
+  order (their *computed* values are still reported correctly).
+- `display: flex` rows are laid out: children sit side by side, sized from
+  `flex-grow`, `flex-basis` (including `calc(50% - 7px)`) or their content, with
+  `gap`, `flex-wrap`, `justify-content`, `align-items` and nested rows. A column
+  flex container and `display: grid` still stack, and a row is not a full
+  flexbox: baseline alignment, margins on items and ordered/reverse directions
+  are not modelled.
 - Lengths include `clamp()`, `min()` and `max()`, and the `vw` unit, resolved
   against the layout width. Vertical and left margins and padding are applied as
   flow space; `padding-top`/`padding-bottom` push the content down and add space
