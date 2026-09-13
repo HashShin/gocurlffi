@@ -344,10 +344,12 @@ same honest limits:
 - Native form controls are drawn, not left blank: checkbox and radio (with
   their checked state), range, and color swatch show a graphic, while text
   inputs, textareas, buttons, file and select show their value, placeholder or
-  selected option. Custom-drawn controls (`appearance: none` with CSS borders)
-  get the native graphic, since borders are not rendered.
-- Still no box model: no borders, shadows, floats, positioning or gradients.
-  CSS is
+  selected option inside a box. A control's uniform border and `min-height` are
+  drawn, so an empty textarea is still the tall box the page asked for. Text is
+  centered inside a button, and a column flex container's `align-items: center`
+  centers its children.
+- Still no box model: no borders on arbitrary elements, no shadows, floats,
+  positioning or gradients. CSS is
   cascaded for typography, colour, display, spacing, alignment and flat block
   backgrounds. `float` and `position` are ignored for layout, so sidebars and
   menus that a browser would place beside the content flow inline or in document
@@ -355,9 +357,9 @@ same honest limits:
 - `display: flex` rows are laid out: children sit side by side, sized from
   `flex-grow`, `flex-basis` (including `calc(50% - 7px)`) or their content, with
   `gap`, `flex-wrap`, `justify-content`, `align-items` and nested rows. A column
-  flex container and `display: grid` still stack, and a row is not a full
-  flexbox: baseline alignment, margins on items and ordered/reverse directions
-  are not modelled.
+  flex container stacks its children (and honors `align-items` horizontally);
+  `display: grid` still stacks, and a row is not a full flexbox: baseline
+  alignment, margins on items and ordered/reverse directions are not modelled.
 - Lengths include `clamp()`, `min()` and `max()`, and the `vw` unit, resolved
   against the layout width. Vertical and left margins and padding are applied as
   flow space; `padding-top`/`padding-bottom` push the content down and add space

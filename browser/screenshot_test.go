@@ -544,3 +544,55 @@ func TestScreenshotDrawsFormControls(t *testing.T) {
 		t.Errorf("drew %d red pixels, want the color swatch", red)
 	}
 }
+
+// A column flex container with align-items:center centers its children. The
+// centering shifts the drawn run, not the block indent, so this checks pixels.
+func TestFlexColumnCentersChildren(t *testing.T) {
+	img := screenshotOf(t, `<html><head><style>
+		.col { display: flex; flex-direction: column; align-items: center }
+	</style></head><body style="margin:0;background:#fff">
+		<div class="col"><div>mid</div></div>
+	</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	b := img.Bounds()
+	minX, maxX := b.Max.X, b.Min.X
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 < 0x80 && g>>8 < 0x80 && bl>>8 < 0x80 {
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+			}
+		}
+	}
+	if minX > 190 {
+		t.Errorf("text spans x=%d..%d, want it centered in 0..%d", minX, maxX, b.Dx())
+	}
+}
+
+// An empty textarea reserves its min-height and draws a border, so it is a
+// visible box rather than nothing.
+func TestTextareaReservesBox(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;background:#000">
+		<textarea style="min-height:100px;border:2px solid #ffffff;background:#000;width:300px"></textarea>
+		</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	if h := img.Bounds().Dy(); h < 90 || h > 160 {
+		t.Errorf("render height %d, want the textarea's ~100px box", h)
+	}
+	white := 0
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 > 0xd0 && g>>8 > 0xd0 && bl>>8 > 0xd0 {
+				white++
+			}
+		}
+	}
+	if white < 200 {
+		t.Errorf("drew %d border pixels, want a visible border", white)
+	}
+}

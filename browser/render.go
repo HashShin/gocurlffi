@@ -213,6 +213,15 @@ type drawLine struct {
 	bgX       float64
 	bgW       float64
 	underline bool // draw a rule under the whole line (blockquote bar reuses this shape)
+
+	// A uniform box border drawn around a rectangle.
+	border   bool
+	borderX  float64
+	borderY  float64
+	borderW2 float64
+	borderH  float64
+	borderT  float64
+	borderC  color.RGBA
 }
 
 // --- rasterizing ---
@@ -241,6 +250,9 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 		}
 		if ln.hasBG {
 			fillRect(img, s(ln.bgX), s(ln.y), s(ln.bgW), s(ln.height), ln.bg)
+		}
+		if ln.border {
+			drawBorder(img, s(ln.borderX), s(ln.borderY), s(ln.borderW2), s(ln.borderH), s(ln.borderT), ln.borderC)
 		}
 	}
 	for _, ln := range doc.lines {
@@ -324,6 +336,20 @@ func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
 	// it (the page background), not erase it. The output then stays opaque,
 	// which is what a screenshot should be.
 	draw.Draw(img, r, cssUniform(c), image.Point{}, draw.Over)
+}
+
+// drawBorder draws a uniform box border of thickness t inside the rectangle.
+func drawBorder(img *image.RGBA, x, y, w, h, t float64, c color.RGBA) {
+	if t < 1 {
+		t = 1
+	}
+	if w < 1 || h < 1 {
+		return
+	}
+	fillRect(img, x, y, w, t, c)
+	fillRect(img, x, y+h-t, w, t, c)
+	fillRect(img, x, y, t, h, c)
+	fillRect(img, x+w-t, y, t, h, c)
 }
 
 func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c color.RGBA) {
@@ -431,6 +457,15 @@ type renderBlock struct {
 	wrap       bool
 	justify    string
 	alignItems string
+
+	// A uniform border around the block, and a minimum height. Both are used
+	// for box-like blocks such as form controls and panels; borderLeft is the
+	// outer left edge relative to the column.
+	borderW     float64
+	borderColor color.RGBA
+	hasBorder   bool
+	borderLeft  float64
+	minHeight   float64
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -498,6 +533,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 			out = append(out, ls...)
 			y += h + b.trailing
 		default:
+			blockTop := y
 			textStart := b.textX
 			limit := colW - b.textX
 			if limit < 40 {
@@ -594,6 +630,27 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 					marker: b.marker, markerX: colX + b.boxLeft, quote: b.quote, indent: colX + textStart,
 				})
 				y += lh
+			}
+			// A minimum height reserves space for a control or panel that has
+			// no text yet, such as an empty textarea.
+			if b.minHeight > 0 && y-blockTop < b.minHeight {
+				gapH := b.minHeight - (y - blockTop)
+				if b.hasBG {
+					out = append(out, drawLine{
+						y: y, height: gapH, hasBG: true, bg: b.bg,
+						bgX: colX + b.boxLeft, bgW: colW - b.boxLeft,
+					})
+				}
+				y += gapH
+			}
+			if b.hasBorder {
+				out = append(out, drawLine{
+					y:       blockTop,
+					border:  true,
+					borderX: colX + b.borderLeft, borderY: blockTop,
+					borderW2: colW - b.borderLeft, borderH: y - blockTop,
+					borderT: b.borderW, borderC: b.borderColor,
+				})
 			}
 			y += b.trailing
 		}

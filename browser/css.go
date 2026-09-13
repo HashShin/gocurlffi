@@ -931,8 +931,10 @@ func expandShorthands(in []cssDecl) []cssDecl {
 			}
 		case "font":
 			out = append(out, expandFontShorthand(d)...)
-		case "border", "border-top", "border-bottom", "border-left", "border-right":
-			// Borders are not rendered; ignoring them avoids false spacing.
+		case "border-top", "border-bottom", "border-left", "border-right":
+			// Only a uniform border is drawn; a single side would need the box
+			// model, and applying one side's width as a uniform border would be
+			// wrong.
 			continue
 		case "grid", "flex-flow", "place-items", "columns":
 			// Grid and the remaining flow shorthands are not laid out; skipping

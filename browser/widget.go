@@ -178,22 +178,23 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 	typ := strings.ToLower(strings.TrimSpace(attrOf(el, "type")))
 	switch tag {
 	case "select":
-		label := selectedOptionText(el)
-		s := c.style
-		if label != "" {
-			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: label, style: s})
+		idx := c.controlBlock(cs)
+		if label := selectedOptionText(el); label != "" {
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: label, style: c.style})
 		}
-		caret := s
-		c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: "\u25be", style: caret})
+		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: " \u25be", style: c.style})
 		return true
 	case "textarea":
+		idx := c.controlBlock(cs)
+		c.blocks[idx].pre = true
 		v := textContent(el)
 		if strings.TrimSpace(v) == "" {
 			v = attrOf(el, "placeholder")
 		}
 		if v != "" {
-			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: v, style: c.style})
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
 		}
+		c.controlPlaceholder(idx)
 		return true
 	case "input":
 		switch typ {
@@ -224,28 +225,41 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 			}
 			return true
 		case "file":
-			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: "Choose File", style: c.style})
+			idx := c.controlBlock(cs)
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "Choose File", style: c.style})
 			return true
 		case "submit", "button", "reset":
 			v := attrOf(el, "value")
 			if v == "" {
 				v = strings.ToUpper(typ)
 			}
-			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: v, style: c.style})
+			idx := c.controlBlock(cs)
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
 			return true
 		default:
-			// A text-like input shows its value, or its placeholder when empty.
+			// A text-like input shows its value, or its placeholder. An empty
+			// one still draws its box.
 			v := attrOf(el, "value")
 			if v == "" {
 				v = attrOf(el, "placeholder")
 			}
+			idx := c.controlBlock(cs)
 			if v != "" {
-				c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: v, style: c.style})
+				c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
 			}
+			c.controlPlaceholder(idx)
 			return true
 		}
 	}
 	return false
+}
+
+// controlPlaceholder gives an otherwise empty control block a zero-width span so
+// it still lays out one line, and therefore draws its box.
+func (c *collector) controlPlaceholder(idx int) {
+	if len(c.blocks[idx].spans) == 0 {
+		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "\u200b", style: c.style})
+	}
 }
 
 // widgetSize is the square size of a checkbox or radio: the CSS width when it

@@ -620,6 +620,21 @@ func (c *collector) walkElement(el *html.Node) {
 	if c.emitFormControl(el, cs, tag) {
 		return
 	}
+	// A button is inline-block, but its own text-align applies to its content:
+	// the user agent centers button text, and a full-width button with
+	// text-align:center is common.
+	if tag == "button" {
+		c.flush()
+		start := len(c.blocks)
+		c.walkChildren(el)
+		c.flush()
+		align := cs.textAlign
+		if align == "" {
+			align = "center"
+		}
+		applyColumnAlign(c.blocks[start:], align)
+		return
+	}
 
 	switch tag {
 	case "ul", "ol":
@@ -672,10 +687,58 @@ func (c *collector) walkElement(el *html.Node) {
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
 		c.walkChildren(el)
 		c.flush()
+		if isFlexColumnContainer(cs) {
+			applyColumnAlign(c.blocks[start:], cs.alignItems)
+		}
 		c.applyBoxEdges(start, cs)
 		return
 	}
 	c.walkChildren(el)
+}
+
+// controlBlock flushes the current block and starts a fresh box-like block for a
+// form control, returning its index so spans can be added to it.
+func (c *collector) controlBlock(cs *computedStyle) int {
+	c.flush()
+	b := renderBlock{
+		kind:      blockText,
+		boxLeft:   c.content,
+		textX:     c.content,
+		quote:     c.quote,
+		align:     cs.textAlign,
+		leading:   cs.marginTop + cs.paddingTop,
+		trailing:  cs.marginBottom + cs.paddingBottom,
+		minHeight: cs.minHeight,
+	}
+	if c.hasBG {
+		b.bg, b.hasBG, b.bgFull = c.bg, true, true
+	}
+	if cs.hasBorder {
+		b.hasBorder, b.borderW, b.borderColor = true, cs.borderW, cs.borderColor
+		b.borderLeft = c.content - cs.paddingLeft - cs.borderW
+	}
+	c.blocks = append(c.blocks, b)
+	return len(c.blocks) - 1
+}
+
+// isFlexColumnContainer reports whether an element stacks its children with a
+// column flex layout. align-items then aligns them horizontally, which a plain
+// block stack does not do, so the produced blocks are centered.
+func isFlexColumnContainer(cs *computedStyle) bool {
+	return (cs.display == "flex" || cs.display == "inline-flex") && cs.flexDirection == "column"
+}
+
+func applyColumnAlign(blocks []renderBlock, align string) {
+	switch align {
+	case "center":
+		for i := range blocks {
+			blocks[i].align = "center"
+		}
+	case "end", "right":
+		for i := range blocks {
+			blocks[i].align = "right"
+		}
+	}
 }
 
 // isFlexRowContainer reports whether an element lays its children out in a row.

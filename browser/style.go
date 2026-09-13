@@ -506,6 +506,21 @@ func clampF(f float64) float64 {
 	return f
 }
 
+// cssLengthToken finds a length-looking token in a shorthand value, so
+// "border: 1px solid #ccc" yields "1px".
+func cssLengthToken(v string, base, vw float64) string {
+	for _, tok := range splitTopLevel(v, ' ') {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if _, ok := cssLengthToPxV(tok, base, vw); ok {
+			return tok
+		}
+	}
+	return ""
+}
+
 // cssColorToken finds a color-looking token in a shorthand value.
 func cssColorToken(v string) string {
 	for _, tok := range splitTopLevel(v, ' ') {
@@ -576,6 +591,12 @@ type computedStyle struct {
 	rowGap         float64
 	justifyContent string
 	alignItems     string
+	// borderW/borderColor describe a uniform box border, the only kind drawn.
+	borderW     float64
+	borderColor color.RGBA
+	hasBorder   bool
+	// minHeight reserves vertical space for a control or panel.
+	minHeight float64
 
 	// monoDefault records that the user-agent sheet gave this element its
 	// 13px monospace size, which an author font-family takes away again.
@@ -1136,6 +1157,50 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	}
 	if v, ok := d["flex"]; ok {
 		applyFlexShorthand(cs, v, base, e.width)
+	}
+	if v, ok := d["border-width"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.borderW = px
+		}
+	}
+	if v, ok := d["border-color"]; ok {
+		if c, ok2 := parseCSSColor(v); ok2 {
+			cs.borderColor, cs.hasBorder = c, true
+		}
+	}
+	if v, ok := d["border-style"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		cs.hasBorder = lv != "none" && lv != "hidden"
+	}
+	if v, ok := d["border"]; ok {
+		lv := strings.ToLower(v)
+		if tok := cssLengthToken(v, base, e.width); tok != "" {
+			if px, ok2 := cssLengthToPxV(tok, base, e.width); ok2 {
+				cs.borderW = px
+			}
+		}
+		if tok := cssColorToken(v); tok != "" {
+			if c, ok2 := parseCSSColor(tok); ok2 {
+				cs.borderColor = c
+			}
+		}
+		if !strings.Contains(lv, "none") && !strings.Contains(lv, "hidden") {
+			cs.hasBorder = true
+		}
+	}
+	if cs.hasBorder {
+		// Defaults a browser fills in: 1px, and currentColor when unset.
+		if cs.borderW == 0 {
+			cs.borderW = 1
+		}
+		if cs.borderColor == (color.RGBA{}) {
+			cs.borderColor = cs.textColor
+		}
+	}
+	if v, ok := d["min-height"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.minHeight = px
+		}
 	}
 	if v, ok := d["visibility"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))
