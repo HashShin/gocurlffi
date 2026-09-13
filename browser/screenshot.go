@@ -469,6 +469,22 @@ type collector struct {
 	sizeAutoLeft, sizeAutoRight bool
 }
 
+// finishBlock applies an element's box edges, sizing context and box to the
+// blocks it produced, creating an empty block when a boxed element has no
+// content of its own (a sized, empty div).
+func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
+	if boxed && len(c.blocks) == start {
+		c.blocks = append(c.blocks, renderBlock{
+			kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
+		})
+	}
+	c.applyBoxEdges(start, cs)
+	c.assignSizing(start, cs)
+	if boxed {
+		c.assignBox(start, cs)
+	}
+}
+
 // assignSizing copies the current sizing context onto the blocks an element
 // produced, unless a nested element already gave them their own.
 func (c *collector) assignSizing(start int, cs *computedStyle) {
@@ -650,7 +666,9 @@ func (c *collector) walkElement(el *html.Node) {
 	// A block with a background, border or radius is drawn as one box: its
 	// background is painted as a (possibly rounded) rectangle instead of per
 	// line, so its own background must not propagate to the lines it contains.
-	boxed := block && (cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow)
+	// A button is inline-block but produces its own blocks, so it can carry a
+	// box like a block element.
+	boxed := (block || tag == "button") && (cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow)
 	if boxed {
 		c.hasBG = false
 	}
@@ -730,6 +748,7 @@ func (c *collector) walkElement(el *html.Node) {
 			align = "center"
 		}
 		applyColumnAlign(c.blocks[start:], align)
+		c.finishBlock(start, cs, boxed)
 		return
 	}
 
@@ -741,11 +760,7 @@ func (c *collector) walkElement(el *html.Node) {
 		c.walkChildren(el)
 		c.lists = c.lists[:len(c.lists)-1]
 		c.flush()
-		c.applyBoxEdges(start, cs)
-		c.assignSizing(start, cs)
-		if boxed {
-			c.assignBox(start, cs)
-		}
+		c.finishBlock(start, cs, boxed)
 		return
 	case "li":
 		c.flush()
@@ -763,16 +778,19 @@ func (c *collector) walkElement(el *html.Node) {
 			c.ensure(cs)
 			c.walkChildren(el)
 			c.flush()
-			c.applyBoxEdges(start, cs)
+			c.finishBlock(start, cs, boxed)
 		} else {
 			c.walkChildren(el)
 		}
 		return
 	case "blockquote":
 		c.flush()
+		start := len(c.blocks)
 		c.quote++
 		c.walkChildren(el)
+		c.quote--
 		c.flush()
+		c.finishBlock(start, cs, boxed)
 		return
 	}
 
@@ -788,21 +806,10 @@ func (c *collector) walkElement(el *html.Node) {
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
 		c.walkChildren(el)
 		c.flush()
-		if boxed && len(c.blocks) == start {
-			// A boxed element with no content (a sized, empty div) still draws
-			// its box.
-			c.blocks = append(c.blocks, renderBlock{
-				kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
-			})
-		}
 		if isFlexColumnContainer(cs) {
 			applyColumnAlign(c.blocks[start:], cs.alignItems)
 		}
-		c.applyBoxEdges(start, cs)
-		c.assignSizing(start, cs)
-		if boxed {
-			c.assignBox(start, cs)
-		}
+		c.finishBlock(start, cs, boxed)
 		return
 	}
 	c.walkChildren(el)

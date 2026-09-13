@@ -775,3 +775,14 @@ func TestPaddedFlexItemKeepsOneLine(t *testing.T) {
 		t.Errorf("the padded label wrapped; outline has: %v", pos)
 	}
 }
+
+// A button draws its background, border and radius like any box, even though it
+// is display:inline-block.
+func TestButtonDrawsItsBox(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;background:#000">
+		<button style="border:3px solid #ff0000;border-radius:8px;background:#000;padding:6px 12px">Go</button>
+		</body></html>`, ScreenshotOptions{Width: 300, NoImages: true})
+	if _, _, _, _, ok := redBounds(img); !ok {
+		t.Error("the button border was not drawn")
+	}
+}
