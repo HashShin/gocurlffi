@@ -97,37 +97,64 @@ const defaultLayoutWidth = 1280
 
 // cssTexts returns the page's CSS in document order, with @imports resolved.
 // It is cached: sources are fetched at most once per page.
+//
+// Only what the page itself declares is used - every <style> element and every
+// <link rel=stylesheet> it contains, in document order. Nothing is injected.
+// With Options.Debug each declaration is logged with what became of it, so a
+// page that renders unstyled can be diagnosed instead of guessed at.
 func (p *Page) cssTexts() []string {
 	if p.styleSources != nil {
 		return p.styleSources
 	}
 	var sources []string
+	declared, applied := 0, 0
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.ElementNode {
 				switch c.Data {
 				case "style":
-					if cssMediaMatches(attrOf(c, "media"), 0) {
+					declared++
+					if media := attrOf(c, "media"); !cssMediaMatches(media, 0) {
+						p.debugf("style element skipped: media %q does not match", media)
+					} else {
+						applied++
+						p.debugf("style element: %d bytes", len(textContent(c)))
 						sources = append(sources, textContent(c))
 					}
 				case "link":
-					if isStylesheetLink(c) {
-						href := resolveURL(p.baseURL(), attrOf(c, "href"))
-						resp, err := p.browser.get(href, nil)
-						if err != nil {
-							p.debugf("stylesheet failed: %s: %v", href, err)
-							continue
-						}
-						p.debugf("stylesheet: %d bytes from %s", len(resp.Content), href)
-						sources = append(sources, string(resp.Content))
+					if !hasStylesheetRel(c) {
+						continue
 					}
+					declared++
+					href := attrOf(c, "href")
+					switch {
+					case href == "":
+						p.debugf("stylesheet skipped: <link rel=stylesheet> without href")
+						continue
+					case hasAttr(c, "disabled"):
+						p.debugf("stylesheet skipped: disabled (%s)", href)
+						continue
+					case !cssMediaMatches(attrOf(c, "media"), 0):
+						p.debugf("stylesheet skipped: media %q does not match (%s)", attrOf(c, "media"), href)
+						continue
+					}
+					abs := resolveURL(p.baseURL(), href)
+					resp, err := p.browser.get(abs, nil)
+					if err != nil {
+						p.debugf("stylesheet FAILED: %s: %v", abs, err)
+						continue
+					}
+					applied++
+					p.debugf("stylesheet: %d bytes from %s", len(resp.Content), abs)
+					sources = append(sources, string(resp.Content))
 				}
 			}
 			walk(c)
 		}
 	}
 	walk(p.doc)
+	p.debugf("page stylesheets: %d declared, %d applied", declared, applied)
 
 	expanded := make([]string, 0, len(sources))
 	for _, src := range sources {
@@ -137,11 +164,17 @@ func (p *Page) cssTexts() []string {
 			if isFontOnlyStylesheet(imp) {
 				// We render with embedded fonts, so a font provider's CSS is a
 				// wasted request.
+				p.debugf("@import skipped (font provider): %s", imp)
 				continue
 			}
-			if resp, err := p.browser.get(resolveURL(p.baseURL(), imp), nil); err == nil {
-				expanded = append(expanded, string(resp.Content))
+			abs := resolveURL(p.baseURL(), imp)
+			resp, err := p.browser.get(abs, nil)
+			if err != nil {
+				p.debugf("@import FAILED: %s: %v", abs, err)
+				continue
 			}
+			p.debugf("@import: %d bytes from %s", len(resp.Content), abs)
+			expanded = append(expanded, string(resp.Content))
 		}
 		expanded = append(expanded, src)
 	}
@@ -154,21 +187,15 @@ func isFontOnlyStylesheet(u string) bool {
 	return strings.Contains(l, "fonts.googleapis.com") || strings.Contains(l, "fonts.gstatic.com")
 }
 
-func isStylesheetLink(n *html.Node) bool {
-	rel := strings.ToLower(attrOf(n, "rel"))
-	isSheet := false
-	for _, tok := range strings.Fields(rel) {
+// hasStylesheetRel reports whether rel lists stylesheet. The other checks that
+// decide whether the sheet is used live in cssTexts, so each can be logged.
+func hasStylesheetRel(n *html.Node) bool {
+	for _, tok := range strings.Fields(strings.ToLower(attrOf(n, "rel"))) {
 		if tok == "stylesheet" {
-			isSheet = true
+			return true
 		}
 	}
-	if !isSheet || hasAttr(n, "disabled") {
-		return false
-	}
-	if attrOf(n, "href") == "" {
-		return false
-	}
-	return cssMediaMatches(attrOf(n, "media"), 0)
+	return false
 }
 
 func cssMediaMatches(q string, width float64) bool {

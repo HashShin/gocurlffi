@@ -261,10 +261,20 @@ sheet it could not fetch, the rules each one produced, and the unsupported
 selector samples.
 
 ```
-[browser] stylesheet: 428760 bytes from https://www.marriott.com/...clientlib-base.css
-[browser] stylesheet 0: 1380 rules, 6/1386 selectors unsupported
-[browser] style engine: 5337 rules at width 900
+[browser] stylesheet: 125934 bytes from https://quotes.toscrape.com/static/bootstrap.min.css
+[browser] stylesheet: 1368 bytes from https://quotes.toscrape.com/static/main.css
+[browser] page stylesheets: 2 declared, 2 applied
+[browser] stylesheet 0: 1883 rules, 345/2228 selectors unsupported
+[browser] style engine: 5356 rules at width 900
 ```
+
+Only what the page itself declares is used: every `<style>` element and every
+`<link rel=stylesheet>`, in document order, fetched from the URL the page gives.
+Nothing is injected, and nothing is substituted - when a line above names
+`bootstrap.min.css` that is a sheet the site itself links. Every declaration is
+accounted for: applied with its size, or skipped with the reason (disabled,
+`media` that does not match, a `<link>` without `href`) or reported as a failed
+fetch.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
