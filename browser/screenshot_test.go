@@ -724,3 +724,28 @@ func TestBlockSizingAndAutoCentering(t *testing.T) {
 		t.Errorf("left-aligned block starts at %d, want 0", minX)
 	}
 }
+
+// max-height caps a block's box and clips the lines that overflow it.
+func TestMaxHeightClips(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0">
+		<div style="max-height:40px;width:120px">aaaa aaaa aaaa aaaa aaaa aaaa aaaa aaaa</div>
+		</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	if h := img.Bounds().Dy(); h > 90 {
+		t.Errorf("render height %d, want the 40px max-height to clip the block", h)
+	}
+}
+
+// box-sizing:border-box makes width include padding and border.
+func TestBoxSizingBorderBox(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0">
+		<div style="box-sizing:border-box;width:100px;padding:0 20px;background:#ff0000;height:20px"></div>
+		</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	minX, _, maxX, _, ok := redBounds(img)
+	if !ok {
+		t.Fatal("the box was not drawn")
+	}
+	if w := maxX - minX; w < 95 || w > 105 {
+		t.Errorf("border-box width %d, want 100", w)
+	}
+	_ = minX
+}

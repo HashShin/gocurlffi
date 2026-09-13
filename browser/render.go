@@ -625,6 +625,11 @@ type renderBlock struct {
 	hasBoxMaxWidth bool
 	boxAutoLeft    bool
 	boxAutoRight   bool
+	borderBox      bool
+	// Right edges and a height cap (with clipping) for scroll boxes like a log.
+	marginRight  float64
+	paddingRight float64
+	maxHeight    float64
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -700,24 +705,42 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
 		}
 		y += gap
-		// Block sizing: the used width is min(available, width, max-width), and
-		// auto horizontal margins center the block in what is left over.
-		available := colW - b.sizeLeft
-		if available < 0 {
-			available = 0
+		// Block sizing. bb is the border-box width available from the block's
+		// left edge (after its left margin) to the containing block's right
+		// edge (before its right margin). edge is the padding and border total.
+		// The used content width is min(bb, width, max-width) with
+		// box-sizing:border-box subtracting the edge, and auto horizontal
+		// margins center whatever is left over.
+		bb := colW - b.boxLeft - b.marginRight
+		if bb < 0 {
+			bb = 0
 		}
-		boxW := available
+		edge := (b.boxLeft - b.borderLeft) + b.paddingRight + b.borderW
+		contentW := bb
+		specW := func(px, pct float64) float64 {
+			w := px + pct*bb
+			if b.borderBox {
+				w -= edge
+			}
+			if w < 0 {
+				w = 0
+			}
+			return w
+		}
 		if b.hasBoxWidth {
-			if w := b.boxWidthPx + b.boxWidthPct*available; w >= 0 && w < boxW {
-				boxW = w
+			if w := specW(b.boxWidthPx, b.boxWidthPct); w < contentW {
+				contentW = w
 			}
 		}
 		if b.hasBoxMaxWidth {
-			if mw := b.boxMaxWidthPx + b.boxMaxWidthPct*available; mw >= 0 && boxW > mw {
-				boxW = mw
+			if w := specW(b.boxMaxWidthPx, b.boxMaxWidthPct); w < contentW {
+				contentW = w
 			}
 		}
-		extra := available - boxW
+		extra := bb - (contentW + edge)
+		if extra < 0 {
+			extra = 0
+		}
 		shift := 0.0
 		switch {
 		case b.boxAutoLeft && b.boxAutoRight:
@@ -725,15 +748,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		case b.boxAutoLeft:
 			shift = extra
 		}
-		if shift < 0 {
-			shift = 0
-		}
-		inner := b.textX - b.sizeLeft
+		inner := b.textX - b.boxLeft
 		boxX := colX + b.borderLeft + shift
-		boxWidthOuter := boxW + (b.boxLeft - b.borderLeft)
+		boxWidthOuter := contentW + edge
 		switch b.kind {
 		case blockImage:
-			w := boxW
+			w := contentW
 			if w < 8 {
 				w = 8
 			}
@@ -760,17 +780,18 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		case blockRule:
 			out = append(out, drawLine{
 				y: y, height: 1, rule: true,
-				ruleX: colX + b.boxLeft + shift, ruleW: boxW,
+				ruleX: colX + b.boxLeft + shift, ruleW: contentW,
 			})
 			y += 12
 		case blockFlex:
-			ls, h := layoutFlex(b, colX+shift, boxW+b.boxLeft, y, baseSize, boxes)
+			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
 			out = append(out, ls...)
 			y += h
 		default:
 			blockTop := y
+			lineStart := len(out)
 			textStart := colX + b.textX + shift
-			limit := boxW - inner
+			limit := contentW - inner - b.paddingRight
 			if limit < 40 {
 				limit = 40
 			}
@@ -815,7 +836,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					dl.hasBG = true
 					if b.bgFull {
 						dl.bgX = colX + b.boxLeft + shift
-						dl.bgW = boxW
+						dl.bgW = contentW + b.paddingRight
 					} else {
 						dl.bgX = textStart
 						dl.bgW = lw
@@ -873,10 +894,26 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				if b.hasBG {
 					out = append(out, drawLine{
 						y: y, height: gapH, hasBG: true, bg: b.bg,
-						bgX: colX + b.boxLeft + shift, bgW: boxW,
+						bgX: colX + b.boxLeft + shift, bgW: contentW + b.paddingRight,
 					})
 				}
 				y += gapH
+			}
+			// max-height clips the box, like overflow on a scroll container.
+			if b.maxHeight > 0 && y-blockTop > b.maxHeight {
+				bottom := blockTop + b.maxHeight
+				kept := out[:lineStart]
+				for _, dl := range out[lineStart:] {
+					if dl.y >= bottom {
+						continue
+					}
+					if dl.y+dl.height > bottom {
+						dl.height = bottom - dl.y
+					}
+					kept = append(kept, dl)
+				}
+				out = kept
+				y = bottom
 			}
 		}
 		recordBox(b, bTop, y, boxX, boxWidthOuter)

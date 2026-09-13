@@ -613,6 +613,8 @@ type computedStyle struct {
 	marginTop     float64
 	marginBottom  float64
 	marginLeft    float64
+	marginRight   float64
+	paddingRight  float64
 	paddingTop    float64
 	paddingBottom float64
 	paddingLeft   float64
@@ -634,16 +636,20 @@ type computedStyle struct {
 	maxWidthPx   float64
 	maxWidthPct  float64
 	hasMaxWidth  bool
+	maxHeightPx  float64
+	hasMaxHeight bool
 	// Auto horizontal margins (margin: 0 auto) center a sized block.
 	marginLeftAuto  bool
 	marginRightAuto bool
-	heightPx        float64
-	heightPct       float64
-	hasHeight       bool
-	columnGap       float64
-	rowGap          float64
-	justifyContent  string
-	alignItems      string
+	// boxSizingBorderBox makes width/height include padding and border.
+	boxSizingBorderBox bool
+	heightPx           float64
+	heightPct          float64
+	hasHeight          bool
+	columnGap          float64
+	rowGap             float64
+	justifyContent     string
+	alignItems         string
 	// borderW/borderColor describe a uniform box border, the only kind drawn.
 	borderW     float64
 	borderColor color.RGBA
@@ -1214,6 +1220,25 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
 			cs.maxWidthPct, cs.maxWidthPx, cs.hasMaxWidth = pct, px, true
 		}
+	}
+	if v, ok := d["max-height"]; ok {
+		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
+			_ = pct
+			cs.maxHeightPx, cs.hasMaxHeight = px, true
+		}
+	}
+	if v, ok := d["margin-right"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.marginRight = px
+		}
+	}
+	if v, ok := d["padding-right"]; ok {
+		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			cs.paddingRight = px
+		}
+	}
+	if v, ok := d["box-sizing"]; ok && strings.EqualFold(strings.TrimSpace(v), "border-box") {
+		cs.boxSizingBorderBox = true
 	}
 	if v, ok := d["margin-left"]; ok && strings.EqualFold(strings.TrimSpace(v), "auto") {
 		cs.marginLeftAuto = true

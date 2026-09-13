@@ -482,8 +482,14 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		b.boxWidthPx, b.boxWidthPct, b.hasBoxWidth = c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth
 		b.boxMaxWidthPx, b.boxMaxWidthPct, b.hasBoxMaxWidth = c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax
 		b.boxAutoLeft, b.boxAutoRight = c.sizeAutoLeft, c.sizeAutoRight
-		if cs != nil && cs.hasHeight && cs.heightPx > b.minHeight {
-			b.minHeight = cs.heightPx
+		if cs != nil {
+			b.borderBox = cs.boxSizingBorderBox
+			if cs.hasHeight && cs.heightPx > b.minHeight {
+				b.minHeight = cs.heightPx
+			}
+			if cs.hasMaxHeight {
+				b.maxHeight = cs.maxHeightPx
+			}
 		}
 	}
 }
@@ -825,6 +831,9 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		hasBoxMaxWidth: c.hasSizeMax,
 		boxAutoLeft:    c.sizeAutoLeft,
 		boxAutoRight:   c.sizeAutoRight,
+		borderBox:      cs.boxSizingBorderBox,
+		marginRight:    cs.marginRight,
+		paddingRight:   cs.paddingRight,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,
@@ -972,6 +981,10 @@ func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
 	last.marginBottom += cs.marginBottom
 	last.paddingBottom += cs.paddingBottom
 	last.trailing = last.marginBottom + last.paddingBottom
+	for i := start; i < len(c.blocks); i++ {
+		c.blocks[i].marginRight = cs.marginRight
+		c.blocks[i].paddingRight = cs.paddingRight
+	}
 }
 
 func listMarker(style string) string {

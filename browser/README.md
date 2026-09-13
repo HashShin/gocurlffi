@@ -377,10 +377,12 @@ same honest limits:
   with anti-aliased corners) rather than per line, and nested boxes paint
   parent-first. `opacity` scales the element's own colours. `box-shadow`,
   `transform` and `filter` are not drawn.
-- Block sizing: `width`, `max-width` and `height` (as a minimum) are applied,
-  and `margin: 0 auto` centers a sized block. A sizing context is inherited by
-  the subtree, so `max-width:1100px;margin:0 auto` centers a whole page column,
-  not just the element's own text.
+- Block sizing: `width`, `max-width`, `max-height`, `height` (as a minimum) and
+  `box-sizing: border-box` are applied, plus right margins and padding, and
+  `margin: 0 auto` centers a sized block. `max-height` clips the overflowing
+  lines, like `overflow` on a scroll box. A sizing context is inherited by the
+  subtree, so `max-width:1100px;margin:0 auto` centers a whole page column, not
+  just the element's own text.
 - `display: flex` rows are laid out: children sit side by side, sized from
   `flex-grow`, `flex-basis` (including `calc(50% - 7px)`) or their content, with
   `gap`, `flex-wrap`, `justify-content`, `align-items` and nested rows. A column
