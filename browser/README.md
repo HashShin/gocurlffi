@@ -101,6 +101,23 @@ make gobrowser
   family, `orientation`, the `device-*` aliases, and the `(width >= 600px)`
   range form). A query the parser cannot understand does not match, because
   treating it as matching applies every mobile rule to a desktop page.
+- Selectors written for real build tools: CSS escapes outside strings
+  (`".font-\[\'Poppins\'\2c sans\]"`, `".\!text-\[14px\]"`,
+  `".lg\:font-semibold"`), including class names with escapes cascadia compiles
+  but never matches, which are matched by name instead. Without this a single
+  escaped quote in brave.com's stylesheet made the parser swallow the remaining
+  117KB: 1110 rules instead of 2332.
+- The `font` shorthand in its real grammar, where the weight, style and variant
+  precede the size and the size must carry a unit: `font: 600 14px/22px
+  system-ui` sets weight 600, not a 600px font. This is how Leo (brave.com's
+  design system) sets its buttons, through a custom property.
+- `font-weight` keeps its number, so `font-semibold` reports 600 and
+  `font-medium` 500, and `bolder`/`lighter` step through the CSS weight table.
+- Blockification for flex and grid items as well as for floats and positioned
+  boxes, so a `<span>` inside a flex container reports `display: block`.
+- User-agent form controls by type: a text field and textarea are white on
+  black, a button and select keep the platform face (`#efefef`) and centre their
+  label, a checkbox or radio is transparent.
 - HTML presentational attributes (`bgcolor`, `color`, `align`) act as
   author-origin hints below the cascade, which is how old table layouts paint
   themselves, and a page without a doctype is styled in quirks mode (tables
@@ -259,7 +276,8 @@ element both engines produce:
 | --- | --- | --- |
 | `news.ycombinator.com` | 817 | 7/7 properties, 0 differences |
 | `quotes.toscrape.com/js/` | 109 | 7/7 properties, 0 differences |
-| `en.wikipedia.org` (Go article) | 6703 | font-size 0.3%, colour 0.0%, background 0.5%, weight 0.1%, style 0.0%, display 4.0%, alignment 0.3% |
+| `brave.com` | 959 | font-size 1.1%, colour 1.6%, weight 0.0%, style 0.0%, display 1.1%, alignment 0.0%, background 5.0% |
+| `en.wikipedia.org` (Go article) | 6703 | font-size 0.3%, colour 0.0%, background 0.5%, weight 0.5%, style 0.0%, display 2.5%, alignment 0.3% |
 
 The remaining Wikipedia differences are mostly `display: flex`/`flow-root`
 style rules behind `:is()`/`:has()` selectors that cascadia cannot compile, and

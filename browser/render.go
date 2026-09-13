@@ -46,6 +46,11 @@ var (
 	renderRuleColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 	renderQuoteBar  = color.RGBA{R: 0xd0, G: 0xd0, B: 0xd0, A: 0xff}
 	renderPageBG    = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+
+	// The user-agent colours of form controls: a text field is white on
+	// black, while a button or select keeps the platform face.
+	renderFieldBG    = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	renderButtonFace = color.RGBA{R: 0xef, G: 0xef, B: 0xef, A: 0xff}
 )
 
 func defaultRenderStyle() renderStyle {

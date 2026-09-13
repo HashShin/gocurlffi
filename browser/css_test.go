@@ -776,3 +776,128 @@ func TestPageStyleSheets(t *testing.T) {
 		t.Errorf("paragraph colour = %s, want the applied sheet's red", v)
 	}
 }
+
+// A CSS escape outside a string must not start one. Tailwind writes
+// arbitrary-value classes as ".font-\[\'Poppins\'\2c sans\]"; taking that quote
+// as the start of a string swallowed the rest of brave.com's 415KB stylesheet,
+// which parsed as 1110 rules instead of 2332 and lost every rule after it.
+func TestCSSEscapedSelectors(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		.font-\[\'Poppins\'\2c sans\] { color: rgb(1, 2, 3) }
+		.text-\[30px\] { font-size: 30px }
+		.after-it { color: rgb(4, 5, 6) }
+		@media (min-width: 100px) { .in-media { color: rgb(7, 8, 9) } }
+	</style></head><body>
+		<p id="a" class="font-['Poppins',sans]">a</p>
+		<p id="b" class="text-[30px]">b</p>
+		<p id="c" class="after-it">c</p>
+		<p id="d" class="in-media">d</p>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ id, prop, want string }{
+		{"a", "color", "rgba(1, 2, 3, 1.000)"},
+		{"b", "fontSize", "30px"},
+		// The rules after the escaped selector are still parsed, which is
+		// what the swallow bug destroyed.
+		{"c", "color", "rgba(4, 5, 6, 1.000)"},
+		{"d", "color", "rgba(7, 8, 9, 1.000)"},
+	}
+	for _, c := range cases {
+		expr := `getComputedStyle(document.getElementById('` + c.id + `')).` + c.prop
+		v, err := p.Eval(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", expr, got, c.want)
+		}
+	}
+	// All four rules survived the escaped one, in the sheet's own view too.
+	if got := evalString(t, p, `document.styleSheets[0].cssRules.length`); got != "4" {
+		t.Fatalf("parsed %s rules, want 4: a selector with an escaped quote lost the rest", got)
+	}
+}
+
+// The font shorthand puts the weight, style and variant before the size, and
+// the size must carry a unit or be a keyword: a bare number there is the
+// weight. Brave sets its buttons with "font: var(--leo-font-...)" whose value
+// starts with "600", which was being read as a 600px font size.
+func TestCSSFontShorthand(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		:root { --btn: 600 14px/22px system-ui, sans-serif; }
+		#a { font: var(--btn); }
+		#b { font: italic 700 12px Poppins, sans-serif; }
+		#c { font: normal 500 1.5rem/2 Georgia, serif; }
+		#d { font: 100% sans-serif; }
+	</style></head><body>
+		<p id="a">a</p><p id="b">b</p><p id="c">c</p><p id="d">d</p>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ id, prop, want string }{
+		{"a", "fontWeight", "600"},
+		{"a", "fontSize", "14px"},
+		{"a", "lineHeight", "22px"},
+		{"b", "fontWeight", "700"},
+		{"b", "fontStyle", "italic"},
+		{"b", "fontSize", "12px"},
+		{"c", "fontWeight", "500"},
+		{"c", "fontSize", "24px"},
+		{"d", "fontSize", "16px"},
+	}
+	for _, c := range cases {
+		expr := `getComputedStyle(document.getElementById('` + c.id + `')).` + c.prop
+		v, err := p.Eval(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", expr, got, c.want)
+		}
+	}
+}
+
+// A flex or grid item is blockified, so a span inside a flex container reports
+// display:block, and the user-agent colours of form controls are per control
+// type rather than one white box for all of them.
+func TestCSSBlockifiedItemsAndFormControls(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		#flex { display: flex }
+		#grid { display: grid }
+	</style></head><body>
+		<div id="flex"><span id="fs">s</span><b id="fb">b</b></div>
+		<div id="grid"><span id="gs">s</span></div>
+		<button id="btn">b</button><input id="txt"><input id="chk" type="checkbox">
+		<input id="sub" type="submit"><select id="sel"><option id="opt">o</option></select>
+		<textarea id="ta">t</textarea>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ id, prop, want string }{
+		{"fs", "display", "block"},
+		{"fb", "display", "block"},
+		{"gs", "display", "block"},
+		// Measured in Chromium for the same document.
+		{"btn", "backgroundColor", "rgba(239, 239, 239, 1.000)"},
+		{"btn", "textAlign", "center"},
+		{"txt", "backgroundColor", "rgba(255, 255, 255, 1.000)"},
+		{"chk", "backgroundColor", "rgba(0, 0, 0, 0)"},
+		{"sub", "backgroundColor", "rgba(239, 239, 239, 1.000)"},
+		{"sub", "textAlign", "center"},
+		{"sel", "backgroundColor", "rgba(239, 239, 239, 1.000)"},
+		{"ta", "backgroundColor", "rgba(255, 255, 255, 1.000)"},
+		{"opt", "display", "block"},
+		{"opt", "backgroundColor", "rgba(0, 0, 0, 0)"},
+	}
+	for _, c := range cases {
+		expr := `getComputedStyle(document.getElementById('` + c.id + `')).` + c.prop
+		v, err := p.Eval(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", expr, got, c.want)
+		}
+	}
+}

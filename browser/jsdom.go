@@ -1107,7 +1107,7 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		"color":                cssColorString(cs.textColor),
 		"background-color":     cssColorString(cs.background),
 		"font-size":            formatPx(cs.fontSize),
-		"font-weight":          map[bool]string{true: "700", false: "400"}[cs.bold],
+		"font-weight":          strconv.Itoa(cs.weight),
 		"font-style":           map[bool]string{true: "italic", false: "normal"}[cs.italic],
 		"font-family":          map[bool]string{true: "monospace", false: "sans-serif"}[cs.mono],
 		"text-align":           cs.textAlign,

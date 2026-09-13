@@ -249,20 +249,23 @@ type computedStyle struct {
 	background    color.RGBA
 	hasBackground bool
 	fontSize      float64
-	bold          bool
-	italic        bool
-	mono          bool
-	underline     bool
-	strike        bool
-	link          bool
-	textAlign     string
-	lineHeight    float64
-	whiteSpace    string
-	marginTop     float64
-	marginBottom  float64
-	marginLeft    float64
-	paddingLeft   float64
-	listStyle     string
+	// weight is the computed font-weight, 100..900. bold is the coarse flag
+	// the renderer uses, kept in step with it.
+	weight       int
+	bold         bool
+	italic       bool
+	mono         bool
+	underline    bool
+	strike       bool
+	link         bool
+	textAlign    string
+	lineHeight   float64
+	whiteSpace   string
+	marginTop    float64
+	marginBottom float64
+	marginLeft   float64
+	paddingLeft  float64
+	listStyle    string
 
 	// monoDefault records that the user-agent sheet gave this element its
 	// 13px monospace size, which an author font-family takes away again.
@@ -380,9 +383,16 @@ func defaultComputedStyle() computedStyle {
 		visibility: "visible",
 		textColor:  renderTextColor,
 		fontSize:   16,
+		weight:     400,
 		whiteSpace: "normal",
 		textAlign:  "left",
 	}
+}
+
+// setWeight records a computed font weight and the renderer's bold flag.
+func (cs *computedStyle) setWeight(w int) {
+	cs.weight = w
+	cs.bold = w >= 600
 }
 
 // --- engine ---
@@ -443,7 +453,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		// Inherited properties start from the parent.
 		cs.textColor = parent.textColor
 		cs.fontSize = parent.fontSize
-		cs.bold = parent.bold
+		cs.bold, cs.weight = parent.bold, parent.weight
 		cs.italic = parent.italic
 		cs.mono = parent.mono
 		cs.whiteSpace = parent.whiteSpace
@@ -453,7 +463,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 	tag := n.Data
 
 	// User-agent defaults.
-	applyUADefaults(&cs, tag, parent)
+	applyUADefaults(&cs, n, tag, parent)
 
 	// A document without a doctype is in quirks mode, where browsers give
 	// tables the medium font size and normal weight and style instead of
@@ -461,7 +471,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 	// 10pt body would shrink every table on the page.
 	if e.quirks && tag == "table" {
 		cs.fontSize = e.mediumSize(parent)
-		cs.bold = false
+		cs.setWeight(400)
 		cs.italic = false
 		cs.textAlign = "left"
 	}
@@ -576,7 +586,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		case "font-size":
 			cs.fontSize = parent.fontSize
 		case "font-weight":
-			cs.bold = parent.bold
+			cs.setWeight(parent.weight)
 		case "font-style":
 			cs.italic = parent.italic
 		case "font-family":
@@ -622,13 +632,21 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		}
 	}
 	if v, ok := d["font-weight"]; ok {
-		lv := strings.ToLower(strings.TrimSpace(v))
-		if lv == "bold" || lv == "bolder" {
-			cs.bold = true
-		} else if n, err := strconv.Atoi(lv); err == nil {
-			cs.bold = n >= 600
-		} else if lv == "normal" || lv == "lighter" {
-			cs.bold = false
+		switch lv := strings.ToLower(strings.TrimSpace(v)); {
+		case lv == "normal":
+			cs.setWeight(400)
+		case lv == "bold":
+			cs.setWeight(700)
+		case lv == "bolder":
+			cs.setWeight(bolderWeight(cs.weight))
+		case lv == "lighter":
+			cs.setWeight(lighterWeight(cs.weight))
+		default:
+			if n, err := strconv.Atoi(lv); err == nil {
+				// Keep the number: a browser reports 600 for font-semibold,
+				// and the renderer only needs to know it is not regular.
+				cs.setWeight(n)
+			}
 		}
 	}
 	if v, ok := d["font-style"]; ok {
@@ -704,6 +722,12 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if floated || outOfFlow {
 		cs.display = blockifyDisplay(cs.display)
 	}
+	// A flex or grid item is blockified too, which is why a <span> inside a
+	// flex container reports display:block in a browser. We do not lay flex
+	// out, but getComputedStyle must answer the same thing.
+	if parent != nil && !outOfFlow && isFlexOrGridContainer(parent.display) {
+		cs.display = blockifyDisplay(cs.display)
+	}
 	if v, ok := d["visibility"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))
 		if lv == "hidden" || lv == "collapse" || lv == "visible" {
@@ -755,7 +779,7 @@ func cssFamilyIsMono(v string) bool {
 
 // applyUADefaults is the built-in stylesheet: what a browser applies before any
 // author CSS. Author rules override these through the cascade.
-func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
+func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *computedStyle) {
 	// Display.
 	switch tag {
 	case "head", "title", "meta", "link", "style", "script", "template",
@@ -763,8 +787,10 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 		"dialog":
 		cs.display = "none"
 	case "iframe", "svg", "canvas", "audio", "video", "object", "embed",
-		"input", "textarea", "select", "button", "option":
+		"input", "textarea", "select", "button":
 		cs.display = "inline-block"
+	case "option":
+		cs.display = "block"
 	case "table":
 		cs.display = "table"
 	case "thead", "tbody", "tfoot":
@@ -777,7 +803,7 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 		cs.display = "table-cell"
 	case "th":
 		cs.display = "table-cell"
-		cs.bold = true
+		cs.setWeight(700)
 		cs.textAlign = "center"
 	case "li":
 		cs.display = "list-item"
@@ -794,19 +820,25 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 	// Typography.
 	switch tag {
 	case "h1":
-		cs.fontSize, cs.bold = 32, true
+		cs.fontSize = 32
+		cs.setWeight(700)
 	case "h2":
-		cs.fontSize, cs.bold = 24, true
+		cs.fontSize = 24
+		cs.setWeight(700)
 	case "h3":
-		cs.fontSize, cs.bold = 18.7, true
+		cs.fontSize = 18.7
+		cs.setWeight(700)
 	case "h4":
-		cs.fontSize, cs.bold = 16, true
+		cs.fontSize = 16
+		cs.setWeight(700)
 	case "h5":
-		cs.fontSize, cs.bold = 13.3, true
+		cs.fontSize = 13.3
+		cs.setWeight(700)
 	case "h6":
-		cs.fontSize, cs.bold = 10.7, true
+		cs.fontSize = 10.7
+		cs.setWeight(700)
 	case "th", "b", "strong":
-		cs.bold = true
+		cs.setWeight(700)
 	case "i", "em", "cite", "var", "dfn", "address":
 		cs.italic = true
 	case "code", "kbd", "samp", "tt", "pre":
@@ -825,19 +857,30 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 		cs.link = true
 		cs.underline = true
 		cs.textColor = renderLinkColor
-	case "button":
-		// Buttons centre their label; the other controls align like text.
-		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
-		cs.textAlign = "center"
-		cs.background = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
-		cs.hasBackground = true
-	case "input", "textarea", "select":
-		// Form controls do not inherit text colour or alignment; browsers
-		// give them fieldtext on a field background.
+	case "button", "input", "select", "textarea":
+		// Form controls do not inherit text colour or alignment from the page.
+		// A browser gives text-ish controls white on black; buttons and
+		// selects keep the platform face, and a checkbox or radio is
+		// transparent unless the page paints it.
 		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
 		cs.textAlign = "left"
-		cs.background = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+		cs.background = renderFieldBG
 		cs.hasBackground = true
+		switch tag {
+		case "button":
+			cs.textAlign = "center"
+			cs.background = renderButtonFace
+		case "select":
+			cs.background = renderButtonFace
+		case "input":
+			switch strings.ToLower(attrOf(n, "type")) {
+			case "checkbox", "radio":
+				cs.hasBackground = false
+			case "submit", "reset", "button":
+				cs.textAlign = "center"
+				cs.background = renderButtonFace
+			}
+		}
 	}
 	if tag == "pre" {
 		cs.whiteSpace = "pre"
@@ -934,4 +977,37 @@ func blockifyDisplay(d string) string {
 		return "grid"
 	}
 	return d
+}
+
+// bolder and lighter step through the weight table rather than adding a fixed
+// amount: bolder than 400 is 700, lighter than 700 is 400. This is the CSS
+// table {100, 400, 700, 900}.
+func bolderWeight(w int) int {
+	switch {
+	case w < 350:
+		return 400
+	case w < 550:
+		return 700
+	}
+	return 900
+}
+
+func lighterWeight(w int) int {
+	switch {
+	case w < 550:
+		return 100
+	case w < 750:
+		return 400
+	}
+	return 700
+}
+
+// isFlexOrGridContainer reports whether a display value makes its children
+// flex or grid items, which are blockified.
+func isFlexOrGridContainer(display string) bool {
+	switch display {
+	case "flex", "inline-flex", "grid", "inline-grid":
+		return true
+	}
+	return false
 }

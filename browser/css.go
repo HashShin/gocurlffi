@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/andybalholm/cascadia"
+	"golang.org/x/net/html"
 )
 
 // A small CSS engine: enough of tokenizing, rule parsing, media evaluation,
@@ -92,11 +93,17 @@ func (p *cssParser) readUntil(stops string) string {
 	var quote byte
 	for p.pos < len(p.src) {
 		c := p.src[p.pos]
+		if c == '\\' {
+			// A CSS escape makes the next character literal, and it is used
+			// outside strings too: Tailwind writes arbitrary-value classes as
+			// ".font-\[\'Poppins\'\]" and ".\!text-\[14px\]". Treating that
+			// quote as the start of a string swallowed the rest of the file,
+			// which is how a 415KB stylesheet parsed as 1110 rules and lost
+			// every rule after the first escaped selector.
+			p.pos += 2
+			continue
+		}
 		if quote != 0 {
-			if c == '\\' {
-				p.pos += 2
-				continue
-			}
 			if c == quote {
 				quote = 0
 			}
@@ -143,11 +150,17 @@ func (p *cssParser) skipBlock() {
 	var quote byte
 	for p.pos < len(p.src) {
 		c := p.src[p.pos]
+		if c == '\\' {
+			// A CSS escape makes the next character literal, and it is used
+			// outside strings too: Tailwind writes arbitrary-value classes as
+			// ".font-\[\'Poppins\'\]" and ".\!text-\[14px\]". Treating that
+			// quote as the start of a string swallowed the rest of the file,
+			// which is how a 415KB stylesheet parsed as 1110 rules and lost
+			// every rule after the first escaped selector.
+			p.pos += 2
+			continue
+		}
 		if quote != 0 {
-			if c == '\\' {
-				p.pos += 2
-				continue
-			}
 			if c == quote {
 				quote = 0
 			}
@@ -266,6 +279,18 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 			continue
 		}
 		p.selectors++
+		// A single class selector whose name holds escapes cascadia cannot
+		// match (it compiles them but never matches): Tailwind writes
+		// ".font-\[\'Poppins\'\2c sans\]". Those are matched by name
+		// instead, so arbitrary-value classes still style the element.
+		if name, ok := escapedClassSelector(selText); ok {
+			*p.order++
+			*out = append(*out, cssRule{
+				sel: namedClassSelector(name), spec: cssSpecificity(selText),
+				order: *p.order, decls: decls, text: selText,
+			})
+			continue
+		}
 		sel, err := cascadia.Compile(selText)
 		if err != nil {
 			p.skipped++
@@ -746,59 +771,196 @@ func expandShorthands(in []cssDecl) []cssDecl {
 	return out
 }
 
-// expandFontShorthand pulls the size, weight, style, line-height and family out
-// of a `font` shorthand.
+// expandFontShorthand pulls style, weight, size, line-height and family out of
+// a `font` shorthand. The grammar is:
+//
+//	[ <style> || <variant> || <weight> || <stretch> ]? <size> [ / <line-height> ]? <family>
+//
+// so a token before the size is a weight or style, and the size must carry a
+// unit or be a keyword: a bare number there is the weight. Treating "600" as a
+// size is how ".leoButton { font: var(--leo-font-components-button-large) }"
+// lost the button's semibold weight on brave.com.
 func expandFontShorthand(d cssDecl) []cssDecl {
 	var out []cssDecl
 	parts := strings.Fields(d.val)
-	for _, p := range parts {
-		low := strings.ToLower(p)
+	sizeIdx := -1
+	for i, tok := range parts {
+		base, _, _ := strings.Cut(tok, "/")
+		base = strings.ToLower(base)
+		if isFontSizeToken(base) {
+			sizeIdx = i
+			break
+		}
 		switch {
-		case low == "italic" || low == "oblique":
+		case base == "italic" || base == "oblique" || strings.HasPrefix(base, "oblique"):
 			out = append(out, cssDecl{prop: "font-style", val: "italic", important: d.important})
-		case low == "bold" || low == "bolder":
-			out = append(out, cssDecl{prop: "font-weight", val: "bold", important: d.important})
-		case low == "small-caps" || low == "caption" || low == "menu" ||
-			low == "message-box" || low == "status-bar" || low == "icon":
-			// unsupported keywords
+		case base == "bold" || base == "bolder" || base == "lighter" || isFontWeightNumber(base):
+			out = append(out, cssDecl{prop: "font-weight", val: base, important: d.important})
+		case base == "normal" || base == "small-caps" || base == "all-small-caps" ||
+			base == "condensed" || base == "expanded" || base == "semi-condensed" ||
+			base == "ultra-condensed":
+			// font-variant, font-stretch or the "normal" that stands for any
+			// of the prefix properties: none of them change what we render.
 		default:
-			size, lh, ok := strings.Cut(p, "/")
-			if px, ok2 := cssFontSizeToPx(size, 16); ok2 {
-				out = append(out, cssDecl{prop: "font-size", val: formatPx(px), important: d.important})
-				_ = ok
-				if lh != "" {
-					out = append(out, cssDecl{prop: "line-height", val: lh, important: d.important})
-				}
-			}
+			// An unrecognised token before the size means this shorthand is
+			// not one we understand, so it contributes nothing.
+			return nil
 		}
 	}
-	// Everything after the size is the family list; approximate by taking the
-	// text after the first size token.
-	if idx := cssFindSizeIndex(parts); idx >= 0 && idx+1 < len(parts) {
-		fam := strings.Join(parts[idx+1:], " ")
-		if i := strings.Index(fam, "/"); i >= 0 {
-			fam = strings.TrimSpace(fam[i+1:])
-		}
-		if fam != "" {
-			out = append(out, cssDecl{prop: "font-family", val: fam, important: d.important})
-		}
+	if sizeIdx < 0 {
+		return nil
+	}
+	size, lineHeight, _ := strings.Cut(parts[sizeIdx], "/")
+	if px, ok := cssFontSizeToPx(size, 16); ok {
+		out = append(out, cssDecl{prop: "font-size", val: formatPx(px), important: d.important})
+	}
+	if lineHeight != "" {
+		out = append(out, cssDecl{prop: "line-height", val: lineHeight, important: d.important})
+	}
+	if fam := strings.Join(parts[sizeIdx+1:], " "); fam != "" {
+		out = append(out, cssDecl{prop: "font-family", val: fam, important: d.important})
 	}
 	return out
 }
 
-func cssFindSizeIndex(parts []string) int {
-	for i, p := range parts {
-		base := p
-		if j := strings.IndexByte(p, '/'); j > 0 {
-			base = p[:j]
-		}
-		if _, ok := cssFontSizeToPx(base, 16); ok {
-			return i
-		}
+// isFontSizeToken reports whether a token is the size in a `font` shorthand.
+func isFontSizeToken(tok string) bool {
+	if tok == "" {
+		return false
 	}
-	return -1
+	if _, ok := cssFontSizeKeyword[tok]; ok {
+		return true
+	}
+	if tok == "smaller" || tok == "larger" {
+		return true
+	}
+	if tok == "0" {
+		return true
+	}
+	num, unit := splitCSSNumber(tok)
+	return num != "" && unit != ""
+}
+
+// isFontWeightNumber reports whether a token is a numeric font weight.
+func isFontWeightNumber(tok string) bool {
+	n, err := strconv.Atoi(tok)
+	return err == nil && n >= 1 && n <= 1000
 }
 
 func formatPx(px float64) string {
 	return strconv.FormatFloat(px, 'f', -1, 64) + "px"
+}
+
+// namedClassSelector matches an element by class name. It is used where a
+// selector is a lone class name written with escapes that cascadia compiles but
+// does not match.
+func namedClassSelector(name string) cascadia.Selector {
+	return func(n *html.Node) bool {
+		return n != nil && n.Type == html.ElementNode && hasClass(n, name)
+	}
+}
+
+// escapedClassSelector returns the class name of a selector that is exactly one
+// class selector containing a CSS escape, which is the shape Tailwind's
+// arbitrary-value utilities take.
+func escapedClassSelector(sel string) (string, bool) {
+	if len(sel) < 2 || sel[0] != '.' {
+		return "", false
+	}
+	body := sel[1:]
+	hasEscape := false
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c == '\\' {
+			hasEscape = true
+			break
+		}
+	}
+	if !hasEscape {
+		return "", false
+	}
+	// Anything else in the selector means it is not a lone class name: a
+	// combinator, a comma, a pseudo-class or an attribute selector can all
+	// contain characters that an escape would hide from this check.
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c == '\\' {
+			consumed, ok := cssEscapeLen(body[i:])
+			if !ok {
+				return "", false
+			}
+			i += consumed - 1
+			continue
+		}
+		if !isIdentChar(c) {
+			return "", false
+		}
+	}
+	name := unescapeCSSIdent(body)
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+func isIdentChar(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+		c == '-' || c == '_' || c >= 0x80
+}
+
+// cssEscapeLen returns how many bytes a CSS escape starting at s[0] ('\\')
+// occupies, or false when it is truncated.
+func cssEscapeLen(s string) (int, bool) {
+	if len(s) < 2 {
+		return 0, false
+	}
+	if isHexDigit(s[1]) {
+		n := 0
+		for n < 6 && 1+n < len(s) && isHexDigit(s[1+n]) {
+			n++
+		}
+		length := 1 + n
+		// A hex escape may be terminated by one whitespace character, which
+		// is part of it and not of the identifier.
+		if 1+length < len(s) && (s[1+length] == ' ' || s[1+length] == '\t' || s[1+length] == '\n') {
+			length++
+		}
+		return length, true
+	}
+	return 2, true
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
+// unescapeCSSIdent decodes CSS escapes: \X is X, and \HHHHH (one to six hex
+// digits, optionally followed by one space) is the code point.
+func unescapeCSSIdent(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		n, ok := cssEscapeLen(s[i:])
+		if !ok {
+			break
+		}
+		body := s[i+1 : i+n]
+		if isHexDigit(body[0]) {
+			hex := strings.TrimRight(body, " \t\n")
+			if v, err := strconv.ParseInt(hex, 16, 32); err == nil && v > 0 {
+				b.WriteRune(rune(v))
+			}
+		} else {
+			b.WriteByte(body[0])
+		}
+		i += n
+	}
+	return b.String()
 }
