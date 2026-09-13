@@ -657,3 +657,43 @@ func isRed(c color.Color) bool {
 }
 
 func fmtSprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
+
+// outlineLineY returns the y of the rendered line whose text is label.
+func outlineLineY(t *testing.T, p *Page, label string) float64 {
+	t.Helper()
+	out, err := p.RenderOutline(ScreenshotOptions{Width: 400, NoImages: true}, 50)
+	if err != nil {
+		t.Fatalf("RenderOutline: %v", err)
+	}
+	for _, l := range out {
+		m := reOutline.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		if strings.TrimSpace(m[2]) == label {
+			y, _ := strconv.ParseFloat(m[1], 64)
+			return y
+		}
+	}
+	t.Fatalf("line %q not found in outline", label)
+	return 0
+}
+
+var reOutline = regexp.MustCompile(`^y=(-?\d+)\s+h=\d+\s+text\s+x=-?\d+\s+(.*)$`)
+
+// Adjacent vertical margins collapse to the larger one, not their sum.
+func TestVerticalMarginsCollapse(t *testing.T) {
+	gap := func(m1, m2 string) float64 {
+		p := flexPage(t, `<html><body style="margin:0">
+			<div style="`+m1+`">alpha</div><div style="`+m2+`">beta</div></body></html>`)
+		return outlineLineY(t, p, "beta") - outlineLineY(t, p, "alpha")
+	}
+	collapsed := gap("margin-bottom:30px", "margin-top:20px")
+	if same30 := gap("margin-bottom:30px", "margin-top:0"); same30 != collapsed {
+		t.Errorf("30px + 20px gave %g but 30px + 0 gave %g, want equal (collapse)", collapsed, same30)
+	}
+	none := gap("margin-bottom:0", "margin-top:0")
+	if none >= collapsed {
+		t.Errorf("no margins gave %g, want less than the collapsed %g", none, collapsed)
+	}
+}

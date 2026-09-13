@@ -1090,3 +1090,34 @@ func TestGapAndFlexSurviveShorthandExpansion(t *testing.T) {
 		t.Errorf("gap/flex dropped by expandShorthands: %v", out)
 	}
 }
+
+// The user-agent defaults match the HTML rendering spec: em-relative heading
+// sizes and margins, 1em paragraph margins, list indentation.
+func TestUserAgentDefaultsMatchSpec(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body>
+		<h1 id="h">t</h1><p id="p">t</p><ul id="u"><li>t</li></ul>
+		<blockquote id="bq">t</blockquote>
+		<div style="font-size:20px"><h1 id="h2">t</h1></div>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ id, prop, want string }{
+		{"h", "font-size", "32px"},     // 2em of 16px
+		{"h", "margin-top", "21.44px"}, // 0.67em of 32px
+		{"p", "margin-top", "16px"},    // 1em
+		{"u", "padding-left", "40px"},  // spec list indent
+		{"u", "margin-top", "16px"},    // 1em
+		{"bq", "margin-left", "40px"},
+		{"h2", "font-size", "40px"}, // 2em of the 20px parent
+	}
+	for _, c := range cases {
+		expr := `getComputedStyle(document.getElementById('` + c.id + `')).getPropertyValue('` + c.prop + `')`
+		v, err := p.Eval(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", expr, got, c.want)
+		}
+	}
+}

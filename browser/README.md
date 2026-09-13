@@ -262,6 +262,24 @@ at weight 700 in `#3677E8`, `.quote` with 30px bottom margin and 10px padding,
 and `body` in `sans-serif`. Applying it grows the render from 1100px to 1496px,
 which is that CSS's margin and padding taking effect.
 
+### Rendering model
+
+A browser parses HTML into a DOM and CSS into a rule set, cascades the rules to
+a computed style per element, builds a box tree, lays it out (block and inline
+formatting contexts, replaced elements, margin collapsing) and paints. This
+renderer follows that order for the parts it implements: the cascade produces a
+computed style, the collector turns the DOM into an ordered list of blocks
+(element boxes, text runs and replaced boxes), the layout flows them at a width,
+and the painter rasterizes the draw list. `getComputedStyle` answers from the
+cascade, so what it reports is what a render uses.
+
+The user-agent defaults follow the HTML rendering spec: em-relative heading
+sizes and margins, 1em paragraph/list/blockquote margins, 40px list indentation,
+monospace for `pre`/`code`, `mark`, `s`/`del`, `sub`/`sup`, form-control faces
+and so on, all overridable by author CSS through the cascade. Vertical margins
+do not stack: adjacent margins collapse to the larger of the two, and padding
+never collapses, as in a browser.
+
 ### Checking the cascade against a browser
 
 `tools/cssdiff` compares this package's computed styles with a real Chromium,

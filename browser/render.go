@@ -559,10 +559,17 @@ type renderBlock struct {
 	quote    int
 	leading  float64 // space above the block
 	trailing float64 // space below the block
-	pre      bool
-	nowrap   bool
-	align    string
-	lineH    float64 // explicit line-height in px, 0 = auto
+	// The margin and padding parts of leading/trailing. Adjacent vertical
+	// margins collapse (max, not sum) the way a browser lays them out; padding
+	// never collapses.
+	marginTop     float64
+	marginBottom  float64
+	paddingTop    float64
+	paddingBottom float64
+	pre           bool
+	nowrap        bool
+	align         string
+	lineH         float64 // explicit line-height in px, 0 = auto
 
 	bg     color.RGBA
 	hasBG  bool
@@ -669,9 +676,17 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		acc.started = true
 	}
+	var prevMarginBottom, prevPaddingBottom float64
+	havePrev := false
 	for _, b := range blocks {
 		bTop := y
-		y += b.leading
+		// Vertical margins of adjacent blocks collapse to the larger one;
+		// padding always adds.
+		gap := b.marginTop + b.paddingTop
+		if havePrev {
+			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
+		}
+		y += gap
 		switch b.kind {
 		case blockImage:
 			w := colW - b.boxLeft
@@ -697,17 +712,17 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				h = 8
 			}
 			out = append(out, drawLine{y: y, height: h, pic: b.pic, picX: colX + b.boxLeft, picW: w})
-			y += h + b.trailing
+			y += h
 		case blockRule:
 			out = append(out, drawLine{
 				y: y, height: 1, rule: true,
 				ruleX: colX + b.boxLeft, ruleW: colW - b.boxLeft,
 			})
-			y += 12 + b.trailing
+			y += 12
 		case blockFlex:
 			ls, h := layoutFlex(b, colX, colW, y, baseSize, boxes)
 			out = append(out, ls...)
-			y += h + b.trailing
+			y += h
 		default:
 			blockTop := y
 			textStart := b.textX
@@ -819,9 +834,13 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				}
 				y += gapH
 			}
-			y += b.trailing
 		}
-		recordBox(b, bTop, y-b.trailing)
+		recordBox(b, bTop, y)
+		prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
+		havePrev = true
+	}
+	if havePrev {
+		y += prevPaddingBottom + prevMarginBottom
 	}
 	// Emit the boxes gathered in this column, parent (first seen) first.
 	for _, id := range boxOrder {

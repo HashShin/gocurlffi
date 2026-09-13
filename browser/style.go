@@ -1321,6 +1321,16 @@ func cssFamilyIsMono(v string) bool {
 	return false
 }
 
+// The HTML rendering spec's heading sizes and margins, relative to the parent
+// font-size (font-size) and to the heading's own font-size (margins).
+var uaHeadingScale = map[string]float64{
+	"h1": 2, "h2": 1.5, "h3": 1.17, "h4": 1, "h5": 0.83, "h6": 0.67,
+}
+
+var uaHeadingMargin = map[string]float64{
+	"h1": 0.67, "h2": 0.83, "h3": 1, "h4": 1.33, "h5": 1.67, "h6": 2.33,
+}
+
 // applyUADefaults is the built-in stylesheet: what a browser applies before any
 // author CSS. Author rules override these through the cascade.
 func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *computedStyle) {
@@ -1357,46 +1367,46 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 	case "html", "body", "address", "article", "aside", "blockquote", "div",
 		"dl", "dd", "dt", "fieldset", "figcaption", "figure", "footer", "form",
 		"header", "main", "nav", "p", "pre", "section", "hgroup", "details",
-		"summary", "ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6":
+		"summary", "ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
+		"search", "legend", "optgroup":
 		cs.display = "block"
 	}
 
-	// Typography.
+	// Typography. Heading sizes are em-relative (2em, 1.5em, ...) as in the
+	// HTML rendering spec, so they scale with the parent font-size.
 	switch tag {
-	case "h1":
-		cs.fontSize = 32
-		cs.setWeight(700)
-	case "h2":
-		cs.fontSize = 24
-		cs.setWeight(700)
-	case "h3":
-		cs.fontSize = 18.7
-		cs.setWeight(700)
-	case "h4":
-		cs.fontSize = 16
-		cs.setWeight(700)
-	case "h5":
-		cs.fontSize = 13.3
-		cs.setWeight(700)
-	case "h6":
-		cs.fontSize = 10.7
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		cs.fontSize *= uaHeadingScale[tag]
 		cs.setWeight(700)
 	case "th", "b", "strong":
 		cs.setWeight(700)
-	case "i", "em", "cite", "var", "dfn", "address":
+	case "i", "em", "cite", "var", "dfn", "address", "q":
 		cs.italic = true
-	case "code", "kbd", "samp", "tt", "pre":
+	case "code", "kbd", "samp", "tt":
 		cs.mono = true
 		if cs.fontSize > 15 {
 			cs.fontSize = 13
 			cs.monoDefault = true
 		}
+	case "pre":
+		cs.mono = true
+		cs.whiteSpace = "pre"
 	case "small":
 		// Browsers implement small as "font-size: smaller", i.e. parent/1.2;
 		// Chromium reports 13.33px for it inside a 16px parent.
 		cs.fontSize = math.Max(9, cs.fontSize/1.2)
+	case "big":
+		cs.fontSize *= 1.2
+	case "sub", "sup":
+		cs.fontSize = math.Max(9, cs.fontSize/1.2)
 	case "u", "ins":
 		cs.underline = true
+	case "s", "strike", "del":
+		cs.strike = true
+	case "mark":
+		cs.background = color.RGBA{R: 0xff, G: 0xff, B: 0x00, A: 0xff}
+		cs.hasBackground = true
+		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
 	case "a":
 		cs.link = true
 		cs.underline = true
@@ -1418,6 +1428,8 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 			cs.background = renderButtonFace
 		case "input":
 			switch strings.ToLower(attrOf(n, "type")) {
+			case "hidden":
+				cs.display = "none"
 			case "checkbox", "radio":
 				cs.hasBackground = false
 			case "submit", "reset", "button":
@@ -1426,28 +1438,37 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 			}
 		}
 	}
-	if tag == "pre" {
-		cs.whiteSpace = "pre"
-	}
 
-	// Boxes.
+	// Boxes. Vertical margins are em-relative, as the rendering spec sets them.
 	switch tag {
-	case "h1", "h2", "h3", "h4", "h5", "h6":
-		cs.marginTop = 0.75 * cs.fontSize
-		cs.marginBottom = 0.6 * cs.fontSize
 	case "body":
 		cs.marginTop, cs.marginBottom = 8, 8
 		cs.marginLeft = 8
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		cs.marginTop = uaHeadingMargin[tag] * cs.fontSize
+		cs.marginBottom = cs.marginTop
+	case "p", "dl", "pre":
+		cs.marginTop, cs.marginBottom = cs.fontSize, cs.fontSize
+	case "blockquote", "figure":
+		cs.marginTop, cs.marginBottom = cs.fontSize, cs.fontSize
+		cs.marginLeft = 40
+	case "dd":
+		cs.marginLeft = 40
 	case "ul", "ol":
-		cs.marginTop, cs.marginBottom = 16, 16
+		cs.marginTop, cs.marginBottom = cs.fontSize, cs.fontSize
 		cs.paddingLeft = 40
-	case "blockquote":
-		cs.marginTop, cs.marginBottom = 16, 16
-		cs.marginLeft, cs.paddingLeft = 40, 10
+	case "form":
+		cs.marginTop = 0
+	case "fieldset":
+		cs.marginLeft = 2
+		cs.borderW, cs.borderColor, cs.hasBorder = 2, color.RGBA{R: 0x80, G: 0x80, B: 0x80, A: 0xff}, true
+		cs.paddingTop = 0.35 * cs.fontSize
+		cs.paddingBottom = 0.625 * cs.fontSize
+		cs.paddingLeft = 0.75 * cs.fontSize
+	case "legend":
+		cs.paddingLeft = 2
 	case "hr":
-		cs.marginTop, cs.marginBottom = 8, 8
-	case "p", "pre", "dl", "figure", "table":
-		cs.marginTop, cs.marginBottom = 16, 16
+		cs.marginTop, cs.marginBottom = 0.5*cs.fontSize, 0.5*cs.fontSize
 	}
 
 	// List markers.

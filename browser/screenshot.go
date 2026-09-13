@@ -756,6 +756,8 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		leading:   cs.marginTop + cs.paddingTop,
 		trailing:  cs.marginBottom + cs.paddingBottom,
 		minHeight: cs.minHeight,
+		marginTop: cs.marginTop, marginBottom: cs.marginBottom,
+		paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,
@@ -806,18 +808,22 @@ func isFlexRowContainer(cs *computedStyle) bool {
 func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
 	c.flush()
 	b := renderBlock{
-		kind:       blockFlex,
-		flexRow:    true,
-		boxLeft:    c.content,
-		textX:      c.content,
-		quote:      c.quote,
-		gap:        cs.columnGap,
-		rowGap:     cs.rowGap,
-		wrap:       cs.flexWrap,
-		justify:    cs.justifyContent,
-		alignItems: cs.alignItems,
-		leading:    cs.marginTop + cs.paddingTop,
-		trailing:   cs.marginBottom + cs.paddingBottom,
+		kind:          blockFlex,
+		flexRow:       true,
+		boxLeft:       c.content,
+		textX:         c.content,
+		quote:         c.quote,
+		gap:           cs.columnGap,
+		rowGap:        cs.rowGap,
+		wrap:          cs.flexWrap,
+		justify:       cs.justifyContent,
+		alignItems:    cs.alignItems,
+		leading:       cs.marginTop + cs.paddingTop,
+		trailing:      cs.marginBottom + cs.paddingBottom,
+		marginTop:     cs.marginTop,
+		marginBottom:  cs.marginBottom,
+		paddingTop:    cs.paddingTop,
+		paddingBottom: cs.paddingBottom,
 	}
 	if c.hasBG {
 		b.bg, b.hasBG, b.bgFull = c.bg, true, true
@@ -891,8 +897,14 @@ func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
 	if cs == nil || start >= len(c.blocks) {
 		return
 	}
-	c.blocks[start].leading += cs.marginTop + cs.paddingTop
-	c.blocks[len(c.blocks)-1].trailing += cs.marginBottom + cs.paddingBottom
+	first := &c.blocks[start]
+	first.marginTop += cs.marginTop
+	first.paddingTop += cs.paddingTop
+	first.leading = first.marginTop + first.paddingTop
+	last := &c.blocks[len(c.blocks)-1]
+	last.marginBottom += cs.marginBottom
+	last.paddingBottom += cs.paddingBottom
+	last.trailing = last.marginBottom + last.paddingBottom
 }
 
 func listMarker(style string) string {
