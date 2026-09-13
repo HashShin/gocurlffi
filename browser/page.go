@@ -46,6 +46,14 @@ type Page struct {
 	// document.currentScript. Bundlers use it to resolve chunk paths.
 	currentScript *html.Node
 
+	// writePoint is the last node document.write inserted for the running
+	// script, so a second write continues where the first stopped.
+	writePoint *html.Node
+
+	// layoutWidth is the viewport width getComputedStyle resolves media
+	// queries against. Screenshot sets it to the width it renders at.
+	layoutWidth float64
+
 	// deadline bounds the script-loading phase (see Options.LoadTimeout).
 	deadline time.Time
 
@@ -226,8 +234,10 @@ func (p *Page) run() error {
 		}
 		p.debugf("inline script: %d bytes", len(src))
 		p.currentScript = s
+		p.writePoint = nil
 		err := p.env.runScript(src, p.URL)
 		p.currentScript = nil
+		p.writePoint = nil
 		if err != nil {
 			p.log("error", "script error: "+err.Error())
 		}
@@ -272,6 +282,7 @@ func (p *Page) runExternalScript(el *html.Node, src string) {
 	code := string(resp.Content)
 	p.debugf("loaded %d bytes from %s", len(code), abs)
 	p.currentScript = el
+	p.writePoint = nil
 	err = p.env.runScript(code, abs)
 	p.currentScript = nil
 	if err != nil {
@@ -305,23 +316,82 @@ func (p *Page) baseURL() string {
 	return resolveURL(p.URL, href)
 }
 
-// documentWrite implements document.write(ln): parse and append to the body.
+// quirksMode reports whether the document is parsed in quirks mode, which a
+// missing doctype causes.
+func (p *Page) quirksMode() bool {
+	if p.doc == nil {
+		return false
+	}
+	for c := p.doc.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.DoctypeNode {
+			return false
+		}
+	}
+	return true
+}
+
+// documentWrite implements document.write(ln). A script's output belongs at the
+// script element's position in the document, not at the end of the body: pages
+// that render a list with document.write must keep that list where the script
+// sits, or the content lands after the footer. Successive writes from the same
+// script continue after the previous insertion, as they stream into one parser.
 func (p *Page) documentWrite(s string) {
 	if p.doc == nil || s == "" {
 		return
 	}
-	body := findElement(p.doc, "body")
-	target := body
-	if target == nil {
-		target = p.doc
+	parent := (*html.Node)(nil)
+	insertAfter := (*html.Node)(nil)
+	if p.currentScript != nil && p.currentScript.Parent != nil {
+		parent = p.currentScript.Parent
+		insertAfter = p.currentScript
+		// Continue after the last node this run already inserted, if it is
+		// still in place (a write can wipe the parent's children).
+		if p.writePoint != nil && p.writePoint.Parent == parent {
+			insertAfter = p.writePoint
+		}
+	} else {
+		parent = findElement(p.doc, "body")
+		if parent == nil {
+			parent = p.doc
+		}
+		insertAfter = parent.LastChild
 	}
-	nodes, err := html.ParseFragment(strings.NewReader(s), target)
+	nodes, err := html.ParseFragment(strings.NewReader(s), parent)
 	if err != nil {
 		return
 	}
+	at := insertAfter
 	for _, c := range nodes {
-		appendChild(target, c)
+		insertAfterNode(parent, at, c)
+		at = c
 	}
+	if p.currentScript != nil && parent == p.currentScript.Parent {
+		p.writePoint = at
+	}
+}
+
+// insertAfterNode puts child directly after ref in parent, or appends when ref
+// is nil.
+func insertAfterNode(parent, ref, child *html.Node) {
+	if parent == nil || child == nil || isAncestor(child, parent) {
+		return
+	}
+	if ref == nil {
+		appendChild(parent, child)
+		return
+	}
+	if child.Parent != nil {
+		removeChild(child)
+	}
+	child.Parent = parent
+	child.PrevSibling = ref
+	child.NextSibling = ref.NextSibling
+	if ref.NextSibling != nil {
+		ref.NextSibling.PrevSibling = child
+	} else {
+		parent.LastChild = child
+	}
+	ref.NextSibling = child
 }
 
 // --- cookies ---

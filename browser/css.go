@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -24,20 +25,38 @@ type cssRule struct {
 	decls []cssDecl
 }
 
+// cssStats counts what a stylesheet contained, so a caller can tell whether a
+// sheet was consumed or silently dropped. A high skipped count means most of a
+// page's styling came from selectors the engine cannot compile.
+type cssStats struct {
+	rules      int
+	selectors  int
+	skipped    int
+	skipSample []string
+}
+
 // parseCSSStylesheet parses CSS text into rules. mediaWidth is the layout width
 // used to evaluate @media; if it is 0, width-dependent queries are treated as
 // matching. Imports are returned for the caller to fetch first.
-func parseCSSStylesheet(src string, mediaWidth float64, order *int) (rules []cssRule, imports []string) {
+func parseCSSStylesheet(src string, mediaWidth float64, order *int) (rules []cssRule, imports []string, stats cssStats) {
 	p := &cssParser{src: src, order: order, mediaWidth: mediaWidth}
 	p.parseRules(&rules, &imports, false)
-	return rules, imports
+	stats.rules = len(rules)
+	stats.selectors = p.selectors
+	stats.skipped = p.skipped
+	stats.skipSample = p.skipSample
+	return rules, imports, stats
 }
 
 type cssParser struct {
-	src        string
-	pos        int
-	order      *int
-	mediaWidth float64
+	src          string
+	pos          int
+	order        *int
+	mediaWidth   float64
+	mediaHeightV float64
+	selectors    int      // selector texts considered
+	skipped      int      // selector texts cascadia could not compile
+	skipSample   []string // a few of those, for diagnostics
 }
 
 func (p *cssParser) eof() bool { return p.pos >= len(p.src) }
@@ -244,8 +263,13 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 		if selText == "" {
 			continue
 		}
+		p.selectors++
 		sel, err := cascadia.Compile(selText)
 		if err != nil {
+			p.skipped++
+			if len(p.skipSample) < 12 {
+				p.skipSample = append(p.skipSample, selText)
+			}
 			continue
 		}
 		*p.order++
@@ -317,68 +341,277 @@ func splitTopLevel(s string, sep byte) []string {
 	return out
 }
 
-// matchMedia evaluates the media queries the renderer cares about. A zero
-// mediaWidth means "unknown", in which case width features match.
+// matchMedia evaluates a media query list against the layout the caller asked
+// about. Comma-separated queries are ORed.
 func (p *cssParser) matchMedia(q string) bool {
-	q = strings.TrimSpace(strings.ToLower(q))
-	if q == "" {
+	q = cssStripComments(q)
+	if strings.TrimSpace(q) == "" {
 		return true
 	}
-	// Comma is OR.
-	for _, part := range strings.Split(q, ",") {
-		if p.matchMediaQuery(strings.TrimSpace(part)) {
+	for _, part := range splitTopLevel(q, ',') {
+		if p.matchMediaQuery(part) {
 			return true
 		}
 	}
 	return false
 }
 
+// matchMediaQuery evaluates one media query: an optional "not" or "only", a
+// media type, and an "and"/"or" chain of features in parentheses.
 func (p *cssParser) matchMediaQuery(q string) bool {
+	q = strings.ToLower(strings.Join(strings.Fields(q), " "))
 	if q == "" {
 		return true
 	}
-	for _, cond := range strings.Split(q, " and ") {
-		cond = strings.TrimSpace(cond)
-		switch {
-		case cond == "" || cond == "all" || cond == "screen":
-			continue
-		case cond == "print" || cond == "speech":
-			return false
-		case strings.HasPrefix(cond, "(") && strings.HasSuffix(cond, ")"):
-			feat := strings.TrimSuffix(strings.TrimPrefix(cond, "("), ")")
-			name, val, ok := strings.Cut(feat, ":")
-			name = strings.TrimSpace(name)
-			val = strings.TrimSpace(val)
+	negate := false
+	if strings.HasPrefix(q, "not ") {
+		negate = true
+		q = strings.TrimSpace(q[4:])
+	} else if strings.HasPrefix(q, "only ") {
+		q = strings.TrimSpace(q[5:])
+	}
+	val, ok := p.matchMediaChain(q)
+	if !ok {
+		// A query we cannot parse must not match: treating it as matching
+		// applies rules that only a narrower viewport should get.
+		return false
+	}
+	if negate {
+		return !val
+	}
+	return val
+}
+
+// matchMediaChain evaluates "and"/"or" chains of a media type and features.
+func (p *cssParser) matchMediaChain(q string) (val, ok bool) {
+	if i := topLevelKeyword(q, "or"); i >= 0 {
+		left, ok1 := p.matchMediaChain(q[:i])
+		right, ok2 := p.matchMediaChain(q[i+4:])
+		if !ok1 || !ok2 {
+			return false, false
+		}
+		return left || right, true
+	}
+	result, seen := true, false
+	for {
+		i := topLevelKeyword(q, "and")
+		atom := q
+		if i >= 0 {
+			atom = q[:i]
+			q = q[i+5:]
+		}
+		if atom = strings.TrimSpace(atom); atom != "" {
+			v, ok := p.matchMediaAtom(atom)
 			if !ok {
-				// e.g. (hover) — treat unknown features as not matching
-				return false
+				return false, false
 			}
-			px, ok := cssLengthToPx(val, 16)
-			if !ok {
-				return false
-			}
-			if p.mediaWidth <= 0 {
-				continue
-			}
-			switch name {
-			case "min-width":
-				if p.mediaWidth < px {
-					return false
-				}
-			case "max-width":
-				if p.mediaWidth > px {
-					return false
-				}
-			default:
-				continue
-			}
-		case strings.HasPrefix(cond, "not "):
-			return false
-		default:
-			continue
+			result = result && v
+			seen = true
+		}
+		if i < 0 {
+			break
 		}
 	}
+	if !seen {
+		return false, false
+	}
+	return result, true
+}
+
+// matchMediaAtom evaluates one part of a chain: a media type or a feature.
+func (p *cssParser) matchMediaAtom(a string) (val, ok bool) {
+	if strings.HasPrefix(a, "(") && strings.HasSuffix(a, ")") {
+		return p.matchMediaFeature(strings.TrimSpace(a[1 : len(a)-1])), true
+	}
+	switch a {
+	case "all", "screen":
+		return true, true
+	case "print", "speech", "tv", "projection", "handheld", "braille",
+		"embossed", "aural", "tty":
+		return false, true
+	}
+	// An unknown word is a syntax error, and does not match.
+	return false, false
+}
+
+// matchMediaFeature evaluates a feature test such as "max-width: 750px". The
+// deprecated device-* features map onto their viewport counterparts, since
+// there is no separate screen geometry. A zero viewport dimension means the
+// caller does not know it, and the matching features then succeed.
+func (p *cssParser) matchMediaFeature(feat string) bool {
+	name, val, hasVal := strings.Cut(feat, ":")
+	name = strings.TrimSpace(strings.ToLower(name))
+	val = strings.TrimSpace(strings.ToLower(val))
+	if !hasVal {
+		// Range syntax, e.g. (width >= 600px) or (600px <= width).
+		return p.matchMediaRange(strings.TrimSpace(strings.ToLower(feat)))
+	}
+	switch name {
+	case "device-width":
+		name = "width"
+	case "min-device-width":
+		name = "min-width"
+	case "max-device-width":
+		name = "max-width"
+	case "device-height":
+		name = "height"
+	case "min-device-height":
+		name = "min-height"
+	case "max-device-height":
+		name = "max-height"
+	}
+	px, ok := cssLengthToPx(val, 16)
+	if !ok {
+		return false
+	}
+	switch name {
+	case "width":
+		return p.widthKnown() && math.Abs(p.mediaWidth-px) < 0.5
+	case "min-width":
+		return !p.widthKnown() || p.mediaWidth >= px
+	case "max-width":
+		return !p.widthKnown() || p.mediaWidth <= px
+	case "height":
+		return false
+	case "min-height", "max-height":
+		return true
+	case "orientation":
+		if !p.widthKnown() {
+			return true
+		}
+		landscape := strings.HasPrefix(val, "landscape")
+		return landscape == (p.mediaWidth > p.mediaHeight())
+	}
+	// Unknown feature: not matching is what browsers do for unsupported
+	// media features, and it keeps desktop rules off a narrow page.
+	return false
+}
+
+// matchMediaRange handles the "(width > 600px)" form.
+func (p *cssParser) matchMediaRange(feat string) bool {
+	name, op, rhs, ok := splitMediaRange(feat)
+	if !ok {
+		return false
+	}
+	px, ok := cssLengthToPx(rhs, 16)
+	if !ok {
+		return false
+	}
+	known := p.widthKnown()
+	switch name {
+	case "width":
+		if !known {
+			return true
+		}
+		return p.compareWidth(op, px)
+	case "height":
+		return false
+	}
+	return false
+}
+
+func (p *cssParser) compareWidth(op string, px float64) bool {
+	switch op {
+	case ">":
+		return p.mediaWidth > px
+	case ">=":
+		return p.mediaWidth >= px
+	case "<":
+		return p.mediaWidth < px
+	case "<=":
+		return p.mediaWidth <= px
+	case "=":
+		return math.Abs(p.mediaWidth-px) < 0.5
+	}
+	return false
+}
+
+// splitMediaRange splits "width >= 600px" or "600px < width".
+func splitMediaRange(s string) (name, op, val string, ok bool) {
+	for _, o := range []string{">=", "<=", ">", "<", "="} {
+		if i := strings.Index(s, o); i >= 0 {
+			left := strings.TrimSpace(s[:i])
+			right := strings.TrimSpace(s[i+len(o):])
+			if isMediaFeatureName(left) {
+				return left, o, right, true
+			}
+			if isMediaFeatureName(right) {
+				return right, flipMediaOp(o), left, true
+			}
+			return "", "", "", false
+		}
+	}
+	return "", "", "", false
+}
+
+func isMediaFeatureName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c == '-' {
+			continue
+		}
+		return false
+	}
 	return true
+}
+
+func flipMediaOp(op string) string {
+	switch op {
+	case ">":
+		return "<"
+	case "<":
+		return ">"
+	case ">=":
+		return "<="
+	case "<=":
+		return ">="
+	}
+	return op
+}
+
+func (p *cssParser) widthKnown() bool { return p.mediaWidth > 0 }
+
+func (p *cssParser) mediaHeight() float64 { return p.mediaHeightV }
+
+// topLevelKeyword finds " kw " outside parentheses and returns its index, or
+// -1.
+func topLevelKeyword(s, kw string) int {
+	depth := 0
+	needle := " " + kw + " "
+	for i := 0; i+len(needle) <= len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth == 0 && strings.HasPrefix(s[i:], needle) {
+			return i
+		}
+	}
+	return -1
+}
+
+// cssStripComments removes /* ... */ comments.
+func cssStripComments(s string) string {
+	for {
+		i := strings.Index(s, "/*")
+		if i < 0 {
+			return s
+		}
+		j := strings.Index(s[i+2:], "*/")
+		if j < 0 {
+			return s[:i]
+		}
+		s = s[:i] + " " + s[i+2+j+2:]
+	}
 }
 
 // cssSpecificity computes [ids, classes/attrs/pseudo-classes, types/pseudo-elements]
@@ -451,6 +684,13 @@ func cssImportURL(prelude string) string {
 func expandShorthands(in []cssDecl) []cssDecl {
 	var out []cssDecl
 	for _, d := range in {
+		if strings.Contains(d.val, "var(") {
+			// Splitting "margin: var(--m, 1px 2px)" here would cut the value
+			// into nonsense. Keep the shorthand and expand it in the cascade,
+			// once var() has been substituted.
+			out = append(out, d)
+			continue
+		}
 		switch d.prop {
 		case "margin", "padding":
 			parts := strings.Fields(d.val)

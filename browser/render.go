@@ -39,7 +39,9 @@ type renderStyle struct {
 }
 
 var (
-	renderTextColor = color.RGBA{R: 0x20, G: 0x21, B: 0x24, A: 0xff}
+	// renderTextColor is the default text colour, which browsers define as
+	// black in their user-agent stylesheet.
+	renderTextColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
 	renderLinkColor = color.RGBA{R: 0x0b, G: 0x57, B: 0xd0, A: 0xff}
 	renderRuleColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 	renderQuoteBar  = color.RGBA{R: 0xd0, G: 0xd0, B: 0xd0, A: 0xff}

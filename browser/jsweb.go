@@ -631,7 +631,9 @@ const (
 // newNodeFilter exposes the NodeFilter constants used with TreeWalker.
 func (e *jsEnv) newNodeFilter() *goja.Object {
 	o := e.vm.NewObject()
-	for k, v := range map[string]int{
+	// float64, because these are JavaScript numbers and SHOW_ALL does not fit
+	// in a 32-bit int.
+	for k, v := range map[string]float64{
 		"FILTER_ACCEPT": 1,
 		"FILTER_REJECT": 2,
 		"FILTER_SKIP":   3,

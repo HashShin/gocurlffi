@@ -58,6 +58,9 @@ func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 		maxHeight = 20000
 	}
 
+	// Media queries must be evaluated against the width being rendered, and
+	// getComputedStyle called from page scripts should agree with it.
+	p.layoutWidth = float64(width)
 	eng := p.styleEngineFor(float64(width))
 	c := &collector{engine: eng}
 	c.walkChildren(p.doc)
@@ -87,6 +90,9 @@ func (p *Page) documentBackground(eng *styleEngine) (color.RGBA, bool) {
 	return color.RGBA{}, false
 }
 
+// defaultLayoutWidth is the viewport getComputedStyle assumes before a render.
+const defaultLayoutWidth = 1280
+
 // --- stylesheet loading ---
 
 // cssTexts returns the page's CSS in document order, with @imports resolved.
@@ -108,9 +114,13 @@ func (p *Page) cssTexts() []string {
 				case "link":
 					if isStylesheetLink(c) {
 						href := resolveURL(p.baseURL(), attrOf(c, "href"))
-						if resp, err := p.browser.get(href, nil); err == nil {
-							sources = append(sources, string(resp.Content))
+						resp, err := p.browser.get(href, nil)
+						if err != nil {
+							p.debugf("stylesheet failed: %s: %v", href, err)
+							continue
 						}
+						p.debugf("stylesheet: %d bytes from %s", len(resp.Content), href)
+						sources = append(sources, string(resp.Content))
 					}
 				}
 			}
@@ -122,7 +132,7 @@ func (p *Page) cssTexts() []string {
 	expanded := make([]string, 0, len(sources))
 	for _, src := range sources {
 		order := 0
-		_, imports := parseCSSStylesheet(src, 0, &order)
+		_, imports, _ := parseCSSStylesheet(src, 0, &order)
 		for _, imp := range imports {
 			if isFontOnlyStylesheet(imp) {
 				// We render with embedded fonts, so a font provider's CSS is a
@@ -180,11 +190,16 @@ func (p *Page) styleEngineFor(width float64) *styleEngine {
 	}
 	order := 0
 	var rules []cssRule
-	for _, src := range p.cssTexts() {
-		rs, _ := parseCSSStylesheet(src, width, &order)
+	for i, src := range p.cssTexts() {
+		rs, _, st := parseCSSStylesheet(src, width, &order)
+		p.debugf("stylesheet %d: %d rules, %d/%d selectors unsupported", i, st.rules, st.skipped, st.selectors)
+		for _, sel := range st.skipSample {
+			p.debugf("  unsupported selector: %s", sel)
+		}
 		rules = append(rules, rs...)
 	}
-	e := newStyleEngine(rules, width)
+	p.debugf("style engine: %d rules at width %g", len(rules), width)
+	e := newStyleEngine(rules, width, p.quirksMode())
 	p.styleEngines[width] = e
 	return e
 }
@@ -195,7 +210,15 @@ func (p *Page) computedStyle(n *html.Node) *computedStyle {
 	if n == nil || n.Type != html.ElementNode {
 		return nil
 	}
-	return p.styleEngineFor(1280).compute(n)
+	return p.styleEngineFor(p.viewportWidth()).compute(n)
+}
+
+// viewportWidth is the layout width media queries are resolved against.
+func (p *Page) viewportWidth() float64 {
+	if p.layoutWidth > 0 {
+		return p.layoutWidth
+	}
+	return defaultLayoutWidth
 }
 
 // --- DOM to blocks ---

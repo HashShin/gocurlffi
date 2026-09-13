@@ -68,11 +68,25 @@ make gobrowser
 ## What works
 
 - CSS: `<style>` blocks and `<link rel=stylesheet>` sheets are fetched and
-  cascaded (specificity, `!important`, source order, inheritance, simple
-  `@media` width queries, a user-agent default sheet), and drive both
+  cascaded (specificity, `!important`, source order, inheritance, `@import`,
+  `@media`, custom properties, a user-agent default sheet), and drive both
   `getComputedStyle` and the screenshot renderer. Loading is lazy: loading a
   page or extracting text never touches stylesheets; the first style-dependent
   operation fetches them once and caches them.
+- CSS custom properties and `var(--name, fallback)`, including inheritance and
+  nested references. Modern sites theme everything this way: Wikipedia's body
+  colour is `color: var(--color-base, #202122)` and Bootstrap 5 styles every
+  component with `--bs-*`, so without `var()` such a page falls back to the
+  user-agent defaults.
+- `@media` is evaluated against the width being rendered: media types,
+  `not`/`only`, `and`/`or` chains, `min-width`/`max-width` (and the `height`
+  family, `orientation`, the `device-*` aliases, and the `(width >= 600px)`
+  range form). A query the parser cannot understand does not match, because
+  treating it as matching applies every mobile rule to a desktop page.
+- HTML presentational attributes (`bgcolor`, `color`, `align`) act as
+  author-origin hints below the cascade, which is how old table layouts paint
+  themselves, and a page without a doctype is styled in quirks mode (tables
+  take the medium font size instead of inheriting).
 - Document decoding: the Content-Type charset, a BOM or `<meta charset>` is
   honoured (via `x/net/html/charset`), so non-UTF-8 pages are not mojibake.
   A `<base href>` sets the base for relative URLs, used by script `src`,
@@ -207,12 +221,49 @@ at weight 700 in `#3677E8`, `.quote` with 30px bottom margin and 10px padding,
 and `body` in `sans-serif`. Applying it grows the render from 1100px to 1496px,
 which is that CSS's margin and padding taking effect.
 
+### Checking the cascade against a browser
+
+`tools/cssdiff` compares this package's computed styles with a real Chromium,
+element by element, on the same page: Chromium answers over CDP, the Go browser
+answers through `gobrowser get --eval`, and the two are matched by DOM position.
+It is a separate module, so its one dependency (chromedp) never reaches the
+browser package.
+
+```sh
+cd tools/cssdiff && go mod download && go run . https://news.ycombinator.com/
+```
+
+Every cascade fix here was found with it. Current agreement, 7 properties
+(font-size, colour, background, weight, style, display, alignment) over every
+element both engines produce:
+
+| page | elements compared | agree |
+| --- | --- | --- |
+| `news.ycombinator.com` | 817 | 7/7 properties, 0 differences |
+| `quotes.toscrape.com/js/` | 109 | 7/7 properties, 0 differences |
+| `en.wikipedia.org` (Go article) | 6703 | font-size 0.3%, colour 0.0%, background 0.5%, weight 0.1%, style 0.0%, display 4.0%, alignment 0.3% |
+
+The remaining Wikipedia differences are mostly `display: flex`/`flow-root`
+style rules behind `:is()`/`:has()` selectors that cascadia cannot compile, and
+grid/flex layout the renderer does not use.
+
 ```go
 png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
 ```
 
 ```sh
 ./bin/gobrowser get https://quotes.toscrape.com/js/ --screenshot page.png --width 900
+```
+
+`--debug` reports what the styling actually did, which is the first thing to
+check when a page looks unstyled: every stylesheet it fetched and its size, any
+sheet it could not fetch, the rules each one produced, and the unsupported
+selector samples.
+
+```
+[browser] stylesheet: 428760 bytes from https://www.marriott.com/...clientlib-base.css
+[browser] stylesheet 0: 1380 rules, 6/1386 selectors unsupported
+[browser] style engine: 5337 rules at width 900
 ```
 
 | Option | Default | Meaning |
@@ -227,9 +278,15 @@ same honest limits:
 - Text only. No `<img>` content (an `alt` is drawn as `[alt]`). CSS is
   cascaded for typography, colour, display, spacing, alignment and flat block
   backgrounds, but there is no box model: no borders, shadows, floats,
-  positioning, gradients or images. `float` and `position` are ignored, so
-  sidebars and menus that a browser would place beside the content flow inline
-  or in document order.
+  positioning, gradients or images. `float` and `position` are ignored for
+  layout, so sidebars and menus that a browser would place beside the content
+  flow inline or in document order (their *computed* values are still reported
+  correctly).
+- Selectors cascadia cannot compile are skipped, and the engine counts them:
+  `--debug` prints how many rules each sheet produced and lists the first
+  unsupported selectors. On a real site most of those are `::before`/`::after`
+  and vendor pseudo-elements, which carry no element styling, so the number
+  overstates the loss. `:is()`, `:where()` and `:has()` are not supported.
 - Not pixel-identical to a browser. Two fonts are embedded (Go regular/bold/
   italic and Go Mono) rather than the page's fonts.
 

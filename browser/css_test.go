@@ -4,6 +4,7 @@ import (
 	"image"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -220,5 +221,310 @@ func TestCSSLoadingIsLazy(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&cssHits); got != 1 {
 		t.Fatalf("stylesheets were refetched: %d", got)
+	}
+}
+
+// Font-size resolution matches a browser: the absolute keywords come from the
+// medium-keyed table (large is 18px, not 1.2x the parent), percentages and em
+// resolve against the parent, and the user-agent <small> is "smaller".
+func TestCSSFontSizeResolution(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		h1 { font-size: 2em; }
+		#c { font-size: 20px; }
+		#d { font-size: large; }
+		#e { font-size: 150%; }
+		#f { font-size: 2em; }
+		#g { font-size: smaller; }
+		#h { font-size: 87%; }
+	</style></head><body>
+		<h1 id="h1">h1</h1>
+		<p id="a" style="font-size: small">a</p>
+		<p id="b" style="font-size: x-large">b</p>
+		<div id="c"><span id="d">d</span><span id="e">e</span><span id="f">f</span>
+		<span id="g">g</span><small id="h">h</small></div>
+	</body></html>`, "https://example.test/")
+	// Every expectation below is what Chromium reports for the same document.
+	cases := []struct{ expr, want string }{
+		{`getComputedStyle(document.getElementById('a')).fontSize`, "13px"},
+		{`getComputedStyle(document.getElementById('b')).fontSize`, "24px"},
+		{`getComputedStyle(document.getElementById('h1')).fontSize`, "32px"},
+		{`getComputedStyle(document.getElementById('d')).fontSize`, "18px"},
+		{`getComputedStyle(document.getElementById('e')).fontSize`, "30px"},
+		{`getComputedStyle(document.getElementById('f')).fontSize`, "40px"},
+		{`getComputedStyle(document.getElementById('g')).fontSize`, "16.666666666666668px"},
+		{`getComputedStyle(document.getElementById('h')).fontSize`, "17.4px"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+}
+
+// With no colour declared anywhere, text is black, as in a browser's
+// user-agent stylesheet.
+func TestCSSDefaultTextColor(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body><p id="a">a</p></body></html>`, "https://example.test/")
+	v, err := p.Eval(`getComputedStyle(document.getElementById('a')).color`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if got := v.String(); got != "rgba(0, 0, 0, 1.000)" {
+		t.Fatalf("default color = %q, want black", got)
+	}
+}
+
+// document.write output belongs at the writing script's position, not at the
+// end of the body, and successive writes keep their order.
+func TestDocumentWriteInsertsAtScript(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<!doctype html><html><body>
+		<div id="head">head</div>
+		<script>
+			document.write("<p id='w1'>one</p>");
+			document.write("<p id='w2'>two</p>");
+		</script>
+		<div id="tail">tail</div>
+	</body></html>`, "https://example.test/")
+	out := p.Text()
+	if !strings.Contains(out, "head") || !strings.Contains(out, "tail") {
+		t.Fatalf("lost content: %q", out)
+	}
+	order := func(a, b string) bool {
+		return strings.Index(out, a) >= 0 && strings.Index(out, a) < strings.Index(out, b)
+	}
+	if !order("head", "one") || !order("one", "two") || !order("two", "tail") {
+		t.Fatalf("document.write landed in the wrong place: %q", out)
+	}
+	// Chromium puts the written nodes directly after the writing script:
+	// div#head, script, p#w1, p#w2, div#tail.
+	v, err := p.Eval(`Array.prototype.map.call(document.body.children, function(e){return e.tagName+':'+e.id}).join(',')`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	want := "DIV:head,SCRIPT:,P:w1,P:w2,DIV:tail"
+	if got := v.String(); got != want {
+		t.Fatalf("body children = %s, want %s", got, want)
+	}
+}
+
+// Media queries are evaluated against the layout width, and a query the engine
+// cannot parse must not match. Treating an unparsed query as matching applied
+// every mobile rule on a desktop page: on Hacker News that gave 9pt text,
+// block pagetop links and centre alignment; Chromium keeps them at 10pt.
+func TestCSSMediaQueryWidths(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		#a { font-size: 20px; }
+		@media only screen
+		and (min-width : 300px)
+		and (max-width : 750px) {
+			#a { font-size: 9pt; }
+			#b { font-size: 9pt; }
+		}
+		@media (min-width: 1000px) { #c { font-size: 30px; } }
+		@media print { #d { font-size: 40px; } }
+		@media (hover: hover) { #e { font-size: 50px; } }
+	</style></head><body>
+		<p id="a">a</p><p id="b">b</p><p id="c">c</p><p id="d">d</p><p id="e">e</p>
+	</body></html>`, "https://example.test/")
+	cases := []struct {
+		width float64
+		want  map[string]string
+	}{
+		{1280, map[string]string{"a": "20px", "b": "16px", "c": "30px", "d": "16px", "e": "16px"}},
+		{700, map[string]string{"a": "12px", "b": "12px", "c": "16px", "d": "16px", "e": "16px"}},
+	}
+	for _, c := range cases {
+		p.layoutWidth = c.width
+		for id, want := range c.want {
+			v, err := p.Eval(`getComputedStyle(document.getElementById('` + id + `')).fontSize`)
+			if err != nil {
+				t.Fatalf("width %g %s: %v", c.width, id, err)
+			}
+			if got := v.String(); got != want {
+				t.Errorf("width %g: #%s font-size = %q, want %q", c.width, id, got, want)
+			}
+		}
+	}
+}
+
+// A document without a doctype is in quirks mode, where tables take the medium
+// font size and normal weight instead of inheriting them.
+func TestCSSQuirksModeTables(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body style="font-size:10pt;font-weight:bold">
+		<table id="t"><tr><td id="d">x</td></tr></table>
+	</body></html>`, "https://example.test/")
+	for _, id := range []string{"t", "d"} {
+		v, err := p.Eval(`[getComputedStyle(document.getElementById('` + id + `')).fontSize, getComputedStyle(document.getElementById('` + id + `')).fontWeight].join(' ')`)
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if got := v.String(); got != "16px 400" {
+			t.Errorf("#%s = %q, want %q", id, got, "16px 400")
+		}
+	}
+	// The same document with a doctype is standards mode and inherits.
+	p2 := b.NewPage("https://example.test/")
+	_ = p2.SetContent(`<!doctype html><html><body style="font-size:10pt;font-weight:bold">
+		<table id="t"><tr><td id="d">x</td></tr></table>
+	</body></html>`, "https://example.test/")
+	v, err := p2.Eval(`[getComputedStyle(document.getElementById('d')).fontSize, getComputedStyle(document.getElementById('d')).fontWeight].join(' ')`)
+	if err != nil {
+		t.Fatalf("standards: %v", err)
+	}
+	if got := v.String(); got != "13.333333333333334px 700" {
+		t.Errorf("standards mode #d = %q, want inherited 10pt bold", got)
+	}
+}
+
+// Legacy presentation attributes act as low-priority author rules, which is how
+// old table layouts paint themselves.
+func TestCSSPresentationalHints(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><body>
+		<table id="t" bgcolor="#ff6600" width="100%">
+			<tr><td id="d" align="right"><font id="f" color="#0000ff">x</font></td></tr>
+		</table>
+		<style>#d { background-color: rgb(1, 2, 3); }</style>
+	</body></html>`, "https://example.test/")
+	v, err := p.Eval(`getComputedStyle(document.getElementById('t')).backgroundColor`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if got := v.String(); got != "rgba(255, 102, 0, 1.000)" {
+		t.Errorf("bgcolor = %q, want the attribute colour", got)
+	}
+	v, _ = p.Eval(`getComputedStyle(document.getElementById('d')).textAlign`)
+	if got := v.String(); got != "right" {
+		t.Errorf("align = %q, want right", got)
+	}
+	v, _ = p.Eval(`getComputedStyle(document.getElementById('f')).color`)
+	if got := v.String(); got != "rgba(0, 0, 255, 1.000)" {
+		t.Errorf("font color = %q, want blue", got)
+	}
+	// An author rule outranks the hint.
+	v, _ = p.Eval(`getComputedStyle(document.getElementById('d')).backgroundColor`)
+	if got := v.String(); got != "rgba(1, 2, 3, 1.000)" {
+		t.Errorf("author rule lost to a hint: %q", got)
+	}
+}
+
+// The display value a browser computes, including blockification by float.
+func TestCSSDisplayValues(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<!doctype html><html><head><style>
+		tr { float: left; }
+		span { position: absolute; }
+	</style></head><body>
+		<table id="t"><tbody id="tb"><tr id="r"><td id="d">x</td></tr></tbody></table>
+		<center id="c">c</center><span id="s">s</span>
+	</body></html>`, "https://example.test/")
+	// tr is floated, so it blockifies to block, while the table keeps "table"
+	// and its unfocused children keep their table-internal display.
+	cases := map[string]string{"t": "table", "tb": "table-row-group", "d": "table-cell", "r": "block", "c": "block", "s": "block"}
+	for id, want := range cases {
+		v, err := p.Eval(`getComputedStyle(document.getElementById('` + id + `')).display`)
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if got := v.String(); got != want {
+			t.Errorf("#%s display = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// A theme built from custom properties, which is how Wikipedia, Bootstrap 5 and
+// most modern sites are written. Without var() support every such declaration
+// is dropped, and the page falls back to the user-agent defaults.
+func TestCSSCustomProperties(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		:root { --ink: #202122; --accent: #3366cc; --size: 1.25rem; }
+		body { color: var(--ink, #ff0000); font-size: var(--size); }
+		a { color: var(--accent); }
+		#fallback { color: var(--missing, rgb(1, 2, 3)); }
+		#nested { color: var(--accent, var(--ink)); }
+		#undefined { color: var(--nope); }
+		#own { --ink: #00ff00; color: var(--ink); }
+		#shorthand { margin: var(--m, 4px 8px); }
+	</style></head><body>
+		<a id="a" href="#">a</a>
+		<p id="fallback">f</p><p id="nested">n</p><p id="undefined">u</p>
+		<p id="own">o</p><p id="shorthand">s</p>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ expr, want string }{
+		{`getComputedStyle(document.body).color`, "rgba(32, 33, 34, 1.000)"},
+		{`getComputedStyle(document.body).fontSize`, "20px"},
+		{`getComputedStyle(document.getElementById('a')).color`, "rgba(51, 102, 204, 1.000)"},
+		{`getComputedStyle(document.getElementById('fallback')).color`, "rgba(1, 2, 3, 1.000)"},
+		{`getComputedStyle(document.getElementById('nested')).color`, "rgba(51, 102, 204, 1.000)"},
+		// No value and no fallback: the declaration does not apply, so the
+		// element inherits from the body.
+		{`getComputedStyle(document.getElementById('undefined')).color`, "rgba(32, 33, 34, 1.000)"},
+		{`getComputedStyle(document.getElementById('own')).color`, "rgba(0, 255, 0, 1.000)"},
+		{`getComputedStyle(document.getElementById('shorthand')).getPropertyValue('margin-top')`, "4px"},
+		{`getComputedStyle(document.getElementById('shorthand')).getPropertyValue('margin-left')`, "8px"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", c.expr, got, c.want)
+		}
+	}
+}
+
+// The user-agent monospace size applies only while the font family is exactly
+// the monospace keyword, and "inherit" maps a property back to its parent.
+func TestCSSMonospaceSizeAndInherit(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		#m { font-family: monospace; }
+		#list { font-family: monospace, monospace; }
+		#sans { font-family: sans-serif; }
+		#inh { color: inherit; font-weight: inherit; }
+		th { font-weight: normal; }
+	</style></head><body style="color: rgb(10, 20, 30); font-weight: bold">
+		<p><code id="plain">a</code><code id="m">b</code><code id="list">c</code>
+		<code id="sans">d</code><code id="inh">e</code></p>
+		<table><tr><th id="th">h</th></tr></table>
+	</body></html>`, "https://example.test/")
+	cases := []struct{ expr, want string }{
+		{`getComputedStyle(document.getElementById('plain')).fontSize`, "13px"},
+		{`getComputedStyle(document.getElementById('m')).fontSize`, "13px"},
+		{`getComputedStyle(document.getElementById('list')).fontSize`, "16px"},
+		{`getComputedStyle(document.getElementById('sans')).fontSize`, "16px"},
+		{`getComputedStyle(document.getElementById('inh')).color`, "rgba(10, 20, 30, 1.000)"},
+		{`getComputedStyle(document.getElementById('inh')).fontWeight`, "700"},
+		// th is bold by default, and an author rule can take that away.
+		{`getComputedStyle(document.getElementById('th')).fontWeight`, "400"},
+	}
+	for _, c := range cases {
+		v, err := p.Eval(c.expr)
+		if err != nil {
+			t.Fatalf("%s: %v", c.expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", c.expr, got, c.want)
+		}
 	}
 }

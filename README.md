@@ -134,6 +134,8 @@ impersonate/            browser presets, aliases, TLS profile mapping
 internal/genpresets/    parses impersonate.c -> presets_gen.go
 internal/capturehello/  captures/parses a ClientHello from any command
 scripts/check_sites.sh  site/target status matrix (add -B for the browser)
+tools/cssdiff/          compares the browser/ cascade with a real Chromium
+                        (separate module: dev tool only, requires chromedp)
 ```
 
 Only `impersonate/upstream/impersonate.c` is an external build input; it is
@@ -274,11 +276,15 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   `warning:`. Server-rendered alternatives that do return linkable HTML:
   `https://www.bing.com/search?q=...`, `https://search.brave.com/search?q=...`,
   `https://lite.duckduckgo.com/lite/?q=...`.
-- `browser` has no CSS box model (no borders, shadows, floats, positioning or
-  images), no WebSockets and no PDF output. It cascades the page's CSS for
-  typography, colour, display and spacing, and can render a page to a PNG with
-  `Screenshot`, but that is a document renderer (flowed text, headings, lists,
-  quotes, flat backgrounds), not a web renderer.
+- `browser` has no CSS box model (no borders, shadows, floats, positioning,
+  gradients or images), no WebSockets and no PDF output. It cascades the page's
+  CSS - selectors, specificity, `!important`, inheritance, `@import`, `@media`,
+  custom properties and presentational attributes - for typography, colour,
+  display and spacing, and can render a page to a PNG with `Screenshot`, but
+  that is a document renderer (flowed text, headings, lists, quotes, flat
+  backgrounds), not a web renderer. The cascade's computed values are checked
+  against Chromium with `tools/cssdiff`: on 817 Hacker News elements and 109
+  quotes.toscrape elements all seven compared properties match exactly.
 
 ## License
 

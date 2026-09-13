@@ -69,29 +69,32 @@ func splitCSSNumber(v string) (num, unit string) {
 	return v[:i], strings.TrimSpace(v[i:])
 }
 
-// cssFontSizeToPx resolves absolute keywords as well as lengths.
-func cssFontSizeToPx(v string, base float64) (float64, bool) {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "xx-small":
-		return base * 0.58, true
-	case "x-small":
-		return base * 0.69, true
-	case "small":
-		return base * 0.83, true
-	case "medium":
-		return base, true
-	case "large":
-		return base * 1.2, true
-	case "x-large":
-		return base * 1.5, true
-	case "xx-large":
-		return base * 2, true
-	case "smaller":
-		return base * 0.83, true
-	case "larger":
-		return base * 1.2, true
+// The absolute font-size keywords, keyed to the medium (16px) size. Browsers
+// take these from a fixed table rather than scaling by a ratio, which is what
+// Chromium reports through getComputedStyle (small is 13px, not 13.28px).
+var cssFontSizeTable = []float64{9, 10, 13, 16, 18, 24, 32, 48}
+
+var cssFontSizeKeyword = map[string]int{
+	"xx-small": 0, "x-small": 1, "small": 2, "medium": 3,
+	"large": 4, "x-large": 5, "xx-large": 6, "xxx-large": 7,
+}
+
+// cssFontSizeToPx resolves a font-size declaration. parent is the parent
+// element's computed size, which is the base for percentages, em and the
+// smaller/larger keywords. The absolute keywords instead come from the table
+// above: "large" is 18px whether the parent is 16px or 60px.
+func cssFontSizeToPx(v string, parent float64) (float64, bool) {
+	kw := strings.ToLower(strings.TrimSpace(v))
+	if i, ok := cssFontSizeKeyword[kw]; ok {
+		return cssFontSizeTable[i], true
 	}
-	return cssLengthToPx(v, base)
+	switch kw {
+	case "smaller":
+		return parent / 1.2, true
+	case "larger":
+		return parent * 1.2, true
+	}
+	return cssLengthToPx(v, parent)
 }
 
 var cssNamedColors = map[string]color.RGBA{
@@ -260,6 +263,115 @@ type computedStyle struct {
 	marginLeft    float64
 	paddingLeft   float64
 	listStyle     string
+
+	// monoDefault records that the user-agent sheet gave this element its
+	// 13px monospace size, which an author font-family takes away again.
+	monoDefault bool
+
+	// props are the CSS custom properties in scope on this element, which
+	// var() references resolve against. The chain is shared with the parent,
+	// so inheriting them costs nothing until an element declares its own.
+	props *customProps
+}
+
+// customProps is an immutable chain of custom property values: each link holds
+// the names an element declares, and looks up through its parent.
+type customProps struct {
+	parent *customProps
+	own    map[string]string
+}
+
+func (c *customProps) lookup(name string) (string, bool) {
+	for p := c; p != nil; p = p.parent {
+		if v, ok := p.own[name]; ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// expandVars substitutes var(--name[, fallback]) references. depth bounds the
+// recursion so that a cycle terminates. A reference with no value and no
+// fallback makes the declaration invalid, which the caller drops.
+func expandVars(v string, props *customProps, depth int) (string, bool) {
+	if props == nil || !strings.Contains(v, "var(") {
+		return v, true
+	}
+	if depth > 8 {
+		return "", false
+	}
+	var b strings.Builder
+	for i := 0; i < len(v); {
+		start := indexFold(v[i:], "var(")
+		if start < 0 {
+			b.WriteString(v[i:])
+			break
+		}
+		start += i
+		b.WriteString(v[i:start])
+		open := start + 3 // the '('
+		end := matchingParen(v, open)
+		if end < 0 {
+			return "", false
+		}
+		name, fallback, hasFallback := cutTopLevelArg(v[open+1 : end])
+		name = strings.TrimSpace(name)
+		val, ok := props.lookup(name)
+		if !ok {
+			if !hasFallback {
+				return "", false
+			}
+			val = fallback
+		} else if strings.TrimSpace(val) == "" && hasFallback {
+			val = fallback
+		}
+		expanded, ok := expandVars(strings.TrimSpace(val), props, depth+1)
+		if !ok {
+			return "", false
+		}
+		b.WriteString(expanded)
+		i = end + 1
+	}
+	return b.String(), true
+}
+
+// indexFold finds needle case-insensitively.
+func indexFold(s, needle string) int {
+	if len(needle) == 0 {
+		return 0
+	}
+	low := strings.ToLower(s)
+	return strings.Index(low, strings.ToLower(needle))
+}
+
+// matchingParen returns the index of the ')' matching the '(' at open.
+func matchingParen(s string, open int) int {
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// cutTopLevelArg splits a var() argument into its name and fallback at the
+// first comma outside parentheses.
+func cutTopLevelArg(s string) (name, fallback string, ok bool) {
+	parts := splitTopLevel(s, ',')
+	if len(parts) == 0 {
+		return "", "", false
+	}
+	if len(parts) == 1 {
+		return parts[0], "", false
+	}
+	return parts[0], strings.Join(parts[1:], ","), true
 }
 
 func defaultComputedStyle() computedStyle {
@@ -280,10 +392,27 @@ type styleEngine struct {
 	cache    map[*html.Node]*computedStyle
 	baseSize float64
 	width    float64
+	quirks   bool
 }
 
-func newStyleEngine(rules []cssRule, width float64) *styleEngine {
-	return &styleEngine{rules: rules, cache: map[*html.Node]*computedStyle{}, baseSize: 16, width: width}
+func newStyleEngine(rules []cssRule, width float64, quirks bool) *styleEngine {
+	return &styleEngine{
+		rules:    rules,
+		cache:    map[*html.Node]*computedStyle{},
+		baseSize: 16,
+		width:    width,
+		quirks:   quirks,
+	}
+}
+
+// mediumSize is the "medium" font size for this element's context. Browsers
+// resolve the absolute keywords against it, and in quirks mode it is 13px for
+// monospace text rather than 16px.
+func (e *styleEngine) mediumSize(parent *computedStyle) float64 {
+	if parent != nil && parent.mono {
+		return 13
+	}
+	return e.baseSize
 }
 
 var styleInherited = map[string]bool{
@@ -326,6 +455,23 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 	// User-agent defaults.
 	applyUADefaults(&cs, tag, parent)
 
+	// A document without a doctype is in quirks mode, where browsers give
+	// tables the medium font size and normal weight and style instead of
+	// inheriting them. Old table-layout pages depend on this: without it a
+	// 10pt body would shrink every table on the page.
+	if e.quirks && tag == "table" {
+		cs.fontSize = e.mediumSize(parent)
+		cs.bold = false
+		cs.italic = false
+		cs.textAlign = "left"
+	}
+
+	// HTML presentational attributes (bgcolor, color, align) act as author
+	// rules of the lowest priority, so they sit above the user-agent sheet and
+	// below the cascade. Old table-layout pages depend on them: Hacker News
+	// draws its orange bar with bgcolor="#ff6600".
+	applyPresentationalHints(&cs, n, tag)
+
 	// Inline style attribute wins over the cascade for authors, but is part of
 	// it: treated as specificity above any selector.
 	type applied struct {
@@ -360,9 +506,47 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		return a.order < b.order
 	})
 
+	// Custom properties cascade and inherit like any other declaration, but
+	// they must be collected before the rest, because those declarations can
+	// reference them through var(). Modern pages theme almost everything this
+	// way: Wikipedia sets "color: var(--color-base, #202122)" on body and
+	// Bootstrap 5 styles every component with --bs-* variables.
+	own := map[string]string{}
+	for _, m := range matched {
+		if strings.HasPrefix(m.decl.prop, "--") {
+			own[m.decl.prop] = m.decl.val
+		}
+	}
+	parentProps := (*customProps)(nil)
+	if parent != nil {
+		parentProps = parent.props
+	}
+	props := &customProps{parent: parentProps, own: own}
+	for name, val := range own {
+		if expanded, ok := expandVars(val, props, 0); ok {
+			own[name] = expanded
+		} else {
+			delete(own, name)
+		}
+	}
+	cs.props = props
+
+	// Then the ordinary declarations, in cascade order, so that the winning
+	// shorthand or longhand is the last to write each longhand property.
 	declared := map[string]string{}
 	for _, m := range matched {
-		declared[m.decl.prop] = m.decl.val
+		if strings.HasPrefix(m.decl.prop, "--") {
+			continue
+		}
+		val, ok := expandVars(m.decl.val, props, 0)
+		if !ok {
+			// A var() with no value and no fallback makes the declaration
+			// invalid at computed-value time, so it does not apply.
+			continue
+		}
+		for _, d := range expandShorthands([]cssDecl{{prop: m.decl.prop, val: val, important: m.decl.important}}) {
+			declared[d.prop] = d.val
+		}
 	}
 	// Inherited values from the parent where the element declares nothing.
 	if parent != nil {
@@ -376,6 +560,47 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 }
 
 func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent *computedStyle) {
+	// "color: inherit" and friends reset a property to the parent's computed
+	// value instead of setting one. Pages use it to opt out of a default, as
+	// Wikipedia's "a.mw-selflink { color: inherit }" does to make the current
+	// page link look like text.
+	for prop, val := range d {
+		if !strings.EqualFold(strings.TrimSpace(val), "inherit") || parent == nil {
+			continue
+		}
+		switch prop {
+		case "color":
+			cs.textColor = parent.textColor
+		case "background-color":
+			cs.background, cs.hasBackground = parent.background, parent.hasBackground
+		case "font-size":
+			cs.fontSize = parent.fontSize
+		case "font-weight":
+			cs.bold = parent.bold
+		case "font-style":
+			cs.italic = parent.italic
+		case "font-family":
+			cs.mono = parent.mono
+		case "text-align":
+			cs.textAlign = parent.textAlign
+		case "line-height":
+			cs.lineHeight = parent.lineHeight
+		case "visibility":
+			cs.visibility = parent.visibility
+		case "white-space":
+			cs.whiteSpace = parent.whiteSpace
+		}
+		delete(d, prop)
+	}
+	// A font-size percentage or em resolves against the parent's computed
+	// size, not this element's own: cs.fontSize already holds the user-agent
+	// size (32px for an h1), and using it would turn "h1 { font-size: 2em }"
+	// into 64px and Bootstrap's "small { font-size: 87% }" into 87% of the
+	// user-agent 13px instead of 87% of the parent.
+	inherited := e.baseSize
+	if parent != nil && parent.fontSize > 0 {
+		inherited = parent.fontSize
+	}
 	base := cs.fontSize
 	if base <= 0 {
 		base = e.baseSize
@@ -392,7 +617,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		}
 	}
 	if v, ok := d["font-size"]; ok {
-		if px, ok2 := cssFontSizeToPx(v, base); ok2 {
+		if px, ok2 := cssFontSizeToPx(v, inherited); ok2 {
 			cs.fontSize = px
 		}
 	}
@@ -454,9 +679,30 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		lv := strings.ToLower(strings.TrimSpace(v))
 		switch lv {
 		case "none", "block", "inline", "inline-block", "flex", "grid",
-			"list-item", "table", "table-row", "table-cell", "inline-flex", "contents":
+			"list-item", "flow-root", "inline-grid", "inline-table", "table",
+			"table-row", "table-row-group", "table-header-group",
+			"table-footer-group", "table-cell", "table-caption",
+			"inline-flex", "contents":
 			cs.display = lv
 		}
+	}
+	// A floated or absolutely positioned element is blockified: its computed
+	// display is block, whatever the cascade said. Browsers report the
+	// blockified value from getComputedStyle, so Bootstrap's
+	// ".pager .next > a { float: right }" reads as display:block there while
+	// the earlier "display: inline-block" still governs the used value.
+	floated := false
+	if v, ok := d["float"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		floated = lv == "left" || lv == "right"
+	}
+	outOfFlow := false
+	if v, ok := d["position"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		outOfFlow = lv == "absolute" || lv == "fixed"
+	}
+	if floated || outOfFlow {
+		cs.display = blockifyDisplay(cs.display)
 	}
 	if v, ok := d["visibility"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))
@@ -482,6 +728,19 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			}
 		}
 	}
+	// A browser keeps its 13px monospace size for <pre> and <code> only while
+	// the font family is exactly the `monospace` keyword. Any other author
+	// family, including "monospace, monospace" or a quoted "monospace",
+	// restores the inherited size. Wikipedia's
+	// "pre,code,tt,kbd,samp{font-family:monospace,monospace}" turns on this:
+	// without it every inline code sample renders at 13px instead of 16px.
+	if cs.monoDefault && cs.fontSize == 13 {
+		if _, hasSize := d["font-size"]; !hasSize {
+			if fam, hasFam := d["font-family"]; hasFam && !strings.EqualFold(strings.TrimSpace(fam), "monospace") {
+				cs.fontSize = inherited
+			}
+		}
+	}
 }
 
 func cssFamilyIsMono(v string) bool {
@@ -501,18 +760,34 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 	switch tag {
 	case "head", "title", "meta", "link", "style", "script", "template",
 		"noscript", "base", "param", "source", "track", "col", "colgroup",
-		"iframe", "svg", "canvas", "audio", "video", "object", "embed",
-		"input", "textarea", "select", "option", "dialog":
+		"dialog":
 		cs.display = "none"
-	case "td", "th":
+	case "iframe", "svg", "canvas", "audio", "video", "object", "embed",
+		"input", "textarea", "select", "button", "option":
+		cs.display = "inline-block"
+	case "table":
+		cs.display = "table"
+	case "thead", "tbody", "tfoot":
+		cs.display = "table-row-group"
+	case "tr":
+		cs.display = "table-row"
+	case "caption":
+		cs.display = "table-caption"
+	case "td":
 		cs.display = "table-cell"
+	case "th":
+		cs.display = "table-cell"
+		cs.bold = true
+		cs.textAlign = "center"
 	case "li":
 		cs.display = "list-item"
+	case "center":
+		cs.display = "block"
+		cs.textAlign = "center"
 	case "html", "body", "address", "article", "aside", "blockquote", "div",
 		"dl", "dd", "dt", "fieldset", "figcaption", "figure", "footer", "form",
-		"header", "main", "nav", "p", "pre", "section", "table", "tbody",
-		"tfoot", "thead", "tr", "hgroup", "details", "summary", "caption",
-		"ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6":
+		"header", "main", "nav", "p", "pre", "section", "hgroup", "details",
+		"summary", "ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6":
 		cs.display = "block"
 	}
 
@@ -530,7 +805,7 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 		cs.fontSize, cs.bold = 13.3, true
 	case "h6":
 		cs.fontSize, cs.bold = 10.7, true
-	case "b", "strong":
+	case "th", "b", "strong":
 		cs.bold = true
 	case "i", "em", "cite", "var", "dfn", "address":
 		cs.italic = true
@@ -538,15 +813,31 @@ func applyUADefaults(cs *computedStyle, tag string, parent *computedStyle) {
 		cs.mono = true
 		if cs.fontSize > 15 {
 			cs.fontSize = 13
+			cs.monoDefault = true
 		}
 	case "small":
-		cs.fontSize = math.Max(9, cs.fontSize*0.83)
+		// Browsers implement small as "font-size: smaller", i.e. parent/1.2;
+		// Chromium reports 13.33px for it inside a 16px parent.
+		cs.fontSize = math.Max(9, cs.fontSize/1.2)
 	case "u", "ins":
 		cs.underline = true
 	case "a":
 		cs.link = true
 		cs.underline = true
 		cs.textColor = renderLinkColor
+	case "button":
+		// Buttons centre their label; the other controls align like text.
+		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
+		cs.textAlign = "center"
+		cs.background = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+		cs.hasBackground = true
+	case "input", "textarea", "select":
+		// Form controls do not inherit text colour or alignment; browsers
+		// give them fieldtext on a field background.
+		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
+		cs.textAlign = "left"
+		cs.background = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+		cs.hasBackground = true
 	}
 	if tag == "pre" {
 		cs.whiteSpace = "pre"
@@ -589,4 +880,58 @@ func inlineDecls(n *html.Node) []cssDecl {
 		return nil
 	}
 	return parseCSSDeclarations(v)
+}
+
+// applyPresentationalHints maps the HTML legacy presentation attributes onto
+// the CSS properties they stand for. Browsers treat them as author-origin
+// rules of the lowest priority, which is why an explicit author rule always
+// wins and they are applied here, before the cascade.
+func applyPresentationalHints(cs *computedStyle, n *html.Node, tag string) {
+	if v := attrOf(n, "bgcolor"); v != "" {
+		switch tag {
+		case "table", "tr", "td", "th", "body", "tbody", "thead", "tfoot":
+			if c, ok := parseCSSColor(v); ok {
+				cs.background = c
+				cs.hasBackground = true
+			}
+		}
+	}
+	if v := attrOf(n, "color"); v != "" {
+		if tag == "font" || tag == "basefont" {
+			if c, ok := parseCSSColor(v); ok {
+				cs.textColor = c
+			}
+		}
+	}
+	if v := attrOf(n, "align"); v != "" {
+		a := strings.ToLower(strings.TrimSpace(v))
+		if a == "left" || a == "right" || a == "center" || a == "justify" {
+			switch tag {
+			case "p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "td", "th",
+				"tr", "table", "caption", "col", "colgroup", "thead", "tbody",
+				"tfoot", "center":
+				cs.textAlign = a
+			}
+		}
+	}
+}
+
+// blockifyDisplay returns the computed display of a floated or absolutely
+// positioned element, which CSS blockifies. Chromium reports the blockified
+// value, so "float: left" on an inline-block reads as block and on a <tr> also
+// block, while an <table> keeps "table" and an inline-table becomes "table".
+func blockifyDisplay(d string) string {
+	switch d {
+	case "inline", "inline-block", "table-row-group", "table-header-group",
+		"table-footer-group", "table-row", "table-cell", "table-caption",
+		"table-column", "table-column-group":
+		return "block"
+	case "inline-table":
+		return "table"
+	case "inline-flex":
+		return "flex"
+	case "inline-grid":
+		return "grid"
+	}
+	return d
 }
