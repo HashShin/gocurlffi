@@ -41,6 +41,18 @@ type cssStats struct {
 	// coverage look far worse than it is.
 	pseudoSkipped int
 	skipSample    []string
+	// fontFaces are the @font-face rules found in the sheet, in source order.
+	fontFaces []fontFace
+}
+
+// fontFace is one @font-face rule: a family, the weight and slope it covers,
+// and the file that provides it.
+type fontFace struct {
+	family string
+	weight int // 100..900
+	italic bool
+	src    string // absolute after resolution; the url() the rule names
+	format string // truetype, opentype, woff, woff2, or "" when unlabelled
 }
 
 // parseCSSStylesheet parses CSS text into rules. mediaWidth is the layout width
@@ -54,6 +66,7 @@ func parseCSSStylesheet(src string, mediaWidth float64, order *int) (rules []css
 	stats.skipped = p.skipped
 	stats.pseudoSkipped = p.pseudoSkipped
 	stats.skipSample = p.skipSample
+	stats.fontFaces = p.fontFaces
 	return rules, imports, stats
 }
 
@@ -67,6 +80,7 @@ type cssParser struct {
 	skipped       int      // selector texts cascadia could not compile
 	pseudoSkipped int      // of those, the ones targeting a pseudo-element
 	skipSample    []string // a few of the rest, for diagnostics
+	fontFaces     []fontFace
 }
 
 func (p *cssParser) eof() bool { return p.pos >= len(p.src) }
@@ -250,6 +264,19 @@ func (p *cssParser) parseAtRule(out *[]cssRule, imports *[]string) {
 	case "import":
 		if u := cssImportURL(prelude); u != "" {
 			*imports = append(*imports, u)
+		}
+	case "font-face":
+		p.skipSpace()
+		if p.eof() || p.src[p.pos] != '{' {
+			break
+		}
+		p.pos++
+		body := p.readUntil("}")
+		if p.pos < len(p.src) && p.src[p.pos] == '}' {
+			p.pos++
+		}
+		if f, ok := parseFontFace(body); ok {
+			p.fontFaces = append(p.fontFaces, f)
 		}
 	case "supports":
 		// Conservative: skip @supports blocks.
@@ -716,6 +743,142 @@ func cssImportURL(prelude string) string {
 		}
 	}
 	return strings.Trim(prelude, "'\"")
+}
+
+// --- @font-face ---
+
+// parseFontFace reads an @font-face block body. Only the descriptors that pick
+// a file matter for rendering: the family, the weight and slope it covers, and
+// the url() of the best source.
+func parseFontFace(body string) (fontFace, bool) {
+	f := fontFace{weight: 400}
+	var src, format string
+	for _, d := range parseCSSDeclarations(body) {
+		switch d.prop {
+		case "font-family":
+			f.family = cssFirstFamily(d.val)
+		case "font-weight":
+			f.weight = cssWeightValue(d.val, 400)
+		case "font-style":
+			lv := strings.ToLower(d.val)
+			f.italic = strings.Contains(lv, "italic") || strings.Contains(lv, "oblique")
+		case "src":
+			src, format = firstFontSource(d.val)
+		}
+	}
+	if f.family == "" || src == "" {
+		return fontFace{}, false
+	}
+	f.src, f.format = src, format
+	return f, true
+}
+
+// cssFirstFamily returns the first family name of a font-family value, without
+// quotes: `"Geist Mono", sans-serif` yields "Geist Mono". The first name is the
+// one a browser uses, and the one a @font-face is matched against.
+func cssFirstFamily(v string) string {
+	for _, part := range splitTopLevel(v, ',') {
+		if name := strings.Trim(strings.TrimSpace(part), "'\""); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+// cssWeightValue resolves a font-weight descriptor: a number, a keyword, or a
+// two-value range ("100 900"), where the first number is taken.
+func cssWeightValue(v string, def int) int {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "normal":
+		return 400
+	case "bold", "bolder":
+		return 700
+	case "lighter":
+		return 300
+	}
+	if fields := strings.Fields(v); len(fields) > 0 {
+		if n, err := strconv.Atoi(fields[0]); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// firstFontSource picks the best url() from a src descriptor. Raw sfnt is
+// preferred, because that is what the renderer decodes; a WOFF2-only face still
+// reports its URL so the failure can be named rather than hidden.
+func firstFontSource(v string) (url, format string) {
+	best := 1 << 30
+	for _, item := range splitTopLevel(v, ',') {
+		item = strings.TrimSpace(item)
+		if item == "" || strings.HasPrefix(strings.ToLower(item), "local(") {
+			continue
+		}
+		u := fontURL(item)
+		if u == "" {
+			continue
+		}
+		f := fontFormat(item)
+		if rank := fontFormatRank(f, u); rank < best {
+			best, url, format = rank, u, f
+		}
+	}
+	return url, format
+}
+
+func fontURL(item string) string {
+	l := strings.ToLower(item)
+	i := strings.Index(l, "url(")
+	if i < 0 {
+		return ""
+	}
+	rest := item[i+4:]
+	end := strings.IndexByte(rest, ')')
+	if end < 0 {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(rest[:end]), "'\"")
+}
+
+func fontFormat(item string) string {
+	l := strings.ToLower(item)
+	i := strings.Index(l, "format(")
+	if i < 0 {
+		return ""
+	}
+	rest := item[i+7:]
+	end := strings.IndexByte(rest, ')')
+	if end < 0 {
+		return ""
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSpace(rest[:end]), "'\""))
+}
+
+// fontFormatRank orders sources by how directly this renderer can use them.
+// Lower is better; raw sfnt (0) needs no conversion. Labels are matched by
+// prefix so "woff2-variations" and "woff2" are both ranked as WOFF2.
+func fontFormatRank(format, url string) int {
+	f := strings.ToLower(strings.TrimSpace(format))
+	switch {
+	case strings.Contains(f, "truetype"), strings.Contains(f, "opentype"),
+		f == "ttf", f == "otf", f == "sfnt":
+		return 0
+	case strings.HasPrefix(f, "woff2"):
+		return 3
+	case strings.HasPrefix(f, "woff"):
+		return 2
+	case f == "":
+		l := strings.ToLower(url)
+		switch {
+		case strings.HasSuffix(l, ".ttf"), strings.HasSuffix(l, ".otf"), strings.HasSuffix(l, ".ttc"):
+			return 0
+		case strings.HasSuffix(l, ".woff2"):
+			return 3
+		case strings.HasSuffix(l, ".woff"):
+			return 2
+		}
+	}
+	return 1
 }
 
 // --- shorthand expansion ---

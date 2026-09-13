@@ -282,6 +282,7 @@ func (p *Page) styleSheets() []*pageStyleSheet {
 	// The rule caches were built from the previous set.
 	p.styleSources = nil
 	p.styleEngines = nil
+	p.fontFaces = nil
 	return p.sheets
 }
 
@@ -342,12 +343,6 @@ func (p *Page) cssTexts() []string {
 		order := 0
 		_, imports, _ := parseCSSStylesheet(src, 0, &order)
 		for _, imp := range imports {
-			if isFontOnlyStylesheet(imp) {
-				// We render with embedded fonts, so a font provider's CSS is a
-				// wasted request.
-				p.debugf("@import skipped (font provider): %s", imp)
-				continue
-			}
 			abs := resolveURL(p.baseURL(), imp)
 			resp, err := p.browser.get(abs, nil)
 			if err != nil {
@@ -361,11 +356,6 @@ func (p *Page) cssTexts() []string {
 	}
 	p.styleSources = expanded
 	return expanded
-}
-
-func isFontOnlyStylesheet(u string) bool {
-	l := strings.ToLower(u)
-	return strings.Contains(l, "fonts.googleapis.com") || strings.Contains(l, "fonts.gstatic.com")
 }
 
 // hasStylesheetRel reports whether rel lists stylesheet. The other checks that
@@ -400,6 +390,7 @@ func (p *Page) styleEngineFor(width float64) *styleEngine {
 	var rules []cssRule
 	for i, src := range p.cssTexts() {
 		rs, _, st := parseCSSStylesheet(src, width, &order)
+		p.addFontFaces(st.fontFaces)
 		// The width is part of the number: media queries are evaluated while
 		// parsing, so one sheet yields different rule counts at 900 and 1280.
 		p.debugf("stylesheet %d at width %g: %d rules, %d/%d selectors unsupported (%d target pseudo-elements)",
@@ -410,6 +401,9 @@ func (p *Page) styleEngineFor(width float64) *styleEngine {
 		rules = append(rules, rs...)
 	}
 	p.debugf("style engine: %d rules at width %g", len(rules), width)
+	if len(p.fontFaces) > 0 {
+		p.debugf("page fonts: %d @font-face rules", len(p.fontFaces))
+	}
 	e := newStyleEngine(rules, width, p.quirksMode())
 	if p.styleEngines == nil {
 		p.styleEngines = map[float64]*styleEngine{}
@@ -566,6 +560,7 @@ func (c *collector) walkElement(el *html.Node) {
 		underline: cs.underline,
 		strike:    cs.strike,
 		color:     cs.textColor,
+		font:      c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
 	}
 	block := isBlockDisplay(cs.display)
 	if block {
@@ -711,6 +706,9 @@ type StyleSheet struct {
 	// Rules is the number of rules parsed from it. Media queries are evaluated
 	// while parsing, so this number is only meaningful with Width.
 	Rules int
+	// Fonts is the number of @font-face rules in the sheet. They are not style
+	// rules, so a font provider's sheet can be all fonts and no rules.
+	Fonts int
 	// Width is the layout width the rules were counted at.
 	Width float64
 	// Err is why the sheet is not applied, empty when it is.
@@ -723,15 +721,26 @@ type StyleSheet struct {
 // was skipped appears with Err set, so "the site's CSS did not load" can be
 // told apart from "the page has no CSS to load".
 func (p *Page) StyleSheets() []StyleSheet {
+	return p.StyleSheetsAt(p.viewportWidth())
+}
+
+// StyleSheetsAt is StyleSheets counted at a given layout width, so a report can
+// name the same width a screenshot renders at. The counts differ because @media
+// is evaluated while parsing.
+func (p *Page) StyleSheetsAt(width float64) []StyleSheet {
+	if width <= 0 {
+		width = defaultLayoutWidth
+	}
 	sheets := p.styleSheets()
 	out := make([]StyleSheet, 0, len(sheets))
 	for _, s := range sheets {
-		info := StyleSheet{Href: s.href, Media: s.media, Inline: s.href == "", Width: p.viewportWidth()}
+		info := StyleSheet{Href: s.href, Media: s.media, Inline: s.href == "", Width: width}
 		if p.loadSheet(s) {
 			order := 0
-			rules, _, _ := parseCSSStylesheet(s.source, p.viewportWidth(), &order)
+			rules, _, stats := parseCSSStylesheet(s.source, width, &order)
 			info.Bytes = len(s.source)
 			info.Rules = len(rules)
+			info.Fonts = len(stats.fontFaces)
 		}
 		if info.Err = s.err; info.Err == "" && !s.loaded {
 			info.Err = "not loaded"

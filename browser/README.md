@@ -251,7 +251,9 @@ screenshot does: it applies the page's CSS first, then flows the document at a
 given width and draws headings, paragraphs, lists with markers, preformatted
 blocks, blockquotes, rules, and styled runs (bold, italic, monospace, links,
 underlines, inline colors), with flat block background colours and
-`text-align`.
+`text-align`. The page's own web fonts are used too: a run whose computed
+`font-family` matches an `@font-face` is drawn with the page's file, at the
+closest weight and slope, instead of an embedded one.
 
 Verified against a live page rather than by eye: on
 `quotes.toscrape.com/js/` the cascade reproduces that site's own CSS exactly -
@@ -306,6 +308,7 @@ selector samples.
 [browser] page stylesheets: 2 declared, 2 applied
 [browser] stylesheet 0: 1883 rules, 345/2228 selectors unsupported
 [browser] style engine: 5356 rules at width 900
+[browser] page fonts: 8 @font-face rules
 ```
 
 Only what the page itself declares is used: every `<style>` element and every
@@ -346,8 +349,15 @@ same honest limits:
   unsupported selectors. On a real site most of those are `::before`/`::after`
   and vendor pseudo-elements, which carry no element styling, so the number
   overstates the loss. `:is()`, `:where()` and `:has()` are not supported.
-- Not pixel-identical to a browser. Two fonts are embedded (Go regular/bold/
-  italic and Go Mono) rather than the page's fonts.
+- Web fonts are applied from the page's own `@font-face` rules, including font
+  providers reached through `<link>` or `@import`: a matching run is drawn with
+  the page's file rather than an embedded one, at the closest weight and slope.
+  Only raw sfnt (TTF and OTF) is decoded. A face offered only as WOFF or WOFF2
+  is recorded and reported under `--debug`, then falls back to the embedded Go
+  fonts (Go regular/bold/italic and Go Mono), and there is no synthetic bolding
+  or oblique.
+- Not pixel-identical to a browser: glyph metrics differ from the browser's own
+  text shaping, and layout is still the text-flow model below.
 
 **Cost, measured on Termux/arm64:** loading is unaffected, because font parsing
 is behind a `sync.Once`, faces are built lazily and nothing runs unless

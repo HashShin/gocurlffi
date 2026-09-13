@@ -82,6 +82,13 @@ type Page struct {
 	imageMu sync.Mutex
 	images  map[string]*pageImage
 
+	// fontFaces are the @font-face rules the page declares, in document order.
+	// fontLoaded and fontFailed cache fetching and decoding their files, which
+	// only a screenshot does.
+	fontFaces  []fontFace
+	fontLoaded map[string]*webFont
+	fontFailed map[string]bool
+
 	loadedScripts map[string]bool
 }
 
@@ -351,6 +358,7 @@ func (p *Page) styleCacheValid() bool {
 		p.sheets = nil
 		p.styleSources = nil
 		p.styleEngines = nil
+		p.fontFaces = nil
 		return false
 	}
 	return p.sheets != nil

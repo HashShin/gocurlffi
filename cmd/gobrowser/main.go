@@ -172,7 +172,7 @@ func runGet(args []string) {
 	// rest of the command: "get URL --screenshot page.png --sheets" writes the
 	// PNG and lists the stylesheets it was rendered with.
 	if *listSheets {
-		sheets := p.StyleSheets()
+		sheets := p.StyleSheetsAt(float64(*width))
 		if len(sheets) == 0 {
 			fmt.Fprintln(os.Stderr, "this page declares no stylesheets")
 		} else {
@@ -189,7 +189,7 @@ func runGet(args []string) {
 				fmt.Fprintf(os.Stderr, "NOT APPLIED  %-60s %s\n", url, s.Err)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "applied      %-60s %d rules, %d bytes\n", url, s.Rules, s.Bytes)
+			fmt.Fprintf(os.Stderr, "applied      %-60s %d rules, %d font faces, %d bytes\n", url, s.Rules, s.Fonts, s.Bytes)
 		}
 	}
 

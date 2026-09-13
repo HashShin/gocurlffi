@@ -27,6 +27,10 @@ import (
 // Nothing here runs unless Page.Screenshot is called: font parsing is behind a
 // sync.Once and faces are built lazily, so the normal load path is unaffected.
 
+// webFont is a parsed page font (from @font-face), used in place of the
+// embedded Go fonts when a run's family matches one.
+type webFont = opentype.Font
+
 // renderStyle is the subset of styling the renderer understands.
 type renderStyle struct {
 	size      float64
@@ -37,6 +41,9 @@ type renderStyle struct {
 	underline bool
 	strike    bool
 	color     color.RGBA
+	// font is the page's webfont for this run, or nil to use the embedded Go
+	// font. It already carries the weight and slope the family asked for.
+	font *webFont
 }
 
 var (
@@ -65,6 +72,7 @@ type faceKey struct {
 	bold   bool
 	italic bool
 	mono   bool
+	font   *webFont
 }
 
 var (
@@ -103,6 +111,8 @@ func renderFace(k faceKey) font.Face {
 	}
 	src := renderRegular
 	switch {
+	case k.font != nil:
+		src = k.font
 	case k.mono && renderMono != nil:
 		src = renderMono
 	case k.bold && renderBold != nil:
@@ -139,7 +149,7 @@ func measureText(k faceKey, s string) float64 {
 
 // styleKey maps a text style to the font face that renders it.
 func styleKey(s renderStyle) faceKey {
-	return faceKey{size: s.size, bold: s.bold, italic: s.italic, mono: s.mono}
+	return faceKey{size: s.size, bold: s.bold, italic: s.italic, mono: s.mono, font: s.font}
 }
 
 // lineMetrics returns ascent, descent and total height in px.

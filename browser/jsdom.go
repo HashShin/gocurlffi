@@ -1097,6 +1097,18 @@ func removeStr(s []string, v string) []string {
 	return out
 }
 
+// computedFontFamily is the font-family getComputedStyle reports: the page's
+// own first family when it declared one, otherwise the generic default.
+func computedFontFamily(cs *computedStyle) string {
+	if cs.fontFamily != "" {
+		return cs.fontFamily
+	}
+	if cs.mono {
+		return "monospace"
+	}
+	return "sans-serif"
+}
+
 // computedStyleObject exposes a cascaded style as a CSSStyleDeclaration-like
 // object, for getComputedStyle.
 func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
@@ -1109,7 +1121,7 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		"font-size":            formatPx(cs.fontSize),
 		"font-weight":          strconv.Itoa(cs.weight),
 		"font-style":           map[bool]string{true: "italic", false: "normal"}[cs.italic],
-		"font-family":          map[bool]string{true: "monospace", false: "sans-serif"}[cs.mono],
+		"font-family":          computedFontFamily(cs),
 		"text-align":           cs.textAlign,
 		"text-decoration-line": map[bool]string{true: "underline", false: "none"}[cs.underline],
 		"white-space":          cs.whiteSpace,

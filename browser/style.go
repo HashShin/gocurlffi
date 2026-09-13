@@ -251,10 +251,13 @@ type computedStyle struct {
 	fontSize      float64
 	// weight is the computed font-weight, 100..900. bold is the coarse flag
 	// the renderer uses, kept in step with it.
-	weight       int
-	bold         bool
-	italic       bool
-	mono         bool
+	weight int
+	bold   bool
+	italic bool
+	mono   bool
+	// fontFamily is the first family of the computed font-family, which is the
+	// name a @font-face is matched against. Empty means the user-agent default.
+	fontFamily   string
 	underline    bool
 	strike       bool
 	link         bool
@@ -456,6 +459,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		cs.bold, cs.weight = parent.bold, parent.weight
 		cs.italic = parent.italic
 		cs.mono = parent.mono
+		cs.fontFamily = parent.fontFamily
 		cs.whiteSpace = parent.whiteSpace
 		cs.textAlign = parent.textAlign
 		cs.visibility = parent.visibility
@@ -591,6 +595,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			cs.italic = parent.italic
 		case "font-family":
 			cs.mono = parent.mono
+			cs.fontFamily = parent.fontFamily
 		case "text-align":
 			cs.textAlign = parent.textAlign
 		case "line-height":
@@ -655,6 +660,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	}
 	if v, ok := d["font-family"]; ok {
 		cs.mono = cssFamilyIsMono(v)
+		cs.fontFamily = cssFirstFamily(v)
 	}
 	if v, ok := d["text-decoration-line"]; ok {
 		lv := strings.ToLower(v)
