@@ -786,3 +786,66 @@ func TestButtonDrawsItsBox(t *testing.T) {
 		t.Error("the button border was not drawn")
 	}
 }
+
+// An absolutely positioned child is placed relative to its positioned ancestor.
+func TestAbsolutePositioning(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;background:#000">
+		<div style="position:relative;height:80px;background:#111">
+			<div style="position:absolute;left:20px;top:10px;width:30px;height:30px;background:#ff0000"></div>
+			<div style="position:absolute;right:10px;top:40px;width:20px;height:20px;background:#00ff00"></div>
+		</div></body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	minX, minY, maxX, maxY, ok := redBounds(img)
+	if !ok {
+		t.Fatal("absolute child not drawn")
+	}
+	if minX < 18 || minX > 24 {
+		t.Errorf("absolute left = %d, want about 20", minX)
+	}
+	if w := maxX - minX; w < 28 || w > 32 {
+		t.Errorf("absolute width = %d, want 30", w)
+	}
+	// top: content top (24) + 10.
+	if minY < 30 || minY > 38 {
+		t.Errorf("absolute top = %d, want about 34", minY)
+	}
+	_ = maxY
+	if _, _, _, _, ok := redBounds(img); !ok {
+		t.Error("no red")
+	}
+	// green anchored to the right edge
+	gminX, _, gmaxX, _, gok := greenBounds(img)
+	if !gok {
+		t.Fatal("right-anchored child not drawn")
+	}
+	_ = gminX
+	// right:10 in a 376px-wide container: the child ends 10px from the edge.
+	if gmaxX < 360 || gmaxX > 372 {
+		t.Errorf("right-anchored child ends at %d, want about 365", gmaxX)
+	}
+}
+
+func greenBounds(img image.Image) (minX, minY, maxX, maxY int, ok bool) {
+	b := img.Bounds()
+	minX, minY, maxX, maxY = b.Max.X, b.Max.Y, b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if g>>8 > 0xd0 && r>>8 < 0x40 && bl>>8 < 0x40 {
+				ok = true
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	return
+}

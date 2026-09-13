@@ -109,9 +109,14 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 		p.prefetchImages(p.doc, maxImages, maxBytes)
 	}
 	eng := p.styleEngineFor(float64(width))
-	c := &collector{page: p, engine: eng}
+	root := &absFrame{}
+	c := &collector{page: p, engine: eng, absOwner: root}
 	c.walkChildren(p.doc)
 	c.flush()
+	if len(root.children) > 0 {
+		// Page-level out-of-flow content is placed from the page origin.
+		c.blocks = append([]renderBlock{{kind: blockText, abs: root.children}}, c.blocks...)
+	}
 
 	doc := layoutBlocks(c.blocks, width, eng.baseSize)
 	if doc.height > maxHeight {
@@ -457,6 +462,9 @@ type collector struct {
 
 	// boxSeq numbers the element boxes so each one is drawn once.
 	boxSeq int
+	// absOwner collects position:absolute/fixed children of the nearest
+	// positioned ancestor.
+	absOwner *absFrame
 
 	// The current block-sizing context: the content-left, width, max-width and
 	// auto margins of the nearest ancestor that set one. Blocks inherit it, so
@@ -509,6 +517,9 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		}
 	}
 }
+
+// absFrame is the set of out-of-flow children of one positioned ancestor.
+type absFrame struct{ children []absChild }
 
 // nextBoxID returns a fresh box id.
 func (c *collector) nextBoxID() int {
@@ -563,7 +574,42 @@ func (c *collector) walkNode(n *html.Node) {
 	case html.TextNode:
 		c.addText(n.Data)
 	case html.ElementNode:
+		if cs := c.engine.compute(n); cs != nil && (cs.position == "absolute" || cs.position == "fixed") {
+			c.collectPositioned(n, cs)
+			return
+		}
 		c.walkElement(n)
+	}
+}
+
+// collectPositioned takes an out-of-flow element's content out of the flow and
+// files it with the current positioned ancestor, to be placed at layout time.
+func (c *collector) collectPositioned(el *html.Node, cs *computedStyle) {
+	parent := c.absOwner
+	frame := &absFrame{}
+	c.absOwner = frame
+	savedContent := c.content
+	c.content = 0
+	c.flush()
+	start := len(c.blocks)
+	c.walkElement(el)
+	c.flush()
+	blocks := append([]renderBlock(nil), c.blocks[start:]...)
+	c.blocks = c.blocks[:start]
+	c.content = savedContent
+	if len(frame.children) > 0 && len(blocks) > 0 {
+		blocks[0].abs = append(blocks[0].abs, frame.children...)
+	}
+	c.absOwner = parent
+	child := absChild{
+		blocks: blocks,
+		left:   cs.left, top: cs.top, right: cs.right, bottom: cs.bottom,
+		hasLeft: cs.hasLeft, hasTop: cs.hasTop, hasRight: cs.hasRight, hasBottom: cs.hasBottom,
+		hasWidth: cs.hasWidth, widthPx: cs.widthPx, widthPct: cs.widthPct,
+		z: cs.zIndex,
+	}
+	if c.absOwner != nil {
+		c.absOwner.children = append(c.absOwner.children, child)
 	}
 }
 
@@ -804,12 +850,28 @@ func (c *collector) walkElement(el *html.Node) {
 		c.ensure(cs)
 		c.cur.pre = c.pre
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
+		// A positioned ancestor is the containing block for its absolute
+		// descendants; attach them to its first block once it is built.
+		var frame *absFrame
+		frameParent := c.absOwner
+		if cs.position == "relative" || cs.position == "sticky" {
+			frame = &absFrame{}
+			c.absOwner = frame
+		}
 		c.walkChildren(el)
 		c.flush()
 		if isFlexColumnContainer(cs) {
 			applyColumnAlign(c.blocks[start:], cs.alignItems)
 		}
 		c.finishBlock(start, cs, boxed)
+		if frame != nil {
+			c.absOwner = frameParent
+			if len(frame.children) > 0 && len(c.blocks) > start {
+				c.blocks[start].abs = append(c.blocks[start].abs, frame.children...)
+			} else if len(frame.children) > 0 && frameParent != nil {
+				frameParent.children = append(frameParent.children, frame.children...)
+			}
+		}
 		return
 	}
 	c.walkChildren(el)

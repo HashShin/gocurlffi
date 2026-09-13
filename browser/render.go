@@ -668,11 +668,27 @@ type renderBlock struct {
 	marginRight  float64
 	paddingRight float64
 	maxHeight    float64
+	// Out-of-flow children (position:absolute/fixed) placed relative to this
+	// block's content box, and the offset from position:relative.
+	abs   []absChild
+	relDx float64
+	relDy float64
 	// box-shadow, drawn behind the box background.
 	shadowX, shadowY         float64
 	shadowBlur, shadowSpread float64
 	shadowColor              color.RGBA
 	hasShadow                bool
+}
+
+// absChild is an absolutely or fixed positioned element: its content, the
+// insets that place it, and its width when the page set one.
+type absChild struct {
+	blocks                               []renderBlock
+	left, top, right, bottom             float64
+	hasLeft, hasTop, hasRight, hasBottom bool
+	hasWidth                             bool
+	widthPx, widthPct                    float64
+	z                                    int
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -702,6 +718,8 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
 	const lineFact = 1.45
 	var out []drawLine
+	var absLines []drawLine
+	var absBoxes []drawBox
 	type boxAcc struct {
 		dx           drawBox
 		top, bottom  float64
@@ -751,6 +769,10 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
 		}
 		y += gap
+		if b.relDy != 0 {
+			y += b.relDy
+		}
+		contentTop := y
 		// Block sizing. bb is the border-box width available from the block's
 		// left edge (after its left margin) to the containing block's right
 		// edge (before its right margin). edge is the padding and border total.
@@ -962,7 +984,14 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				y = bottom
 			}
 		}
-		recordBox(b, bTop, y, boxX, boxWidthOuter)
+		if len(b.abs) > 0 {
+			originX := boxX + b.borderW + (b.textX - b.boxLeft)
+			absLines = append(absLines, layoutAbsChildren(b.abs, originX, contentTop, contentW, y-contentTop, baseSize, &absBoxes)...)
+		}
+		recordBox(b, bTop+b.relDy, y, boxX, boxWidthOuter)
+		if b.relDy != 0 {
+			y -= b.relDy
+		}
 		prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
 		havePrev = true
 	}
@@ -992,7 +1021,48 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		*boxes = append(*boxes, dx)
 	}
+	// Out-of-flow content paints above the flow: its boxes after the flow's
+	// boxes, its lines after the flow's lines.
+	*boxes = append(*boxes, absBoxes...)
+	out = append(out, absLines...)
 	return out, y
+}
+
+// layoutAbsChildren places out-of-flow children relative to a containing block
+// whose content origin is (ox, oy) and content size is cw x ch. A child with
+// left/top is placed from the origin; right/bottom anchor to the far edge; with
+// no inset it uses the origin, like a browser's static position for a box that
+// has left its flow.
+func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, boxes *[]drawBox) []drawLine {
+	var out []drawLine
+	for _, child := range children {
+		w := intrinsicColumnWidth(child.blocks, cw, baseSize)
+		if child.hasWidth {
+			if spec := child.widthPx + child.widthPct*cw; spec > 0 {
+				w = spec
+			}
+		}
+		if w > cw {
+			w = cw
+		}
+		x := ox
+		switch {
+		case child.hasLeft:
+			x = ox + child.left
+		case child.hasRight:
+			x = ox + cw - w - child.right
+		}
+		y := oy
+		switch {
+		case child.hasTop:
+			y = oy + child.top
+		case child.hasBottom:
+			y = oy + ch - child.bottom
+		}
+		lines, _ := layoutColumn(child.blocks, x, w, y, baseSize, boxes)
+		out = append(out, lines...)
+	}
+	return out
 }
 
 // layoutFlex lays a flex row out inside the column, returning its lines and

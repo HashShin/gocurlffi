@@ -366,12 +366,17 @@ same honest limits:
   drawn, so an empty textarea is still the tall box the page asked for. Text is
   centered inside a button, and a column flex container's `align-items: center`
   centers its children.
-- Still no box model: no shadows, floats, positioning, transforms or gradients.
-  CSS is
+- Positioning: `position: relative`/`sticky` keeps the element in flow (its
+  inset offsets shift it), and `absolute`/`fixed` take it out of flow. An
+  absolute/fixed box is placed from its nearest positioned ancestor using
+  `left`/`top`/`right`/`bottom` (and the `inset` shorthand), sized by its
+  `width` or shrink-to-fit, and painted above the flow. `z-index` values are
+  recorded but stacking is approximated by document order.
+- Still no float and no full containing-block chain: an absolute element with no
+  positioned ancestor uses the page origin, and `fixed` is placed like
+  `absolute` (a full-page screenshot has no scroll). CSS is otherwise
   cascaded for typography, colour, display, spacing, alignment, backgrounds and
-  borders. `float` and `position` are ignored for layout, so sidebars and
-  menus that a browser would place beside the content flow inline or in document
-  order (their *computed* values are still reported correctly).
+  borders.
 - Element decoration: a block with a `background-color`, `border` or
   `border-radius` is drawn once as a rectangle (rounded when it has a radius,
   with anti-aliased corners) rather than per line, and nested boxes paint
@@ -432,9 +437,10 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 ## Not implemented
 
-This is a browsing core with a document renderer, not a web rendering engine.
-`Screenshot` flows text and draws a PNG, but there is no CSS box model, no
-borders or shadows, and no PDF output. Specifically absent:
+This is a browsing core with a document renderer, not a full web rendering
+engine. `Screenshot` applies a large subset of CSS (see the limits above) but is
+not a browser: there is no PDF output, and the gaps below remain. Specifically
+absent:
 
 - ES modules (`<script type="module">`, `import`/`export`) are skipped.
 - The JavaScript engine has no async generators or `for await (... of ...)`
@@ -445,7 +451,9 @@ borders or shadows, and no PDF output. Specifically absent:
   the page's own window and document, so scripts that reach into a frame stop
   throwing, but embedded frame documents are never fetched or parsed. Frame
   documents are therefore always reported as same-origin.
-- CSS is not cascaded: no `getComputedStyle` computation, no `offsetWidth`.
+- Element geometry is a stub: `offsetWidth`/`offsetHeight` and
+  `getBoundingClientRect` return zeroed rectangles, and the CSS layout is not
+  used for hit-testing or scrolling.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element

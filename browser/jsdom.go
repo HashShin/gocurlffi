@@ -1098,6 +1098,14 @@ func removeStr(s []string, v string) []string {
 	return out
 }
 
+// positionInset reports an inset the way a browser does: the length, or "auto".
+func positionInset(has bool, v float64) string {
+	if !has {
+		return "auto"
+	}
+	return formatPx(v)
+}
+
 // flexBasisString renders the two-part flex basis the way a browser reports it.
 func flexBasisString(cs *computedStyle) string {
 	if !cs.hasFlexBasis {
@@ -1154,6 +1162,12 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		"flex-direction":       map[bool]string{true: "column", false: "row"}[cs.flexDirection == "column"],
 		"flex-wrap":            map[bool]string{true: "wrap", false: "nowrap"}[cs.flexWrap],
 		"gap":                  formatPx(cs.columnGap),
+		"position":             map[bool]string{true: cs.position, false: "static"}[cs.position != ""],
+		"top":                  positionInset(cs.hasTop, cs.top),
+		"left":                 positionInset(cs.hasLeft, cs.left),
+		"right":                positionInset(cs.hasRight, cs.right),
+		"bottom":               positionInset(cs.hasBottom, cs.bottom),
+		"z-index":              strconv.Itoa(cs.zIndex),
 		"justify-content":      cs.justifyContent,
 		"align-items":          cs.alignItems,
 	}

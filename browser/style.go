@@ -698,6 +698,13 @@ type computedStyle struct {
 	hasBorder   bool
 	// minHeight reserves vertical space for a control or panel.
 	minHeight float64
+	// Position: static (default), relative, absolute, fixed or sticky, with the
+	// inset offsets that place a positioned box.
+	position                             string
+	left, top, right, bottom             float64
+	hasLeft, hasTop, hasRight, hasBottom bool
+	zIndex                               int
+	hasZ                                 bool
 	// radiusPx and radiusPct are the corner radii (top-left, top-right,
 	// bottom-right, bottom-left); a percentage resolves against the box.
 	radiusPx  [4]float64
@@ -1277,6 +1284,54 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["padding-right"]; ok {
 		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 			cs.paddingRight = px
+		}
+	}
+	if v, ok := d["position"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		switch lv {
+		case "static", "relative", "absolute", "fixed", "sticky":
+			cs.position = lv
+		}
+	}
+	parseInset := func(prop string, dst *float64, has *bool) {
+		if v, ok := d[prop]; ok {
+			if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+				*dst, *has = px, true
+			} else if v == "auto" {
+				// auto insets are the static position, left unset here
+			}
+		}
+	}
+	parseInset("left", &cs.left, &cs.hasLeft)
+	parseInset("top", &cs.top, &cs.hasTop)
+	parseInset("right", &cs.right, &cs.hasRight)
+	parseInset("bottom", &cs.bottom, &cs.hasBottom)
+	if v, ok := d["inset"]; ok {
+		parts := strings.Fields(v)
+		vals := [4]string{}
+		switch len(parts) {
+		case 1:
+			vals = [4]string{parts[0], parts[0], parts[0], parts[0]}
+		case 2:
+			vals = [4]string{parts[0], parts[1], parts[0], parts[1]}
+		case 3:
+			vals = [4]string{parts[0], parts[1], parts[2], parts[1]}
+		case 4:
+			vals = [4]string{parts[0], parts[1], parts[2], parts[3]}
+		}
+		for _, dst := range []struct {
+			d   *float64
+			h   *bool
+			val string
+		}{{&cs.top, &cs.hasTop, vals[0]}, {&cs.right, &cs.hasRight, vals[1]}, {&cs.bottom, &cs.hasBottom, vals[2]}, {&cs.left, &cs.hasLeft, vals[3]}} {
+			if px, ok2 := cssLengthToPxV(dst.val, base, e.width); ok2 {
+				*dst.d, *dst.h = px, true
+			}
+		}
+	}
+	if v, ok := d["z-index"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cs.zIndex, cs.hasZ = n, true
 		}
 	}
 	if v, ok := d["box-shadow"]; ok {
