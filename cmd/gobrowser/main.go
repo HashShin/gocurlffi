@@ -200,6 +200,17 @@ func runGet(args []string) {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(png), *output)
+		if *debug {
+			// The layout this render used, to compare against a browser's
+			// getBoundingClientRect (tools/cssdiff/geom).
+			if outline, err := p.RenderOutline(browser.ScreenshotOptions{
+				Width: *width, Scale: *scale, MaxHeight: *maxHeight, NoImages: *noImages,
+			}, 5000); err == nil {
+				for _, ln := range outline {
+					fmt.Fprintln(os.Stderr, "[layout] "+ln)
+				}
+			}
+		}
 		return
 	}
 

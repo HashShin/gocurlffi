@@ -65,6 +65,30 @@ func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 	if scale <= 0 {
 		scale = 1
 	}
+
+	doc, pageBG, err := p.layOut(opts)
+	if err != nil {
+		return nil, err
+	}
+	return renderPNG(doc, scale, pageBG)
+}
+
+// layOut loads what a render needs, computes styles and flows the document,
+// returning the laid-out lines and the page background.
+func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
+	if p.doc == nil {
+		return nil, color.RGBA{}, errors.New("browser: page has no document")
+	}
+	width := opts.Width
+	if width <= 0 {
+		width = 1280
+	}
+	if width < 320 {
+		width = 320
+	}
+	if width > 4096 {
+		width = 4096
+	}
 	maxHeight := opts.MaxHeight
 	if maxHeight <= 0 {
 		maxHeight = 20000
@@ -98,7 +122,53 @@ func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 	if bg, ok := p.documentBackground(eng); ok {
 		pageBG = bg
 	}
-	return renderPNG(doc, scale, pageBG)
+	return doc, pageBG, nil
+}
+
+// RenderOutline lays the page out exactly as Screenshot would and returns one
+// line per drawn block, without rasterizing anything. It is how a render is
+// compared against a browser's geometry: Chromium answers with
+// getBoundingClientRect (tools/cssdiff/geom) and this answers with the boxes
+// this renderer used.
+func (p *Page) RenderOutline(opts ScreenshotOptions, limit int) ([]string, error) {
+	doc, _, err := p.layOut(opts)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, limit+1)
+	out = append(out, fmt.Sprintf("page height %dpx at width %dpx", doc.height, doc.width))
+	for _, ln := range doc.lines {
+		if len(out) > limit {
+			break
+		}
+		kind := "text"
+		var detail string
+		switch {
+		case ln.pic != nil:
+			kind, detail = "image", fmt.Sprintf("w=%.0f %s", ln.picW, ln.pic.src)
+		case ln.rule:
+			kind = "rule"
+		default:
+			for _, r := range ln.runs {
+				detail += r.text
+			}
+			detail = strings.TrimSpace(detail)
+		}
+		bg := ""
+		if ln.hasBG {
+			bg = " bg=" + cssColorString(ln.bg)
+		}
+		out = append(out, fmt.Sprintf("y=%-6.0f h=%-5.0f %-6s x=%-5.0f %s%s",
+			ln.y, ln.height, kind, ln.indent, truncateOutline(detail), bg))
+	}
+	return out, nil
+}
+
+func truncateOutline(s string) string {
+	if len(s) > 60 {
+		return s[:60] + "..."
+	}
+	return s
 }
 
 func (p *Page) documentBackground(eng *styleEngine) (color.RGBA, bool) {
