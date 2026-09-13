@@ -761,7 +761,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		if bb < 0 {
 			bb = 0
 		}
-		edge := (b.boxLeft - b.borderLeft) + b.paddingRight + b.borderW
+		edge := (b.textX - b.boxLeft) + b.paddingRight + 2*b.borderW
 		contentW := bb
 		specW := func(px, pct float64) float64 {
 			w := px + pct*bb
@@ -1197,9 +1197,10 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 				w = sub
 			}
 		default:
-			// The block's own offset (margin + padding) is part of the item's
-			// width, or the text wraps inside its own padding.
-			if tw := b.boxLeft + spansIntrinsicWidth(b.spans); tw > w {
+			// The item's border-box width: text plus left/right padding and
+			// borders. Missing the right padding made a padded flex item too
+			// narrow, so its text wrapped one word per line.
+			if tw := b.textX + spansIntrinsicWidth(b.spans) + b.paddingRight + 2*b.borderW; tw > w {
 				w = tw
 			}
 		}

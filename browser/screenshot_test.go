@@ -760,3 +760,18 @@ func TestBoxShadowRing(t *testing.T) {
 		t.Error("box-shadow ring was not drawn")
 	}
 }
+
+// A padded flex item is as wide as its text plus both paddings, so its label
+// stays on one line instead of wrapping one word per line.
+func TestPaddedFlexItemKeepsOneLine(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.row { display: flex }
+		.tab { padding: 8px 20px }
+	</style></head><body>
+		<div class="row"><div class="tab">Website URL</div></div>
+	</body></html>`)
+	pos := outlinePositions(t, p, 400)
+	if _, ok := pos["Website URL"]; !ok {
+		t.Errorf("the padded label wrapped; outline has: %v", pos)
+	}
+}
