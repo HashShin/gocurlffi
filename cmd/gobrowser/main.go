@@ -55,6 +55,10 @@ flags:
       --timeout DUR        per-request timeout (default 30s)
       --load-timeout DUR   script-loading budget per page (default 30s)
       --timer-budget DUR   wait for pending timers after load (default 2s)
+      --screenshot FILE    render the page to a PNG (text layout, no images)
+      --width N            screenshot layout width (default 1280)
+      --scale F            screenshot scale factor (default 1)
+      --max-height N       screenshot height cap (default 20000)
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
@@ -78,6 +82,10 @@ func runGet(args []string) {
 		timeout      = fs.Duration("timeout", 30*time.Second, "request timeout")
 		loadTimeout  = fs.Duration("load-timeout", 30*time.Second, "script-loading budget")
 		timerBudget  = fs.Duration("timer-budget", 2*time.Second, "wait for pending timers after load")
+		screenshot   = fs.String("screenshot", "", "render the page to a PNG file")
+		width        = fs.Int("width", 1280, "screenshot layout width in px")
+		scale        = fs.Float64("scale", 1, "screenshot scale factor")
+		maxHeight    = fs.Int("max-height", 20000, "screenshot height cap in px")
 		noJS         = fs.Bool("no-js", false, "disable JavaScript")
 		showConsole  = fs.Bool("console", false, "print console output")
 		showStatus   = fs.Bool("status", false, "print HTTP status")
@@ -146,6 +154,27 @@ func runGet(args []string) {
 		if p.WaitForSelector(*wait, *waitTimeout) == nil {
 			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", *wait, *waitTimeout)
 		}
+	}
+
+	if *screenshot != "" {
+		png, err := p.Screenshot(browser.ScreenshotOptions{
+			Width:     *width,
+			Scale:     *scale,
+			MaxHeight: *maxHeight,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "screenshot error: %v\n", err)
+			os.Exit(1)
+		}
+		if *output == "" {
+			*output = *screenshot
+		}
+		if err := os.WriteFile(*output, png, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *output, err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(png), *output)
+		return
 	}
 
 	var out string

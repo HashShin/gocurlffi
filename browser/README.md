@@ -115,6 +115,7 @@ make gobrowser
   spinning forever, and a slow subresource cannot stall the load past the
   budget.
 - Extraction helpers: `HTML()`, `Text()`, `Links()`, `Markdown()`.
+- `Screenshot`, a text-layout PNG renderer (see below).
 
 Verified live:
 
@@ -184,6 +185,42 @@ bash scripts/bench_browser.sh https://your-site.example/
 GOBROWSER_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 ```
 
+## Screenshots
+
+`Page.Screenshot` renders the page to a PNG, mirroring what Lightpanda's
+screenshot does: it flows the document at a given width and draws headings,
+paragraphs, lists with markers, preformatted blocks, blockquotes, rules, and
+styled runs (bold, italic, monospace, links, underlines, inline colors).
+
+```go
+png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
+```
+
+```sh
+./bin/gobrowser get https://quotes.toscrape.com/js/ --screenshot page.png --width 900
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `Width` | 1280 | layout width in CSS px, clamped to 320..4096 |
+| `Scale` | 1 | output multiplier (`2` gives a 2x image) |
+| `MaxHeight` | 20000 | height cap; longer content is cropped |
+
+It is deliberately the same class of renderer as the Zig reference, with the
+same honest limits:
+
+- Text only. No `<img>` content (an `alt` is drawn as `[alt]`), no CSS
+  backgrounds, borders, shadows, floats or positioning, and no stylesheet
+  cascade: styling comes from tag defaults and inline `style` attributes.
+- Not pixel-identical to a browser. Two fonts are embedded (Go regular/bold/
+  italic and Go Mono) rather than the page's fonts.
+
+**Cost, measured on Termux/arm64:** loading is unaffected, because font parsing
+is behind a `sync.Once`, faces are built lazily and nothing runs unless
+`Screenshot` is called. A `quotes.toscrape.com` render at 900px adds only a few
+milliseconds; a tall 900x3500 page takes ~115 ms, most of it PNG encoding and
+pixel work rather than layout.
+
 ## Checking sites
 
 `scripts/check_sites.sh -B` runs the same site/target matrix with the headless
@@ -197,8 +234,10 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 ## Not implemented
 
-This is a browsing *core*, not a rendering engine. There is no layout, paint,
-screenshot or PDF output, and no image decoding. Specifically absent:
+This is a browsing core with a document renderer, not a web rendering engine.
+`Screenshot` flows text and draws a PNG, but there is no CSS box model, no
+image decoding, no backgrounds, borders or shadows, and no PDF output.
+Specifically absent:
 
 - ES modules (`<script type="module">`, `import`/`export`) are skipped.
 - The JavaScript engine has no async generators or `for await (... of ...)`
@@ -254,6 +293,10 @@ gobrowser get URL \
   --timeout 30s         # per-request timeout
   --load-timeout 30s    # script-loading budget per page
   --timer-budget 2s     # wait for pending timers after load (lower = faster)
+  --screenshot FILE     # render the page to a PNG
+  --width 1280          # screenshot layout width
+  --scale 1             # screenshot scale factor
+  --max-height 20000    # screenshot height cap
   --no-js               # disable JavaScript
   --console             # print console.* to stderr
   --status              # print HTTP status to stderr

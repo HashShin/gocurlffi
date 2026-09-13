@@ -1,0 +1,471 @@
+package browser
+
+import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
+	"strings"
+	"sync"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/gofont/goitalic"
+	"golang.org/x/image/font/gofont/gomono"
+	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/math/fixed"
+)
+
+// The screenshot renderer is a document renderer, not a web renderer: it flows
+// text at a given width and draws it to a PNG, mirroring what Lightpanda's
+// screenshot does. There is no CSS box model, no images and no backgrounds.
+//
+// Nothing here runs unless Page.Screenshot is called: font parsing is behind a
+// sync.Once and faces are built lazily, so the normal load path is unaffected.
+
+// renderStyle is the subset of styling the renderer understands.
+type renderStyle struct {
+	size      float64
+	bold      bool
+	italic    bool
+	mono      bool
+	link      bool
+	underline bool
+	color     color.RGBA
+}
+
+var (
+	renderTextColor = color.RGBA{R: 0x20, G: 0x21, B: 0x24, A: 0xff}
+	renderLinkColor = color.RGBA{R: 0x0b, G: 0x57, B: 0xd0, A: 0xff}
+	renderRuleColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
+	renderQuoteBar  = color.RGBA{R: 0xd0, G: 0xd0, B: 0xd0, A: 0xff}
+	renderPageBG    = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+)
+
+func defaultRenderStyle() renderStyle {
+	return renderStyle{size: 16, color: renderTextColor}
+}
+
+// --- font handling (lazy) ---
+
+type faceKey struct {
+	size   float64
+	bold   bool
+	italic bool
+	mono   bool
+}
+
+var (
+	renderFontsOnce sync.Once
+	renderRegular   *opentype.Font
+	renderBold      *opentype.Font
+	renderItalic    *opentype.Font
+	renderMono      *opentype.Font
+
+	renderFaceMu sync.Mutex
+	renderFaces  = map[faceKey]font.Face{}
+)
+
+func loadRenderFonts() {
+	renderFontsOnce.Do(func() {
+		parse := func(ttf []byte) *opentype.Font {
+			f, err := opentype.Parse(ttf)
+			if err != nil {
+				return nil
+			}
+			return f
+		}
+		renderRegular = parse(goregular.TTF)
+		renderBold = parse(gobold.TTF)
+		renderItalic = parse(goitalic.TTF)
+		renderMono = parse(gomono.TTF)
+	})
+}
+
+func renderFace(k faceKey) font.Face {
+	loadRenderFonts()
+	renderFaceMu.Lock()
+	defer renderFaceMu.Unlock()
+	if f, ok := renderFaces[k]; ok {
+		return f
+	}
+	src := renderRegular
+	switch {
+	case k.mono && renderMono != nil:
+		src = renderMono
+	case k.bold && renderBold != nil:
+		src = renderBold
+	case k.italic && renderItalic != nil:
+		src = renderItalic
+	}
+	if src == nil {
+		return nil
+	}
+	size := k.size
+	if size < 4 {
+		size = 4
+	}
+	f, err := opentype.NewFace(src, &opentype.FaceOptions{
+		Size:    size,
+		DPI:     72, // 1pt == 1px, so CSS px and face points line up
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		return nil
+	}
+	renderFaces[k] = f
+	return f
+}
+
+func measureText(k faceKey, s string) float64 {
+	f := renderFace(k)
+	if f == nil || s == "" {
+		return 0
+	}
+	return float64(font.MeasureString(f, s)) / 64
+}
+
+// lineMetrics returns ascent, descent and total height in px.
+func lineMetrics(k faceKey) (ascent, descent, height float64) {
+	f := renderFace(k)
+	if f == nil {
+		return k.size * 0.8, k.size * 0.2, k.size
+	}
+	m := f.Metrics()
+	return float64(m.Ascent) / 64, float64(m.Descent) / 64, float64(m.Height) / 64
+}
+
+// --- draw list ---
+
+type drawRun struct {
+	x     float64
+	text  string
+	style renderStyle
+}
+
+type drawLine struct {
+	y        float64 // top of the line box
+	height   float64
+	baseline float64
+	runs     []drawRun
+	marker   string
+	markerX  float64
+	rule     bool
+	ruleX    float64
+	ruleW    float64
+	quote    int
+	indent   float64
+}
+
+// --- rasterizing ---
+
+func renderPNG(doc *renderDoc, scale float64) ([]byte, error) {
+	if scale <= 0 {
+		scale = 1
+	}
+	w := int(float64(doc.width) * scale)
+	h := int(float64(doc.height) * scale)
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(img, img.Bounds(), image.NewUniform(renderPageBG), image.Point{}, draw.Src)
+
+	s := func(v float64) float64 { return v * scale }
+
+	for _, ln := range doc.lines {
+		if ln.rule {
+			fillRect(img, s(ln.ruleX), s(ln.y), s(ln.ruleW), 1*scale, renderRuleColor)
+			continue
+		}
+		if ln.quote > 0 {
+			fillRect(img, s(ln.indent-10), s(ln.y), 3*scale, s(ln.height), renderQuoteBar)
+		}
+		if ln.marker != "" {
+			k := faceKey{size: doc.baseSize}
+			drawString(img, s(ln.markerX), s(ln.baseline), ln.marker, k, renderTextColor)
+		}
+		for _, r := range ln.runs {
+			key := styleKey(r.style)
+			drawString(img, s(r.x), s(ln.baseline), r.text, key, r.style.color)
+			if r.style.underline {
+				wpx := measureText(key, r.text)
+				fillRect(img, s(r.x), s(ln.baseline)+1.5*scale, s(wpx), 1*scale, r.style.color)
+			}
+		}
+	}
+
+	// BestSpeed rather than the default: a screenshot is written once and a
+	// tall page is a large image, where the default level dominates the cost.
+	var buf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := enc.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
+	x0, y0 := int(x+0.5), int(y+0.5)
+	x1, y1 := int(x+w+0.5), int(y+h+0.5)
+	if x1 <= x0 {
+		x1 = x0 + 1
+	}
+	if y1 <= y0 {
+		y1 = y0 + 1
+	}
+	r := image.Rect(x0, y0, x1, y1).Intersect(img.Bounds())
+	if r.Empty() {
+		return
+	}
+	draw.Draw(img, r, image.NewUniform(c), image.Point{}, draw.Src)
+}
+
+func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c color.RGBA) {
+	f := renderFace(k)
+	if f == nil || text == "" {
+		return
+	}
+	d := font.Drawer{
+		Dst:  img,
+		Src:  image.NewUniform(c),
+		Face: f,
+		Dot:  fixed.Point26_6{X: fixed.Int26_6(x * 64), Y: fixed.Int26_6(baseline * 64)},
+	}
+	d.DrawString(text)
+}
+
+// styleKey maps a text style to the font face that renders it.
+func styleKey(s renderStyle) faceKey {
+	return faceKey{size: s.size, bold: s.bold, italic: s.italic, mono: s.mono}
+}
+
+// --- layout ---
+
+// renderDoc is the result of laying out collected blocks.
+type renderDoc struct {
+	width    int
+	height   int
+	baseSize float64
+	lines    []drawLine
+}
+
+type renderBlockKind int
+
+const (
+	blockText renderBlockKind = iota
+	blockRule
+)
+
+type renderSpan struct {
+	text  string
+	style renderStyle
+}
+
+type renderBlock struct {
+	kind    renderBlockKind
+	spans   []renderSpan
+	indent  float64
+	marker  string
+	quote   int
+	leading float64
+	pre     bool
+}
+
+// layoutBlocks flows blocks into a single column of the given width.
+func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc {
+	const (
+		margin   = 24.0
+		lineFact = 1.45
+	)
+	doc := &renderDoc{width: width, baseSize: baseSize}
+	y := margin
+	// Both margins are reserved: a line box is [margin+indent, width-margin].
+	avail := func(indent float64) float64 {
+		w := float64(width) - 2*margin - indent
+		if w < 40 {
+			w = 40
+		}
+		return w
+	}
+
+	for _, b := range blocks {
+		y += b.leading
+		if b.kind == blockRule {
+			doc.lines = append(doc.lines, drawLine{
+				y:      y,
+				height: 1,
+				rule:   true,
+				ruleX:  margin + b.indent,
+				ruleW:  avail(b.indent),
+			})
+			y += 12
+			continue
+		}
+		x0 := margin + b.indent
+		limit := avail(b.indent)
+
+		// Group the block's spans into visual lines first.
+		var lines []renderSpan
+		if b.pre {
+			lines = splitPreLines(b.spans)
+		} else {
+			lines = wrapSpans(b.spans, limit)
+		}
+		for i, ln := range lines {
+			k := faceKey{size: ln.style.size}
+			ascent, descent, h := lineMetrics(k)
+			_ = descent
+			lh := h * lineFact
+			if lh < ln.style.size {
+				lh = ln.style.size
+			}
+			dl := drawLine{
+				y:        y,
+				height:   lh,
+				baseline: y + ascent + (lh-h)/2,
+				quote:    b.quote,
+				indent:   x0,
+			}
+			if i == 0 && b.marker != "" {
+				dl.marker = b.marker
+				dl.markerX = x0 - 18
+			}
+			dl.runs = append(dl.runs, drawRun{x: x0, text: ln.text, style: ln.style})
+			doc.lines = append(doc.lines, dl)
+			y += lh
+		}
+		if len(lines) == 0 && b.marker != "" {
+			k := faceKey{size: baseSize}
+			_, _, h := lineMetrics(k)
+			lh := h * lineFact
+			doc.lines = append(doc.lines, drawLine{
+				y: y, height: lh, baseline: y + h*0.8,
+				marker: b.marker, markerX: x0 - 18, quote: b.quote, indent: x0,
+			})
+			y += lh
+		}
+	}
+	y += margin
+	doc.height = int(y + 0.5)
+	if doc.height < 1 {
+		doc.height = 1
+	}
+	return doc
+}
+
+// wrapSpans greedily fills lines, breaking between words.
+func wrapSpans(spans []renderSpan, limit float64) []renderSpan {
+	type word struct {
+		text  string
+		style renderStyle
+		w     float64
+	}
+	var words []word
+	spaceStyles := map[int]renderStyle{}
+	for _, sp := range spans {
+		fields := strings.Fields(sp.text)
+		// A span that is only whitespace acts as a separator between words.
+		if len(fields) == 0 {
+			if len(words) > 0 {
+				spaceStyles[len(words)-1] = sp.style
+			}
+			continue
+		}
+		for i, w := range fields {
+			if i > 0 {
+				spaceStyles[len(words)-1] = sp.style
+			}
+			words = append(words, word{text: w, style: sp.style, w: measureText(styleKey(sp.style), w)})
+		}
+	}
+	if len(words) == 0 {
+		return nil
+	}
+
+	var out []renderSpan
+	var cur strings.Builder
+	var curStyle renderStyle
+	curW := 0.0
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, renderSpan{text: cur.String(), style: curStyle})
+			cur.Reset()
+		}
+		curW = 0
+	}
+	for i, w := range words {
+		if i > 0 {
+			spStyle := spaceStyles[i-1]
+			spaceW := measureText(faceKey{size: spStyle.size}, " ")
+			if curW+spaceW+w.w > limit && curW > 0 {
+				flush()
+			} else if curW > 0 {
+				cur.WriteString(" ")
+				curW += spaceW
+			}
+		}
+		if w.w > limit && curW == 0 {
+			// A word wider than the column: hard-break it.
+			var piece strings.Builder
+			pieceW := 0.0
+			for _, r := range w.text {
+				rs := string(r)
+				rw := measureText(styleKey(w.style), rs)
+				if pieceW+rw > limit && piece.Len() > 0 {
+					out = append(out, renderSpan{text: piece.String(), style: w.style})
+					piece.Reset()
+					pieceW = 0
+				}
+				piece.WriteString(rs)
+				pieceW += rw
+			}
+			cur = *func() *strings.Builder { b := &strings.Builder{}; b.WriteString(piece.String()); return b }()
+			curStyle = w.style
+			curW = pieceW
+			continue
+		}
+		if cur.Len() == 0 {
+			curStyle = w.style
+		}
+		cur.WriteString(w.text)
+		curW += w.w
+	}
+	flush()
+	return out
+}
+
+// splitPreLines splits preformatted spans on newlines without re-wrapping.
+func splitPreLines(spans []renderSpan) []renderSpan {
+	var out []renderSpan
+	var cur strings.Builder
+	var style renderStyle
+	has := false
+	flush := func() {
+		out = append(out, renderSpan{text: cur.String(), style: style})
+		cur.Reset()
+		has = false
+	}
+	for _, sp := range spans {
+		parts := strings.Split(sp.text, "\n")
+		for i, p := range parts {
+			if i > 0 {
+				flush()
+			}
+			if !has {
+				style = sp.style
+				has = true
+			}
+			cur.WriteString(p)
+		}
+	}
+	if cur.Len() > 0 || !has {
+		flush()
+	}
+	return out
+}
