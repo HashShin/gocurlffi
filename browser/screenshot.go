@@ -21,6 +21,17 @@ type ScreenshotOptions struct {
 	// MaxHeight bounds the output height in CSS px, so a very long page cannot
 	// produce a huge image. Default 20000. The content is cropped.
 	MaxHeight int
+
+	// NoImages turns off drawing the page's pictures, which is the only part
+	// of a render that fetches anything beyond the page's own stylesheets.
+	// Images are on by default, bounded by MaxImages and MaxImageBytes.
+	NoImages bool
+
+	// MaxImages caps how many images are fetched for one render. Default 48.
+	MaxImages int
+
+	// MaxImageBytes caps the total image bytes kept for drawing. Default 16MB.
+	MaxImageBytes int
 }
 
 // Screenshot renders the page to a PNG.
@@ -62,8 +73,18 @@ func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 	// Media queries must be evaluated against the width being rendered, and
 	// getComputedStyle called from page scripts should agree with it.
 	p.layoutWidth = float64(width)
+	if !opts.NoImages {
+		maxImages, maxBytes := opts.MaxImages, opts.MaxImageBytes
+		if maxImages <= 0 {
+			maxImages = defaultMaxImages
+		}
+		if maxBytes <= 0 {
+			maxBytes = defaultMaxImageBytes
+		}
+		p.prefetchImages(p.doc, maxImages, maxBytes)
+	}
 	eng := p.styleEngineFor(float64(width))
-	c := &collector{engine: eng}
+	c := &collector{page: p, engine: eng}
 	c.walkChildren(p.doc)
 	c.flush()
 
@@ -349,6 +370,7 @@ type listState struct {
 }
 
 type collector struct {
+	page    *Page
 	engine  *styleEngine
 	blocks  []renderBlock
 	cur     *renderBlock
@@ -498,6 +520,20 @@ func (c *collector) walkElement(el *html.Node) {
 		})
 		return
 	case "img":
+		if pic := c.page.image(resolveURL(c.page.baseURL(), imageSource(el))); pic != nil {
+			c.flush()
+			c.blocks = append(c.blocks, renderBlock{
+				kind:     blockImage,
+				pic:      pic,
+				picW:     float64(pic.size.X),
+				picH:     float64(pic.size.Y),
+				boxLeft:  c.content,
+				leading:  cs.marginTop,
+				trailing: cs.marginBottom,
+			})
+			return
+		}
+		// Without the bytes, the alt text is all there is to draw.
 		if alt, ok := getAttr(el, "alt"); ok && strings.TrimSpace(alt) != "" {
 			s := c.style
 			s.italic = true

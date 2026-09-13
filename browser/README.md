@@ -325,13 +325,22 @@ fetch.
 It is deliberately the same class of renderer as the Zig reference, with the
 same honest limits:
 
-- Text only. No `<img>` content (an `alt` is drawn as `[alt]`). CSS is
+- The page's pictures are drawn: `<img>` and `srcset` (the largest candidate),
+  PNG, JPEG, GIF and WebP, scaled to their box with a high-quality filter.
+  Bounded and optional: at most 48 images and 16MB per render, fetched six at a
+  time, and `NoImages` / `--no-images` turns it off. Vector images (SVG) are not
+  rasterized and fall back to their `alt` text, and `background-image` and
+  gradients are not painted, so a page that is mostly SVG art still renders as
+  text. On `brave.com` a 900px render goes from 3s and 2,072 distinct colours
+  without images to 9s and 97,802 with them, which is what real photographs
+  look like.
+- Still no box model: no borders, shadows, floats, positioning or gradients.
+  CSS is
   cascaded for typography, colour, display, spacing, alignment and flat block
-  backgrounds, but there is no box model: no borders, shadows, floats,
-  positioning, gradients or images. `float` and `position` are ignored for
-  layout, so sidebars and menus that a browser would place beside the content
-  flow inline or in document order (their *computed* values are still reported
-  correctly).
+  backgrounds. `float` and `position` are ignored for layout, so sidebars and
+  menus that a browser would place beside the content flow inline or in document
+  order (their *computed* values are still reported correctly), and a flex or
+  grid row renders as a stack.
 - Selectors cascadia cannot compile are skipped, and the engine counts them:
   `--debug` prints how many rules each sheet produced and lists the first
   unsupported selectors. On a real site most of those are `::before`/`::after`

@@ -59,6 +59,7 @@ flags:
       --width N            screenshot layout width (default 1280)
       --scale F            screenshot scale factor (default 1)
       --max-height N       screenshot height cap (default 20000)
+      --no-images          do not draw the page's pictures (faster, text only)
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
@@ -90,7 +91,8 @@ func runGet(args []string) {
 		noJS         = fs.Bool("no-js", false, "disable JavaScript")
 		showConsole  = fs.Bool("console", false, "print console output")
 		showStatus   = fs.Bool("status", false, "print HTTP status")
-		listSheets   = fs.Bool("sheets", false, "list the page's stylesheets and exit")
+		listSheets   = fs.Bool("sheets", false, "report the page's stylesheets")
+		noImages     = fs.Bool("no-images", false, "do not draw the page's pictures")
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 	)
 	var headers headerList
@@ -184,6 +186,7 @@ func runGet(args []string) {
 			Width:     *width,
 			Scale:     *scale,
 			MaxHeight: *maxHeight,
+			NoImages:  *noImages,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "screenshot error: %v\n", err)

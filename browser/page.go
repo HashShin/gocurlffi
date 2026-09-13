@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
@@ -75,6 +76,11 @@ type Page struct {
 	// sheetSources caches a fetched <link>'s text by element, so a script that
 	// moves nodes around does not refetch.
 	sheetSources map[*html.Node]string
+
+	// images holds the page's fetched image bytes, guarded because a
+	// screenshot prefetches them in parallel.
+	imageMu sync.Mutex
+	images  map[string]*pageImage
 
 	loadedScripts map[string]bool
 }

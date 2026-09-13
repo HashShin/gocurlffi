@@ -3,7 +3,13 @@ package browser
 import (
 	"bytes"
 	"image"
+	"image/color"
+	"image/draw"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -171,4 +177,90 @@ func BenchmarkScreenshot(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// A page's pictures are drawn into the render, and the bytes are only fetched
+// when images are asked for.
+func TestScreenshotDrawsImages(t *testing.T) {
+	pic := image.NewRGBA(image.Rect(0, 0, 120, 60))
+	draw.Draw(pic, pic.Bounds(), image.NewUniform(color.RGBA{R: 0xff, G: 0x00, B: 0xff, A: 0xff}), image.Point{}, draw.Src)
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, pic); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/pic.png":
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBuf.Bytes())
+		case "/pic2x.png":
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBuf.Bytes())
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body>
+				<p>before</p>
+				<img src="/pic.png" srcset="/pic.png 1x, /pic2x.png 2x" alt="a picture">
+				<p>after</p></body></html>`))
+		}
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	out, err := p.Screenshot(ScreenshotOptions{Width: 400, NoImages: true})
+	if err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Fatalf("NoImages still fetched %d images", got)
+	}
+	if magenta(out) != 0 {
+		t.Fatalf("NoImages still drew the picture")
+	}
+	// The alt text is drawn in place of a picture when there is none to draw;
+	// that path is covered by the img handling in the collector, and the alt
+	// is not part of the page's text for extraction.
+	if strings.Contains(p.Text(), "a picture") {
+		t.Errorf("alt text leaked into the extracted text")
+	}
+
+	out, err = p.Screenshot(ScreenshotOptions{Width: 400})
+	if err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got == 0 {
+		t.Fatalf("no image was fetched")
+	}
+	// The srcset's 2x candidate is preferred, and it is 120x60, so at the
+	// natural size the drawn area is 7200 magenta pixels.
+	if n := magenta(out); n < 3000 {
+		t.Fatalf("drew %d magenta pixels, want the picture at its natural size", n)
+	}
+}
+
+// magenta counts the pixels of the test picture's colour.
+func magenta(pngBytes []byte) int {
+	img, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		return -1
+	}
+	n := 0
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 > 0xf0 && g>>8 < 0x20 && bl>>8 > 0xf0 {
+				n++
+			}
+		}
+	}
+	return n
 }

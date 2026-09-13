@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goitalic"
@@ -160,6 +161,10 @@ type drawRun struct {
 }
 
 type drawLine struct {
+	pic  *pageImage // drawn into picX/y size picW x height
+	picX float64
+	picW float64
+
 	y        float64 // top of the line box
 	height   float64
 	baseline float64
@@ -199,6 +204,10 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 	s := func(v float64) float64 { return v * scale }
 
 	for _, ln := range doc.lines {
+		if ln.pic != nil {
+			drawScaledImage(img, ln.pic, s(ln.picX), s(ln.y), s(ln.picW), s(ln.height), scale)
+			continue
+		}
 		if ln.hasBG {
 			fillRect(img, s(ln.bgX), s(ln.y), s(ln.bgW), s(ln.height), ln.bg)
 		}
@@ -234,6 +243,25 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// drawScaledImage blits a picture into a box, scaling it to fit. A browser
+// stretches an <img> to its box unless object-fit says otherwise, and the box
+// here was sized from the picture's own aspect ratio, so a plain scale is
+// right.
+func drawScaledImage(dst *image.RGBA, pic *pageImage, x, y, w, h, scale float64) {
+	if pic == nil || w < 1 || h < 1 {
+		return
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(pic.data))
+	if err != nil {
+		return
+	}
+	box := image.Rect(int(x+0.5), int(y+0.5), int(x+w+0.5), int(y+h+0.5)).Intersect(dst.Bounds())
+	if box.Empty() {
+		return
+	}
+	xdraw.CatmullRom.Scale(dst, box, decoded, decoded.Bounds(), draw.Src, nil)
 }
 
 func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
@@ -281,6 +309,7 @@ type renderBlockKind int
 const (
 	blockText renderBlockKind = iota
 	blockRule
+	blockImage
 )
 
 type renderSpan struct {
@@ -305,6 +334,11 @@ type renderBlock struct {
 	bg     color.RGBA
 	hasBG  bool
 	bgFull bool // background spans the full content width
+
+	// An image block draws a picture instead of text, at its aspect ratio.
+	pic  *pageImage
+	picW float64 // natural width, 0 when unknown
+	picH float64 // natural height
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -322,6 +356,40 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 
 	for _, b := range blocks {
 		y += b.leading
+		if b.kind == blockImage {
+			w := contentW - (b.boxLeft - margin)
+			if w < 40 {
+				w = 40
+			}
+			if b.picW > 0 && b.picH > 0 {
+				// Scale to the available width, but never up past the natural
+				// size: a small icon should stay small.
+				if b.picW > w {
+					y = y
+					w = w
+				} else {
+					w = b.picW
+				}
+			}
+			h := 120.0
+			if b.picW > 0 && b.picH > 0 {
+				h = b.picH * w / b.picW
+			}
+			if h > maxImageHeight {
+				h = maxImageHeight
+				if b.picW > 0 && b.picH > 0 {
+					w = b.picW * h / b.picH
+				}
+			}
+			if h < 8 {
+				h = 8
+			}
+			doc.lines = append(doc.lines, drawLine{
+				y: y, height: h, pic: b.pic, picX: b.boxLeft, picW: w,
+			})
+			y += h + b.trailing
+			continue
+		}
 		if b.kind == blockRule {
 			doc.lines = append(doc.lines, drawLine{
 				y:      y,
