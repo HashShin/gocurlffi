@@ -344,6 +344,14 @@ same honest limits:
   menus that a browser would place beside the content flow inline or in document
   order (their *computed* values are still reported correctly), and a flex or
   grid row renders as a stack.
+- Lengths include `clamp()`, `min()` and `max()`, and the `vw` unit, resolved
+  against the layout width. Vertical and left margins and padding are applied as
+  flow space; `padding-top`/`padding-bottom` push the content down and add space
+  after it, even inside a block whose first child is another block.
+- `text-transform` (uppercase, lowercase, capitalize) and `letter-spacing` are
+  applied to the drawn text and its measured width. `rgba()` backgrounds and
+  text are composited over what is behind them, so a translucent surface on a
+  dark page stays dark instead of coming out near-white, and the PNG is opaque.
 - Selectors cascadia cannot compile are skipped, and the engine counts them:
   `--debug` prints how many rules each sheet produced and lists the first
   unsupported selectors. On a real site most of those are `::before`/`::after`

@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/html"
 )
@@ -514,6 +515,7 @@ func (c *collector) addText(s string) {
 	if s == "" {
 		return
 	}
+	s = applyTextTransform(c.style.textTransform, s)
 	if c.pre || c.style.mono && c.cur != nil && c.cur.pre {
 		b := c.ensure(nil)
 		b.spans = append(b.spans, renderSpan{text: s, style: c.style})
@@ -552,15 +554,17 @@ func (c *collector) walkElement(el *html.Node) {
 	}
 
 	c.style = renderStyle{
-		size:      cs.fontSize,
-		bold:      cs.bold,
-		italic:    cs.italic,
-		mono:      cs.mono,
-		link:      cs.link,
-		underline: cs.underline,
-		strike:    cs.strike,
-		color:     cs.textColor,
-		font:      c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
+		size:          cs.fontSize,
+		bold:          cs.bold,
+		italic:        cs.italic,
+		mono:          cs.mono,
+		link:          cs.link,
+		underline:     cs.underline,
+		strike:        cs.strike,
+		color:         cs.textColor,
+		font:          c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
+		textTransform: cs.textTransform,
+		letterSpacing: cs.letterSpacing,
 	}
 	block := isBlockDisplay(cs.display)
 	if block {
@@ -613,10 +617,12 @@ func (c *collector) walkElement(el *html.Node) {
 	switch tag {
 	case "ul", "ol":
 		c.flush()
+		start := len(c.blocks)
 		c.lists = append(c.lists, listState{ordered: tag == "ol"})
 		c.walkChildren(el)
 		c.lists = c.lists[:len(c.lists)-1]
 		c.flush()
+		c.applyBoxEdges(start, cs)
 		return
 	case "li":
 		c.flush()
@@ -630,12 +636,14 @@ func (c *collector) walkElement(el *html.Node) {
 		}
 		if block {
 			c.cur = nil
+			start := len(c.blocks)
 			c.ensure(cs)
-			c.cur.leading = cs.marginTop
-			c.cur.trailing = cs.marginBottom
+			c.walkChildren(el)
+			c.flush()
+			c.applyBoxEdges(start, cs)
+		} else {
+			c.walkChildren(el)
 		}
-		c.walkChildren(el)
-		c.flush()
 		return
 	case "blockquote":
 		c.flush()
@@ -647,16 +655,28 @@ func (c *collector) walkElement(el *html.Node) {
 
 	if block {
 		c.flush()
+		start := len(c.blocks)
 		c.ensure(cs)
-		c.cur.leading = cs.marginTop
-		c.cur.trailing = cs.marginBottom
 		c.cur.pre = c.pre
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
 		c.walkChildren(el)
 		c.flush()
+		c.applyBoxEdges(start, cs)
 		return
 	}
 	c.walkChildren(el)
+}
+
+// applyBoxEdges adds an element's vertical margin and padding to the first and
+// last blocks its subtree produced. Doing it by index rather than on c.cur
+// matters because a block whose first child is itself a block is flushed away
+// before it has any spans, and its edges would be lost with it.
+func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
+	if cs == nil || start >= len(c.blocks) {
+		return
+	}
+	c.blocks[start].leading += cs.marginTop + cs.paddingTop
+	c.blocks[len(c.blocks)-1].trailing += cs.marginBottom + cs.paddingBottom
 }
 
 func listMarker(style string) string {
@@ -670,6 +690,40 @@ func listMarker(style string) string {
 	default:
 		return "\u2022"
 	}
+}
+
+// applyTextTransform applies CSS text-transform to a text node's content, which
+// a browser does at paint time and getComputedStyle does not expose.
+func applyTextTransform(mode, s string) string {
+	switch mode {
+	case "uppercase":
+		return strings.ToUpper(s)
+	case "lowercase":
+		return strings.ToLower(s)
+	case "capitalize":
+		return capitalizeWords(s)
+	}
+	return s
+}
+
+func capitalizeWords(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	start := true
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' || r == '\v' {
+			start = true
+			b.WriteRune(r)
+			continue
+		}
+		if start {
+			b.WriteRune(unicode.ToUpper(r))
+			start = false
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // --- text helpers ---

@@ -902,3 +902,109 @@ func TestCSSBlockifiedItemsAndFormControls(t *testing.T) {
 		}
 	}
 }
+
+func TestCSSMathFunctions(t *testing.T) {
+	cases := []struct {
+		expr string
+		base float64
+		vw   float64
+		want float64
+		ok   bool
+	}{
+		// clamp lower, middle and upper bound at a 900px viewport.
+		{"clamp(24px, 4vw, 64px)", 16, 300, 24, true},
+		{"clamp(24px, 4vw, 64px)", 16, 900, 36, true},
+		{"clamp(24px, 4vw, 64px)", 16, 2000, 64, true},
+		{"min(10px, 2em)", 16, 0, 10, true},
+		{"max(10px, 2em)", 16, 0, 32, true},
+		{"2em", 16, 0, 32, true},
+		// A vw length needs a viewport, and one unresolvable argument makes
+		// the whole expression fail, as a browser drops the declaration.
+		{"4vw", 16, 0, 0, false},
+		{"clamp(24px, 4vw, 64px)", 16, 0, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := cssLengthToPxV(c.expr, c.base, c.vw)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("cssLengthToPxV(%q, base=%g, vw=%g) = (%g, %v), want (%g, %v)",
+				c.expr, c.base, c.vw, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// An explicit "background: transparent" must clear the user-agent face a form
+// control gets, not be ignored because its alpha is zero.
+func TestBackgroundTransparentOverridesUADefault(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		#btn { background: transparent }
+		#txt { background-color: transparent }
+	</style></head><body>
+		<button id="btn">b</button><button id="plain">p</button>
+		<input id="txt">
+	</body></html>`, "https://example.test/")
+	cases := []struct{ id, want string }{
+		{"btn", "rgba(0, 0, 0, 0)"},
+		{"txt", "rgba(0, 0, 0, 0)"},
+		{"plain", "rgba(239, 239, 239, 1.000)"}, // untouched UA face
+	}
+	for _, c := range cases {
+		expr := `getComputedStyle(document.getElementById('` + c.id + `')).backgroundColor`
+		v, err := p.Eval(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.String(); got != c.want {
+			t.Errorf("%s = %q, want %q", expr, got, c.want)
+		}
+	}
+}
+
+func TestTextTransformChangesRenderedText(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<html><head><style>
+		.u { text-transform: uppercase }
+		.t { text-transform: capitalize }
+	</style></head><body>
+		<p class="u">hello world</p><p class="t">hello world</p>
+	</body></html>`, "https://example.test/")
+	out, err := p.RenderOutline(ScreenshotOptions{Width: 400}, 20)
+	if err != nil {
+		t.Fatalf("RenderOutline: %v", err)
+	}
+	joined := strings.Join(out, "\n")
+	if !strings.Contains(joined, "HELLO WORLD") {
+		t.Errorf("uppercase text missing from render:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Hello World") {
+		t.Errorf("capitalized text missing from render:\n%s", joined)
+	}
+}
+
+func TestLetterSpacingWidensText(t *testing.T) {
+	base := renderStyle{size: 16}
+	spaced := renderStyle{size: 16, letterSpacing: 2}
+	want := measureText(styleKey(base), "abc") + 2*3
+	if got := textWidth(spaced, "abc"); got != want {
+		t.Errorf("textWidth with letter-spacing = %g, want %g", got, want)
+	}
+	if textWidth(base, "abc") == textWidth(spaced, "abc") {
+		t.Error("letter-spacing did not change the measured width")
+	}
+}
+
+func TestApplyTextTransform(t *testing.T) {
+	cases := []struct{ mode, in, want string }{
+		{"uppercase", "Hello there", "HELLO THERE"},
+		{"lowercase", "Hello There", "hello there"},
+		{"capitalize", "hello wORLD", "Hello WORLD"},
+		{"", "Hello", "Hello"},
+	}
+	for _, c := range cases {
+		if got := applyTextTransform(c.mode, c.in); got != c.want {
+			t.Errorf("applyTextTransform(%q, %q) = %q, want %q", c.mode, c.in, got, c.want)
+		}
+	}
+}

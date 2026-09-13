@@ -264,3 +264,49 @@ func magenta(pngBytes []byte) int {
 	}
 	return n
 }
+
+// A translucent background must blend with what is behind it and stay opaque,
+// not be written over the page with alpha (which read as near-white lines on a
+// dark page).
+func TestScreenshotCompositesTranslucentColors(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;padding:0;background:#000">
+		<div style="background:rgba(255,255,255,0.5)">x</div></body></html>`,
+		ScreenshotOptions{Width: 200, NoImages: true})
+	b := img.Bounds()
+	found := false
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			if a != 0xffff {
+				t.Fatalf("pixel (%d,%d) has alpha %d, want opaque", x, y, a>>8)
+			}
+			if r>>8 == g>>8 && g>>8 == bl>>8 && r>>8 >= 120 && r>>8 <= 136 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("no ~50% grey pixel: rgba(255,255,255,0.5) was not composited over black")
+	}
+}
+
+// Vertical padding is part of the box model: it must push content down and add
+// space after it, even when the element's first child is a block.
+func TestScreenshotAppliesVerticalPadding(t *testing.T) {
+	opts := ScreenshotOptions{Width: 400, NoImages: true}
+	plain := screenshotOf(t, `<html><body style="margin:0"><div>x</div></body></html>`, opts)
+	direct := screenshotOf(t, `<html><body style="margin:0"><div style="padding-top:40px;padding-bottom:40px">x</div></body></html>`, opts)
+	nested := screenshotOf(t, `<html><body style="margin:0"><div style="padding-top:40px;padding-bottom:40px"><div>x</div></div></body></html>`, opts)
+
+	for _, c := range []struct {
+		name string
+		img  image.Image
+	}{
+		{"text child", direct},
+		{"block child", nested},
+	} {
+		if diff := c.img.Bounds().Dy() - plain.Bounds().Dy(); diff < 70 || diff > 90 {
+			t.Errorf("%s: height grew by %d, want about 80 from 40px top + 40px bottom padding", c.name, diff)
+		}
+	}
+}

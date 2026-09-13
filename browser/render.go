@@ -44,6 +44,11 @@ type renderStyle struct {
 	// font is the page's webfont for this run, or nil to use the embedded Go
 	// font. It already carries the weight and slope the family asked for.
 	font *webFont
+	// textTransform is uppercase/lowercase/capitalize, "" for none. It is
+	// applied to the text when the run is collected.
+	textTransform string
+	// letterSpacing is extra space after each character, in px.
+	letterSpacing float64
 }
 
 var (
@@ -147,6 +152,17 @@ func measureText(k faceKey, s string) float64 {
 	return float64(font.MeasureString(f, s)) / 64
 }
 
+// textWidth measures a styled run including letter-spacing, which a browser
+// adds after every character. Every measurement in layout goes through it so
+// the drawn text and the wrap width agree.
+func textWidth(s renderStyle, text string) float64 {
+	w := measureText(styleKey(s), text)
+	if s.letterSpacing != 0 && text != "" {
+		w += s.letterSpacing * float64(len([]rune(text)))
+	}
+	return w
+}
+
 // styleKey maps a text style to the font face that renders it.
 func styleKey(s renderStyle) faceKey {
 	return faceKey{size: s.size, bold: s.bold, italic: s.italic, mono: s.mono, font: s.font}
@@ -234,14 +250,12 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 			drawString(img, s(ln.markerX), s(ln.baseline), ln.marker, faceKey{size: doc.baseSize}, renderTextColor)
 		}
 		for _, r := range ln.runs {
-			key := styleKey(r.style)
-			drawString(img, s(r.x), s(ln.baseline), r.text, key, r.style.color)
+			drawRunText(img, s(r.x), s(ln.baseline), r.text, r.style, s(r.style.letterSpacing))
+			wpx := textWidth(r.style, r.text)
 			if r.style.underline {
-				wpx := measureText(key, r.text)
 				fillRect(img, s(r.x), s(ln.baseline)+1.5*scale, s(wpx), 1*scale, r.style.color)
 			}
 			if r.style.strike {
-				wpx := measureText(key, r.text)
 				fillRect(img, s(r.x), s(ln.baseline)-s(r.style.size)*0.3, s(wpx), 1*scale, r.style.color)
 			}
 		}
@@ -274,6 +288,15 @@ func drawScaledImage(dst *image.RGBA, pic *pageImage, x, y, w, h, scale float64)
 	xdraw.CatmullRom.Scale(dst, box, decoded, decoded.Bounds(), draw.Src, nil)
 }
 
+// cssUniform converts a CSS colour (stored non-premultiplied, as rgba() is
+// written) into an image source. color.RGBA fields are premultiplied by
+// definition, so passing them straight to the draw package would treat an
+// rgba(255,255,255,0.08) surface as opaque white; color.NRGBA carries the
+// non-premultiplied intent.
+func cssUniform(c color.RGBA) image.Image {
+	return image.NewUniform(color.NRGBA{R: c.R, G: c.G, B: c.B, A: c.A})
+}
+
 func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
 	x0, y0 := int(x+0.5), int(y+0.5)
 	x1, y1 := int(x+w+0.5), int(y+h+0.5)
@@ -287,7 +310,10 @@ func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
 	if r.Empty() {
 		return
 	}
-	draw.Draw(img, r, image.NewUniform(c), image.Point{}, draw.Src)
+	// Over, not Src: a translucent background must blend with what is behind
+	// it (the page background), not erase it. The output then stays opaque,
+	// which is what a screenshot should be.
+	draw.Draw(img, r, cssUniform(c), image.Point{}, draw.Over)
 }
 
 func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c color.RGBA) {
@@ -297,11 +323,34 @@ func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c 
 	}
 	d := font.Drawer{
 		Dst:  img,
-		Src:  image.NewUniform(c),
+		Src:  cssUniform(c),
 		Face: f,
 		Dot:  fixed.Point26_6{X: fixed.Int26_6(x * 64), Y: fixed.Int26_6(baseline * 64)},
 	}
 	d.DrawString(text)
+}
+
+// drawRunText draws a run, adding letter-spacing after every character when the
+// style asks for it. spacing is already scaled to device pixels.
+func drawRunText(img *image.RGBA, x, baseline float64, text string, style renderStyle, spacing float64) {
+	if spacing == 0 {
+		drawString(img, x, baseline, text, styleKey(style), style.color)
+		return
+	}
+	f := renderFace(styleKey(style))
+	if f == nil || text == "" {
+		return
+	}
+	d := font.Drawer{
+		Dst:  img,
+		Src:  cssUniform(style.color),
+		Face: f,
+		Dot:  fixed.Point26_6{X: fixed.Int26_6(x * 64), Y: fixed.Int26_6(baseline * 64)},
+	}
+	for _, r := range text {
+		d.DrawString(string(r))
+		d.Dot.X += fixed.Int26_6(spacing * 64)
+	}
 }
 
 // --- layout ---
@@ -451,7 +500,7 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 					dl.bgX = b.boxLeft
 					dl.bgW = contentW - (b.boxLeft - margin)
 				} else {
-					wpx := measureText(k, ln.text)
+					wpx := textWidth(ln.style, ln.text)
 					dl.bgX = textStart
 					dl.bgW = wpx
 				}
@@ -461,7 +510,7 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 			}
 			runX := textStart
 			if b.align == "center" || b.align == "right" {
-				wpx := measureText(k, ln.text)
+				wpx := textWidth(ln.style, ln.text)
 				space := limit - wpx
 				if space > 0 {
 					if b.align == "center" {
@@ -536,7 +585,7 @@ func wrapSpans(spans []renderSpan, limit float64) []renderSpan {
 				spaceStyles[len(words)-1] = sp.style
 			}
 			words = append(words, word{text: w, style: sp.style,
-				w: measureText(styleKey(sp.style), w)})
+				w: textWidth(sp.style, w)})
 		}
 	}
 	if len(words) == 0 {
@@ -557,7 +606,7 @@ func wrapSpans(spans []renderSpan, limit float64) []renderSpan {
 	for i, w := range words {
 		if i > 0 {
 			spStyle := spaceStyles[i-1]
-			spaceW := measureText(faceKey{size: spStyle.size}, " ")
+			spaceW := textWidth(spStyle, " ")
 			if curW+spaceW+w.w > limit && curW > 0 {
 				flush()
 			} else if curW > 0 {
@@ -571,7 +620,7 @@ func wrapSpans(spans []renderSpan, limit float64) []renderSpan {
 			pieceW := 0.0
 			for _, r := range w.text {
 				rs := string(r)
-				rw := measureText(styleKey(w.style), rs)
+				rw := textWidth(w.style, rs)
 				if pieceW+rw > limit && piece.Len() > 0 {
 					out = append(out, renderSpan{text: piece.String(), style: w.style})
 					piece.Reset()

@@ -1128,12 +1128,22 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		"margin-top":           formatPx(cs.marginTop),
 		"margin-bottom":        formatPx(cs.marginBottom),
 		"margin-left":          formatPx(cs.marginLeft),
+		"padding-top":          formatPx(cs.paddingTop),
+		"padding-bottom":       formatPx(cs.paddingBottom),
 		"padding-left":         formatPx(cs.paddingLeft),
+		"text-transform":       cs.textTransform,
+		"letter-spacing":       formatPx(cs.letterSpacing),
 	}
 	if cs.lineHeight > 0 {
 		props["line-height"] = formatPx(cs.lineHeight)
 	} else {
 		props["line-height"] = "normal"
+	}
+	if cs.letterSpacing == 0 {
+		props["letter-spacing"] = "normal"
+	}
+	if cs.textTransform == "" {
+		props["text-transform"] = "none"
 	}
 	if cs.hasBackground {
 		props["background-color"] = cssColorString(cs.background)
@@ -1151,6 +1161,10 @@ func (e *jsEnv) computedStyleObject(cs *computedStyle) *goja.Object {
 		{"fontWeight", "font-weight"}, {"fontStyle", "font-style"},
 		{"fontFamily", "font-family"}, {"textAlign", "text-align"},
 		{"whiteSpace", "white-space"}, {"lineHeight", "line-height"},
+		{"marginTop", "margin-top"}, {"marginBottom", "margin-bottom"},
+		{"marginLeft", "margin-left"}, {"paddingTop", "padding-top"},
+		{"paddingBottom", "padding-bottom"}, {"paddingLeft", "padding-left"},
+		{"textTransform", "text-transform"}, {"letterSpacing", "letter-spacing"},
 	} {
 		val := props[camel.css]
 		_ = o.Set(camel.js, val)

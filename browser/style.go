@@ -14,6 +14,14 @@ import (
 // --- value parsing ---
 
 func cssLengthToPx(v string, base float64) (float64, bool) {
+	return cssLengthToPxV(v, base, 0)
+}
+
+// cssLengthToPxV resolves a length, additionally resolving vw against a
+// viewport width (0 means the viewport is unknown and vw lengths fail). It also
+// understands the CSS math functions clamp(), min() and max(), whose arguments
+// are lengths in the same grammar.
+func cssLengthToPxV(v string, base, vw float64) (float64, bool) {
 	v = strings.TrimSpace(strings.ToLower(v))
 	if v == "" {
 		return 0, false
@@ -24,6 +32,9 @@ func cssLengthToPx(v string, base float64) (float64, bool) {
 	if v == "auto" || v == "none" || v == "normal" || v == "inherit" ||
 		v == "initial" || v == "unset" || v == "revert" || v == "transparent" {
 		return 0, false
+	}
+	if name, inner, ok := cssFunctionCall(v); ok {
+		return cssMathFunction(name, inner, base, vw)
 	}
 	num, unit := splitCSSNumber(v)
 	if num == "" {
@@ -54,8 +65,79 @@ func cssLengthToPx(v string, base float64) (float64, bool) {
 		return f * 16, true
 	case "%":
 		return f * base / 100, true
+	case "vw":
+		if vw <= 0 {
+			return 0, false
+		}
+		return f * vw / 100, true
 	}
 	return 0, false
+}
+
+// cssFunctionCall splits "name(inner)" into its parts, or reports false for a
+// plain value. The inner text keeps any nested parentheses.
+func cssFunctionCall(v string) (name, inner string, ok bool) {
+	i := strings.IndexByte(v, '(')
+	if i <= 0 || !strings.HasSuffix(v, ")") {
+		return "", "", false
+	}
+	return strings.TrimSpace(v[:i]), v[i+1 : len(v)-1], true
+}
+
+// cssMathFunction evaluates clamp(), min() and max(). A single unresolvable
+// argument makes the whole expression unresolvable, matching a browser that
+// would drop the declaration.
+func cssMathFunction(name, inner string, base, vw float64) (float64, bool) {
+	switch name {
+	case "clamp", "min", "max":
+	default:
+		return 0, false
+	}
+	args := splitTopLevel(inner, ',')
+	vals := make([]float64, 0, len(args))
+	for _, a := range args {
+		x, ok := cssLengthToPxV(a, base, vw)
+		if !ok {
+			return 0, false
+		}
+		vals = append(vals, x)
+	}
+	switch name {
+	case "clamp":
+		if len(vals) != 3 {
+			return 0, false
+		}
+		lo, val, hi := vals[0], vals[1], vals[2]
+		if val < lo {
+			val = lo
+		}
+		if val > hi {
+			val = hi
+		}
+		return val, true
+	case "min":
+		if len(vals) == 0 {
+			return 0, false
+		}
+		m := vals[0]
+		for _, x := range vals[1:] {
+			if x < m {
+				m = x
+			}
+		}
+		return m, true
+	default: // max
+		if len(vals) == 0 {
+			return 0, false
+		}
+		m := vals[0]
+		for _, x := range vals[1:] {
+			if x > m {
+				m = x
+			}
+		}
+		return m, true
+	}
 }
 
 func splitCSSNumber(v string) (num, unit string) {
@@ -84,6 +166,11 @@ var cssFontSizeKeyword = map[string]int{
 // smaller/larger keywords. The absolute keywords instead come from the table
 // above: "large" is 18px whether the parent is 16px or 60px.
 func cssFontSizeToPx(v string, parent float64) (float64, bool) {
+	return cssFontSizeToPxV(v, parent, 0)
+}
+
+// cssFontSizeToPxV is cssFontSizeToPx with a viewport width for vw units.
+func cssFontSizeToPxV(v string, parent, vw float64) (float64, bool) {
 	kw := strings.ToLower(strings.TrimSpace(v))
 	if i, ok := cssFontSizeKeyword[kw]; ok {
 		return cssFontSizeTable[i], true
@@ -94,7 +181,7 @@ func cssFontSizeToPx(v string, parent float64) (float64, bool) {
 	case "larger":
 		return parent * 1.2, true
 	}
-	return cssLengthToPx(v, parent)
+	return cssLengthToPxV(v, parent, vw)
 }
 
 var cssNamedColors = map[string]color.RGBA{
@@ -257,18 +344,24 @@ type computedStyle struct {
 	mono   bool
 	// fontFamily is the first family of the computed font-family, which is the
 	// name a @font-face is matched against. Empty means the user-agent default.
-	fontFamily   string
-	underline    bool
-	strike       bool
-	link         bool
-	textAlign    string
-	lineHeight   float64
-	whiteSpace   string
-	marginTop    float64
-	marginBottom float64
-	marginLeft   float64
-	paddingLeft  float64
-	listStyle    string
+	fontFamily string
+	underline  bool
+	strike     bool
+	link       bool
+	textAlign  string
+	lineHeight float64
+	whiteSpace string
+	// textTransform is uppercase/lowercase/capitalize, "" for none.
+	textTransform string
+	// letterSpacing is extra space between characters, in px.
+	letterSpacing float64
+	marginTop     float64
+	marginBottom  float64
+	marginLeft    float64
+	paddingTop    float64
+	paddingBottom float64
+	paddingLeft   float64
+	listStyle     string
 
 	// monoDefault records that the user-agent sheet gave this element its
 	// 13px monospace size, which an author font-family takes away again.
@@ -432,6 +525,7 @@ var styleInherited = map[string]bool{
 	"color": true, "font-family": true, "font-size": true, "font-weight": true,
 	"font-style": true, "line-height": true, "text-align": true,
 	"visibility": true, "white-space": true, "list-style-type": true,
+	"text-transform": true, "letter-spacing": true,
 }
 
 func (e *styleEngine) compute(n *html.Node) *computedStyle {
@@ -463,6 +557,8 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		cs.whiteSpace = parent.whiteSpace
 		cs.textAlign = parent.textAlign
 		cs.visibility = parent.visibility
+		cs.textTransform = parent.textTransform
+		cs.letterSpacing = parent.letterSpacing
 	}
 	tag := n.Data
 
@@ -604,6 +700,10 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			cs.visibility = parent.visibility
 		case "white-space":
 			cs.whiteSpace = parent.whiteSpace
+		case "text-transform":
+			cs.textTransform = parent.textTransform
+		case "letter-spacing":
+			cs.letterSpacing = parent.letterSpacing
 		}
 		delete(d, prop)
 	}
@@ -626,13 +726,17 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		}
 	}
 	if v, ok := d["background-color"]; ok {
-		if c, ok2 := parseCSSColor(v); ok2 && c.A > 0 {
+		if c, ok2 := parseCSSColor(v); ok2 {
+			// An explicit transparent colour clears the background, including
+			// the user-agent face a form control gets. Skipping the alpha-0
+			// value here left buttons painted with the default face even
+			// though the page asked for "background: transparent".
 			cs.background = c
-			cs.hasBackground = true
+			cs.hasBackground = c.A > 0
 		}
 	}
 	if v, ok := d["font-size"]; ok {
-		if px, ok2 := cssFontSizeToPx(v, inherited); ok2 {
+		if px, ok2 := cssFontSizeToPxV(v, inherited, e.width); ok2 {
 			cs.fontSize = px
 		}
 	}
@@ -692,12 +796,27 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			cs.lineHeight = 0
 		} else if f, err := strconv.ParseFloat(lv, 64); err == nil {
 			cs.lineHeight = cs.fontSize * f
-		} else if px, ok2 := cssLengthToPx(lv, cs.fontSize); ok2 {
+		} else if px, ok2 := cssLengthToPxV(lv, cs.fontSize, e.width); ok2 {
 			cs.lineHeight = px
 		}
 	}
 	if v, ok := d["white-space"]; ok {
 		cs.whiteSpace = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v, ok := d["text-transform"]; ok {
+		lv := strings.ToLower(strings.TrimSpace(v))
+		switch lv {
+		case "uppercase", "lowercase", "capitalize", "none":
+			cs.textTransform = lv
+		}
+	}
+	if v, ok := d["letter-spacing"]; ok {
+		lv := strings.TrimSpace(strings.ToLower(v))
+		if lv == "normal" {
+			cs.letterSpacing = 0
+		} else if px, ok2 := cssLengthToPxV(lv, cs.fontSize, e.width); ok2 {
+			cs.letterSpacing = px
+		}
 	}
 	if v, ok := d["display"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))
@@ -750,10 +869,12 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		{"margin-top", &cs.marginTop},
 		{"margin-bottom", &cs.marginBottom},
 		{"margin-left", &cs.marginLeft},
+		{"padding-top", &cs.paddingTop},
+		{"padding-bottom", &cs.paddingBottom},
 		{"padding-left", &cs.paddingLeft},
 	} {
 		if v, ok := d[side.prop]; ok {
-			if px, ok2 := cssLengthToPx(v, base); ok2 {
+			if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 				*side.dst = px
 			}
 		}
