@@ -82,11 +82,15 @@ make gobrowser
   each one with its size and rule count, or the reason it was not applied:
 
   ```sh
-  ./bin/gobrowser get https://quotes.toscrape.com/js/ --sheets
-  applied      https://quotes.toscrape.com/static/bootstrap.min.css   2012 rules, 125934 bytes
-  applied      https://quotes.toscrape.com/static/main.css            22 rules, 1368 bytes
-  applied      inline <style>                                         5 rules, 145 bytes
+  ./bin/gobrowser get https://brave.com/ --sheets
+  applied      https://brave.com/static-assets/css/main.min.25ad059cc...css  2332 rules, 415249 bytes
+  applied      https://brave.com/static-assets/css/fonts-latin.min.e...css     2 rules, 16677 bytes
+  applied      inline <style>                                                  1 rules, 69 bytes
   ```
+
+  The report goes to stderr and does not stop the command, so it composes:
+  `get brave.com --screenshot page.png --width 900 --sheets` writes the PNG and
+  lists the sheets it was rendered with.
 - `document.styleSheets` (with `href`, `media`, `ownerNode` and `cssRules`,
   including each rule's `selectorText` and `style.getPropertyValue`), so a page
   can inspect its own CSS. Reading a sheet's URL never fetches it; reading its
@@ -421,7 +425,7 @@ gobrowser get URL \
   --no-js               # disable JavaScript
   --console             # print console.* to stderr
   --status              # print HTTP status to stderr
-  --sheets              # list the page's own stylesheets and exit
+  --sheets              # report the page's own stylesheets on stderr
   --debug               # log page-load phases to stderr
   -H 'K: V'             # extra header (repeatable)
 ```

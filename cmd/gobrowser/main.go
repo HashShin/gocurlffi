@@ -62,7 +62,7 @@ flags:
       --no-js              disable JavaScript execution
       --console            print page console output to stderr
       --status             print HTTP status to stderr
-      --sheets             list the page's own stylesheets (fetched, applied, skipped)
+      --sheets             report the page's own stylesheets on stderr (keeps going)
       --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
@@ -95,7 +95,7 @@ func runGet(args []string) {
 	)
 	var headers headerList
 	fs.Var(&headers, "H", "extra header \"K: V\" (repeatable)")
-	_ = fs.Parse(reorderFlags(args))
+	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
 
 	target := fs.Arg(0)
 	if target == "" {
@@ -158,26 +158,25 @@ func runGet(args []string) {
 		}
 	}
 
+	// --sheets is diagnostic, so it reports on stderr and does not stop the
+	// rest of the command: "get URL --screenshot page.png --sheets" writes the
+	// PNG and lists the stylesheets it was rendered with.
 	if *listSheets {
-		var sb strings.Builder
-		for _, s := range p.StyleSheets() {
+		sheets := p.StyleSheets()
+		if len(sheets) == 0 {
+			fmt.Fprintln(os.Stderr, "this page declares no stylesheets")
+		}
+		for _, s := range sheets {
 			url := s.Href
 			if url == "" {
 				url = "inline <style>"
 			}
-			switch {
-			case s.Err != "":
-				fmt.Fprintf(&sb, "NOT APPLIED  %-60s %s\n", url, s.Err)
-			default:
-				fmt.Fprintf(&sb, "applied      %-60s %d rules, %d bytes\n", url, s.Rules, s.Bytes)
+			if s.Err != "" {
+				fmt.Fprintf(os.Stderr, "NOT APPLIED  %-60s %s\n", url, s.Err)
+				continue
 			}
+			fmt.Fprintf(os.Stderr, "applied      %-60s %d rules, %d bytes\n", url, s.Rules, s.Bytes)
 		}
-		if out := sb.String(); out != "" {
-			fmt.Print(out)
-		} else {
-			fmt.Println("this page declares no stylesheets")
-		}
-		return
 	}
 
 	if *screenshot != "" {
@@ -257,19 +256,26 @@ func (h *headerList) Set(v string) error {
 	return nil
 }
 
-// boolFlags are options that take no value.
-var boolFlags = map[string]bool{
-	"-no-js": true, "--no-js": true,
-	"-console": true, "--console": true,
-	"-status": true, "--status": true,
-	"-debug": true, "--debug": true,
-	"-h": true, "--help": true,
+// boolFlagNames reports the flags that take no value, read from the flag set
+// itself so a new boolean option never has to be registered twice. Without it,
+// reorderFlags would treat the argument after a boolean flag as its value:
+// "get URL --sheets -f text" tried to fetch the host "text".
+func boolFlagNames(fs *flag.FlagSet) map[string]bool {
+	names := map[string]bool{}
+	fs.VisitAll(func(f *flag.Flag) {
+		switch f.Value.String() {
+		case "true", "false":
+			names["-"+f.Name] = true
+			names["--"+f.Name] = true
+		}
+	})
+	return names
 }
 
 // reorderFlags moves options ahead of positional arguments so the standard
 // flag package (which stops at the first non-flag) sees them, allowing
-// "gobrowser get URL -f text".
-func reorderFlags(args []string) []string {
+// "gobrowser get URL -f text". boolFlags holds the options that take no value.
+func reorderFlags(args []string, boolFlags map[string]bool) []string {
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
