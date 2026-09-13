@@ -333,6 +333,53 @@ func balancedCall(s string) (string, bool) {
 	return "", false
 }
 
+// parseRadius reads a border-radius value into per-corner pixels and
+// percentages (top-left, top-right, bottom-right, bottom-left). The one-to-four
+// value expansion is the same as margin.
+func parseRadius(v string, base, vw float64) (px, pct [4]float64) {
+	parts := strings.Fields(v)
+	var vals [4]string
+	switch len(parts) {
+	case 1:
+		vals = [4]string{parts[0], parts[0], parts[0], parts[0]}
+	case 2:
+		vals = [4]string{parts[0], parts[1], parts[0], parts[1]}
+	case 3:
+		vals = [4]string{parts[0], parts[1], parts[2], parts[1]}
+	case 4:
+		vals = [4]string{parts[0], parts[1], parts[2], parts[3]}
+	default:
+		return
+	}
+	for i, s := range vals {
+		s = strings.TrimSpace(strings.ToLower(s))
+		if strings.HasSuffix(s, "%") {
+			if f, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64); err == nil && f >= 0 {
+				pct[i] = f / 100
+			}
+			continue
+		}
+		if f, ok := cssLengthToPxV(s, base, vw); ok && f > 0 {
+			px[i] = f
+		}
+	}
+	return px, pct
+}
+
+// hasRadius reports whether any corner has a radius.
+func (cs *computedStyle) hasRadius() bool {
+	return cs.radiusPx != [4]float64{} || cs.radiusPct != [4]float64{}
+}
+
+// scaleAlpha multiplies a colour's alpha channel, for opacity.
+func scaleAlpha(c color.RGBA, o float64) color.RGBA {
+	if o >= 1 {
+		return c
+	}
+	c.A = uint8(float64(c.A)*o + 0.5)
+	return c
+}
+
 func splitCSSNumber(v string) (num, unit string) {
 	i := 0
 	if i < len(v) && (v[i] == '+' || v[i] == '-') {
@@ -597,6 +644,12 @@ type computedStyle struct {
 	hasBorder   bool
 	// minHeight reserves vertical space for a control or panel.
 	minHeight float64
+	// radiusPx and radiusPct are the corner radii (top-left, top-right,
+	// bottom-right, bottom-left); a percentage resolves against the box.
+	radiusPx  [4]float64
+	radiusPct [4]float64
+	// opacity scales the element's own colours, 1 by default.
+	opacity float64
 
 	// monoDefault records that the user-agent sheet gave this element its
 	// 13px monospace size, which an author font-family takes away again.
@@ -717,6 +770,7 @@ func defaultComputedStyle() computedStyle {
 		weight:     400,
 		whiteSpace: "normal",
 		textAlign:  "left",
+		opacity:    1,
 	}
 }
 
@@ -1200,6 +1254,20 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["min-height"]; ok {
 		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 			cs.minHeight = px
+		}
+	}
+	if v, ok := d["border-radius"]; ok {
+		cs.radiusPx, cs.radiusPct = parseRadius(v, base, e.width)
+	}
+	if v, ok := d["opacity"]; ok {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			if f < 0 {
+				f = 0
+			}
+			if f > 1 {
+				f = 1
+			}
+			cs.opacity = f
 		}
 	}
 	if v, ok := d["visibility"]; ok {

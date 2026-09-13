@@ -454,6 +454,40 @@ type collector struct {
 	// background shows behind its children.
 	bg    color.RGBA
 	hasBG bool
+
+	// boxSeq numbers the element boxes so each one is drawn once.
+	boxSeq int
+}
+
+// nextBoxID returns a fresh box id.
+func (c *collector) nextBoxID() int {
+	c.boxSeq++
+	return c.boxSeq
+}
+
+// assignBox marks the blocks an element produced as one box: the element's
+// background, border and radius are drawn as a single rectangle by the layout.
+// Blocks that already carry a box (a nested boxed element or a control) are
+// left alone.
+func (c *collector) assignBox(start int, cs *computedStyle) {
+	gid := c.nextBoxID()
+	left := c.content - cs.paddingLeft - cs.borderW
+	for i := start; i < len(c.blocks); i++ {
+		b := &c.blocks[i]
+		if b.boxID != 0 {
+			continue
+		}
+		b.boxID = gid
+		b.borderLeft = left
+		b.hasBorder = cs.hasBorder
+		b.borderW = cs.borderW
+		b.borderColor = scaleAlpha(cs.borderColor, cs.opacity)
+		b.radiusPx, b.radiusPct = cs.radiusPx, cs.radiusPct
+		if cs.hasBackground {
+			b.boxBG = scaleAlpha(cs.background, cs.opacity)
+			b.boxHasBG = true
+		}
+	}
 }
 
 func isBlockDisplay(d string) bool {
@@ -549,7 +583,7 @@ func (c *collector) walkElement(el *html.Node) {
 	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG}
 
 	if cs.hasBackground {
-		c.bg = cs.background
+		c.bg = scaleAlpha(cs.background, cs.opacity)
 		c.hasBG = true
 	}
 
@@ -561,12 +595,19 @@ func (c *collector) walkElement(el *html.Node) {
 		link:          cs.link,
 		underline:     cs.underline,
 		strike:        cs.strike,
-		color:         cs.textColor,
+		color:         scaleAlpha(cs.textColor, cs.opacity),
 		font:          c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
 		textTransform: cs.textTransform,
 		letterSpacing: cs.letterSpacing,
 	}
 	block := isBlockDisplay(cs.display)
+	// A block with a border or a radius is drawn as one box: its background is
+	// painted as a (rounded) rectangle instead of per line, so its own
+	// background must not propagate to the lines it contains.
+	boxed := block && (cs.hasBorder || (cs.hasBackground && cs.hasRadius()))
+	if boxed {
+		c.hasBG = false
+	}
 	if block {
 		// Box edges: margin then padding, relative to the parent's content box.
 		boxLeft := c.content + cs.marginLeft
@@ -645,6 +686,9 @@ func (c *collector) walkElement(el *html.Node) {
 		c.lists = c.lists[:len(c.lists)-1]
 		c.flush()
 		c.applyBoxEdges(start, cs)
+		if boxed {
+			c.assignBox(start, cs)
+		}
 		return
 	case "li":
 		c.flush()
@@ -691,6 +735,9 @@ func (c *collector) walkElement(el *html.Node) {
 			applyColumnAlign(c.blocks[start:], cs.alignItems)
 		}
 		c.applyBoxEdges(start, cs)
+		if boxed {
+			c.assignBox(start, cs)
+		}
 		return
 	}
 	c.walkChildren(el)
@@ -709,13 +756,17 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		leading:   cs.marginTop + cs.paddingTop,
 		trailing:  cs.marginBottom + cs.paddingBottom,
 		minHeight: cs.minHeight,
+		// The control's box is drawn by the layout, not per line.
+		boxID:       c.nextBoxID(),
+		borderLeft:  c.content - cs.paddingLeft - cs.borderW,
+		hasBorder:   cs.hasBorder,
+		borderW:     cs.borderW,
+		borderColor: scaleAlpha(cs.borderColor, cs.opacity),
+		radiusPx:    cs.radiusPx,
+		radiusPct:   cs.radiusPct,
 	}
 	if c.hasBG {
-		b.bg, b.hasBG, b.bgFull = c.bg, true, true
-	}
-	if cs.hasBorder {
-		b.hasBorder, b.borderW, b.borderColor = true, cs.borderW, cs.borderColor
-		b.borderLeft = c.content - cs.paddingLeft - cs.borderW
+		b.boxBG, b.boxHasBG = c.bg, true
 	}
 	c.blocks = append(c.blocks, b)
 	return len(c.blocks) - 1

@@ -2,6 +2,7 @@ package browser
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -596,3 +597,63 @@ func TestTextareaReservesBox(t *testing.T) {
 		t.Errorf("drew %d border pixels, want a visible border", white)
 	}
 }
+
+// redBounds returns the bounding box of red pixels, or ok=false.
+func redBounds(img image.Image) (minX, minY, maxX, maxY int, ok bool) {
+	b := img.Bounds()
+	minX, minY, maxX, maxY = b.Max.X, b.Max.Y, b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 > 0xd0 && g>>8 < 0x40 && bl>>8 < 0x40 {
+				ok = true
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	return
+}
+
+// An element border is drawn, and border-radius rounds its corners.
+func TestElementBorderAndRadius(t *testing.T) {
+	const page = `<html><body style="margin:0;background:#000">
+		<div style="border:%d solid #ff0000;%s">x</div></body></html>`
+	square := screenshotOf(t, fmtSprintf(page, 3, ""), ScreenshotOptions{Width: 300, NoImages: true})
+	minX, minY, maxX, _, ok := redBounds(square)
+	if !ok {
+		t.Fatal("square border was not drawn")
+	}
+	if !isRed(square.At(minX, minY)) {
+		t.Error("square border: the bounding-box corner is not red")
+	}
+	if maxX-minX < 100 {
+		t.Errorf("border width %d, want it to span the column", maxX-minX)
+	}
+
+	round := screenshotOf(t, fmtSprintf(page, 3, "border-radius:24px;"), ScreenshotOptions{Width: 300, NoImages: true})
+	minX, minY, _, _, ok = redBounds(round)
+	if !ok {
+		t.Fatal("rounded border was not drawn")
+	}
+	if isRed(round.At(minX, minY)) {
+		t.Error("rounded border: the bounding-box corner is still red (not rounded)")
+	}
+}
+
+func isRed(c color.Color) bool {
+	r, g, b, _ := c.RGBA()
+	return r>>8 > 0xd0 && g>>8 < 0x40 && b>>8 < 0x40
+}
+
+func fmtSprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }

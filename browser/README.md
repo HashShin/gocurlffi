@@ -348,12 +348,17 @@ same honest limits:
   drawn, so an empty textarea is still the tall box the page asked for. Text is
   centered inside a button, and a column flex container's `align-items: center`
   centers its children.
-- Still no box model: no borders on arbitrary elements, no shadows, floats,
-  positioning or gradients. CSS is
-  cascaded for typography, colour, display, spacing, alignment and flat block
-  backgrounds. `float` and `position` are ignored for layout, so sidebars and
+- Still no box model: no shadows, floats, positioning, transforms or gradients.
+  CSS is
+  cascaded for typography, colour, display, spacing, alignment, backgrounds and
+  borders. `float` and `position` are ignored for layout, so sidebars and
   menus that a browser would place beside the content flow inline or in document
   order (their *computed* values are still reported correctly).
+- Element decoration: a block with a `background-color`, `border` or
+  `border-radius` is drawn once as a rectangle (rounded when it has a radius,
+  with anti-aliased corners) rather than per line, and nested boxes paint
+  parent-first. `opacity` scales the element's own colours. `box-shadow`,
+  `transform` and `filter` are not drawn.
 - `display: flex` rows are laid out: children sit side by side, sized from
   `flex-grow`, `flex-basis` (including `calc(50% - 7px)`) or their content, with
   `gap`, `flex-wrap`, `justify-content`, `align-items` and nested rows. A column

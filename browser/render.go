@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"strings"
 	"sync"
 
@@ -243,6 +244,12 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 
 	s := func(v float64) float64 { return v * scale }
 
+	// Element boxes (backgrounds and borders) first, so their content draws
+	// over them.
+	for _, bx := range doc.boxes {
+		bx.draw(img, scale)
+	}
+
 	for _, ln := range doc.lines {
 		if ln.pic != nil {
 			drawScaledImage(img, ln.pic, s(ln.picX), s(ln.y), s(ln.picW), s(ln.height), scale)
@@ -352,6 +359,130 @@ func drawBorder(img *image.RGBA, x, y, w, h, t float64, c color.RGBA) {
 	fillRect(img, x+w-t, y, t, h, c)
 }
 
+// drawBox is an element's background and/or border, drawn once as a rectangle
+// (rounded when it has a radius) instead of once per line. Boxes are collected
+// during layout and painted parent-first.
+type drawBox struct {
+	x, y, w, h float64
+	bg         color.RGBA
+	hasBG      bool
+	borderW    float64
+	borderC    color.RGBA
+	hasBorder  bool
+	radius     [4]float64 // resolved corner radii, in px
+}
+
+func (b drawBox) draw(img *image.RGBA, scale float64) {
+	x, y, w, h := b.x*scale, b.y*scale, b.w*scale, b.h*scale
+	if w < 1 || h < 1 {
+		return
+	}
+	r := [4]float64{b.radius[0] * scale, b.radius[1] * scale, b.radius[2] * scale, b.radius[3] * scale}
+	if b.hasBG {
+		if rounded(r) {
+			roundRectMaskDraw(img, x, y, w, h, r, 0, b.bg)
+		} else {
+			fillRect(img, x, y, w, h, b.bg)
+		}
+	}
+	if b.hasBorder && b.borderW > 0 {
+		t := b.borderW * scale
+		if t < 1 {
+			t = 1
+		}
+		if rounded(r) {
+			roundRectMaskDraw(img, x, y, w, h, r, t, b.borderC)
+		} else {
+			drawBorder(img, x, y, w, h, t, b.borderC)
+		}
+	}
+}
+
+func rounded(r [4]float64) bool {
+	return r[0] > 0 || r[1] > 0 || r[2] > 0 || r[3] > 0
+}
+
+// roundRectMaskDraw draws a rounded rectangle, or with inset>0 the border ring
+// between the rectangle and an inset copy of it.
+func roundRectMaskDraw(img *image.RGBA, x, y, w, h float64, r [4]float64, inset float64, c color.RGBA) {
+	intW, intH := int(w+0.5), int(h+0.5)
+	if intW < 1 || intH < 1 {
+		return
+	}
+	if inset > 0 && (w-2*inset < 1 || h-2*inset < 1) {
+		fillRect(img, x, y, w, h, c)
+		return
+	}
+	ir := insetRadius(r, inset)
+	x0, y0 := int(x), int(y)
+	mask := image.NewAlpha(image.Rect(0, 0, intW, intH))
+	for j := 0; j < intH; j++ {
+		for i := 0; i < intW; i++ {
+			px, py := float64(x0+i), float64(y0+j)
+			cov := roundCoverage(px, py, x, y, w, h, r)
+			if inset > 0 {
+				inner := roundCoverage(px, py, x+inset, y+inset, w-2*inset, h-2*inset, ir)
+				cov -= inner
+			}
+			if cov <= 0 {
+				continue
+			}
+			if cov > 1 {
+				cov = 1
+			}
+			mask.SetAlpha(i, j, color.Alpha{A: uint8(cov*255 + 0.5)})
+		}
+	}
+	dst := image.Rect(x0, y0, x0+intW, y0+intH).Intersect(img.Bounds())
+	if dst.Empty() {
+		return
+	}
+	draw.DrawMask(img, dst, cssUniform(c), image.Point{}, mask, dst.Min.Sub(image.Point{X: x0, Y: y0}), draw.Over)
+}
+
+func insetRadius(r [4]float64, inset float64) [4]float64 {
+	out := r
+	for i := range out {
+		if out[i] -= inset; out[i] < 0 {
+			out[i] = 0
+		}
+	}
+	return out
+}
+
+// roundCoverage is the anti-aliased coverage of the rounded rectangle at a
+// pixel, by 2x2 supersampling.
+func roundCoverage(px, py, x, y, w, h float64, r [4]float64) float64 {
+	n := 0
+	for _, dy := range []float64{0.25, 0.75} {
+		for _, dx := range []float64{0.25, 0.75} {
+			if pointInRoundRect(px+dx, py+dy, x, y, w, h, r) {
+				n++
+			}
+		}
+	}
+	return float64(n) / 4
+}
+
+func pointInRoundRect(px, py, x, y, w, h float64, r [4]float64) bool {
+	if px < x || px > x+w || py < y || py > y+h {
+		return false
+	}
+	switch {
+	case px < x+r[0] && py < y+r[0]:
+		return sq(px-(x+r[0]))+sq(py-(y+r[0])) <= sq(r[0])
+	case px > x+w-r[1] && py < y+r[1]:
+		return sq(px-(x+w-r[1]))+sq(py-(y+r[1])) <= sq(r[1])
+	case px > x+w-r[2] && py > y+h-r[2]:
+		return sq(px-(x+w-r[2]))+sq(py-(y+h-r[2])) <= sq(r[2])
+	case px < x+r[3] && py > y+h-r[3]:
+		return sq(px-(x+r[3]))+sq(py-(y+h-r[3])) <= sq(r[3])
+	}
+	return true
+}
+
+func sq(f float64) float64 { return f * f }
+
 func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c color.RGBA) {
 	f := renderFace(k)
 	if f == nil || text == "" {
@@ -397,6 +528,7 @@ type renderDoc struct {
 	height   int
 	baseSize float64
 	lines    []drawLine
+	boxes    []drawBox
 }
 
 type renderBlockKind int
@@ -466,6 +598,13 @@ type renderBlock struct {
 	hasBorder   bool
 	borderLeft  float64
 	minHeight   float64
+	// boxID groups the blocks of one element so its background and border are
+	// drawn once as a (possibly rounded) rectangle. 0 means no box.
+	boxID     int
+	boxBG     color.RGBA
+	boxHasBG  bool
+	radiusPx  [4]float64
+	radiusPct [4]float64
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -478,8 +617,10 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 	if colW < 40 {
 		colW = 40
 	}
-	lines, endY := layoutColumn(blocks, 0, colW, margin, baseSize)
+	var boxes []drawBox
+	lines, endY := layoutColumn(blocks, 0, colW, margin, baseSize, &boxes)
 	doc.lines = lines
+	doc.boxes = boxes
 	doc.height = int(endY + margin + 0.5)
 	if doc.height < 1 {
 		doc.height = 1
@@ -490,11 +631,46 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 // layoutColumn flows a column of blocks starting at x=colX and wrapping text to
 // colW, returning the draw lines (absolute positions) and the y after the last
 // block. A block's own offsets (boxLeft, textX) are relative to the column.
-func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([]drawLine, float64) {
+func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
 	const lineFact = 1.45
 	var out []drawLine
+	type boxAcc struct {
+		dx           drawBox
+		top, bottom  float64
+		has, started bool
+		radiusPx     [4]float64
+		radiusPct    [4]float64
+	}
+	accs := map[int]*boxAcc{}
+	var boxOrder []int
 	y := startY
+	recordBox := func(b renderBlock, top, bottom float64) {
+		if b.boxID == 0 {
+			return
+		}
+		acc := accs[b.boxID]
+		if acc == nil {
+			acc = &boxAcc{
+				dx: drawBox{
+					x: colX + b.borderLeft, w: colW - b.borderLeft,
+					bg: b.boxBG, hasBG: b.boxHasBG,
+					borderW: b.borderW, borderC: b.borderColor, hasBorder: b.hasBorder,
+				},
+				radiusPx: b.radiusPx, radiusPct: b.radiusPct,
+			}
+			accs[b.boxID] = acc
+			boxOrder = append(boxOrder, b.boxID)
+		}
+		if !acc.started || top < acc.top {
+			acc.top = top
+		}
+		if !acc.started || bottom > acc.bottom {
+			acc.bottom = bottom
+		}
+		acc.started = true
+	}
 	for _, b := range blocks {
+		bTop := y
 		y += b.leading
 		switch b.kind {
 		case blockImage:
@@ -529,7 +705,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 			})
 			y += 12 + b.trailing
 		case blockFlex:
-			ls, h := layoutFlex(b, colX, colW, y, baseSize)
+			ls, h := layoutFlex(b, colX, colW, y, baseSize, boxes)
 			out = append(out, ls...)
 			y += h + b.trailing
 		default:
@@ -643,17 +819,32 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 				}
 				y += gapH
 			}
-			if b.hasBorder {
-				out = append(out, drawLine{
-					y:       blockTop,
-					border:  true,
-					borderX: colX + b.borderLeft, borderY: blockTop,
-					borderW2: colW - b.borderLeft, borderH: y - blockTop,
-					borderT: b.borderW, borderC: b.borderColor,
-				})
-			}
 			y += b.trailing
 		}
+		recordBox(b, bTop, y-b.trailing)
+	}
+	// Emit the boxes gathered in this column, parent (first seen) first.
+	for _, id := range boxOrder {
+		acc := accs[id]
+		if !acc.started {
+			continue
+		}
+		dx := acc.dx
+		dx.y = acc.top
+		dx.h = acc.bottom - acc.top
+		if dx.h < 0 {
+			dx.h = 0
+		}
+		minDim := math.Min(dx.w, dx.h)
+		maxR := math.Min(dx.w/2, dx.h/2)
+		for i := 0; i < 4; i++ {
+			r := acc.radiusPx[i] + acc.radiusPct[i]*minDim
+			if r > maxR {
+				r = maxR
+			}
+			dx.radius[i] = r
+		}
+		*boxes = append(*boxes, dx)
 	}
 	return out, y
 }
@@ -661,7 +852,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 // layoutFlex lays a flex row out inside the column, returning its lines and
 // height. Only the main size is distributed: children keep their natural height
 // and align-items positions them vertically.
-func layoutFlex(b renderBlock, colX, colW, y, baseSize float64) ([]drawLine, float64) {
+func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
 	n := len(b.children)
 	if n == 0 {
 		return nil, 0
@@ -697,7 +888,7 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64) ([]drawLine, flo
 		if ri > 0 {
 			total += rowGap
 		}
-		ls, h := layoutFlexRun(b, run, base, contentX, avail, y+total, baseSize)
+		ls, h := layoutFlexRun(b, run, base, contentX, avail, y+total, baseSize, boxes)
 		lines = append(lines, ls...)
 		total += h
 	}
@@ -745,7 +936,7 @@ func flexRuns(base []float64, gap, avail float64, wrap bool) [][]int {
 }
 
 // layoutFlexRun distributes one row's widths and lays out its children.
-func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y, baseSize float64) ([]drawLine, float64) {
+func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
 	n := len(idx)
 	gap := b.gap
 	widths := make([]float64, n)
@@ -811,7 +1002,7 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 	childH := make([]float64, n)
 	maxH := 0.0
 	for i, ci := range idx {
-		cl, endY := layoutColumn(b.children[ci], x, widths[i], y, baseSize)
+		cl, endY := layoutColumn(b.children[ci], x, widths[i], y, baseSize, boxes)
 		childLines[i] = cl
 		childH[i] = endY - y
 		if childH[i] > maxH {
