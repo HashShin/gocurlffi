@@ -175,6 +175,10 @@ func runGet(args []string) {
 		sheets := p.StyleSheets()
 		if len(sheets) == 0 {
 			fmt.Fprintln(os.Stderr, "this page declares no stylesheets")
+		} else {
+			// Rule counts depend on the width, since @media is evaluated while
+			// parsing; say which width these were counted at.
+			fmt.Fprintf(os.Stderr, "stylesheets (rule counts at width %g):\n", sheets[0].Width)
 		}
 		for _, s := range sheets {
 			url := s.Href

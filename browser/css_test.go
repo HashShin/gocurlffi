@@ -756,11 +756,12 @@ func TestPageStyleSheets(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	got := p.StyleSheets()
+	const width = 1280 // the default viewport rule counts are taken at
 	want := []StyleSheet{
-		{Inline: true, Bytes: 18, Rules: 1},
-		{Href: srv.URL + "/ok.css", Bytes: 42, Rules: 2},
-		{Href: srv.URL + "/print.css", Media: "print", Err: "media print does not match"},
-		{Href: srv.URL + "/missing.css", Err: "404 Not Found"},
+		{Inline: true, Bytes: 18, Rules: 1, Width: width},
+		{Href: srv.URL + "/ok.css", Bytes: 42, Rules: 2, Width: width},
+		{Href: srv.URL + "/print.css", Media: "print", Width: width, Err: "media print does not match"},
+		{Href: srv.URL + "/missing.css", Width: width, Err: "404 Not Found"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d sheets, want %d: %+v", len(got), len(want), got)

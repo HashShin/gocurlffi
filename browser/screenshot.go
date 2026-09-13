@@ -708,8 +708,11 @@ type StyleSheet struct {
 	Inline bool
 	// Bytes is the size of the CSS text.
 	Bytes int
-	// Rules is the number of rules parsed from it at the current layout width.
+	// Rules is the number of rules parsed from it. Media queries are evaluated
+	// while parsing, so this number is only meaningful with Width.
 	Rules int
+	// Width is the layout width the rules were counted at.
+	Width float64
 	// Err is why the sheet is not applied, empty when it is.
 	Err string
 }
@@ -723,7 +726,7 @@ func (p *Page) StyleSheets() []StyleSheet {
 	sheets := p.styleSheets()
 	out := make([]StyleSheet, 0, len(sheets))
 	for _, s := range sheets {
-		info := StyleSheet{Href: s.href, Media: s.media, Inline: s.href == ""}
+		info := StyleSheet{Href: s.href, Media: s.media, Inline: s.href == "", Width: p.viewportWidth()}
 		if p.loadSheet(s) {
 			order := 0
 			rules, _, _ := parseCSSStylesheet(s.source, p.viewportWidth(), &order)

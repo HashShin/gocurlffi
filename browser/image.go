@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	// Image formats a page can use. The standard three plus webp, which is what
 	// most modern sites actually serve.
@@ -135,6 +136,7 @@ func (p *Page) prefetchImages(root *html.Node, maxImages, maxBytes int) {
 	sem := make(chan struct{}, 6)
 	var wg sync.WaitGroup
 	var budget int64
+	var failed, dropped int32
 	var budgetMu sync.Mutex
 	for _, src := range srcs {
 		wg.Add(1)
@@ -144,6 +146,9 @@ func (p *Page) prefetchImages(root *html.Node, maxImages, maxBytes int) {
 			defer func() { <-sem }()
 			img := p.fetchImage(src)
 			if img == nil {
+				// A 404, an image format we cannot decode (SVG, AVIF) or a
+				// failed request: the render falls back to the alt text.
+				atomic.AddInt32(&failed, 1)
 				return
 			}
 			budgetMu.Lock()
@@ -152,6 +157,7 @@ func (p *Page) prefetchImages(root *html.Node, maxImages, maxBytes int) {
 			if budget > int64(maxBytes) {
 				// Over budget: drop the bytes but keep the fact that this
 				// source was seen, so it is not fetched again.
+				atomic.AddInt32(&dropped, 1)
 				p.imageMu.Lock()
 				p.images[src] = &pageImage{src: src}
 				p.imageMu.Unlock()
@@ -163,7 +169,8 @@ func (p *Page) prefetchImages(root *html.Node, maxImages, maxBytes int) {
 		}(src)
 	}
 	wg.Wait()
-	p.debugf("images: %d referenced, %d within budget", len(srcs), p.imageCount())
+	p.debugf("images: %d referenced, %d drawn, %d unusable (svg/avif/404), %d over budget",
+		len(srcs), p.imageCount(), atomic.LoadInt32(&failed), atomic.LoadInt32(&dropped))
 }
 
 func (p *Page) imageCount() int {
