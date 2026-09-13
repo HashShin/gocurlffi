@@ -749,3 +749,14 @@ func TestBoxSizingBorderBox(t *testing.T) {
 	}
 	_ = minX
 }
+
+// box-shadow draws behind the box: a spread ring shows around it.
+func TestBoxShadowRing(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;background:#000">
+		<div style="width:40px;height:40px;background:#ffffff;box-shadow:0 0 0 6px #ff0000"></div>
+		</body></html>`, ScreenshotOptions{Width: 200, NoImages: true})
+	_, _, _, _, ok := redBounds(img)
+	if !ok {
+		t.Error("box-shadow ring was not drawn")
+	}
+}

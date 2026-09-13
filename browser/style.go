@@ -333,6 +333,43 @@ func balancedCall(s string) (string, bool) {
 	return "", false
 }
 
+// parseBoxShadow reads the first shadow from a box-shadow value. Offsets, blur
+// and spread are lengths; the colour defaults to currentColor, as in a browser.
+func parseBoxShadow(v string, current color.RGBA, base, vw float64) (ox, oy, blur, spread float64, c color.RGBA, ok bool) {
+	if strings.EqualFold(strings.TrimSpace(v), "none") {
+		return
+	}
+	c = current
+	lengths := []float64{}
+	for _, tok := range splitTopLevel(v, ' ') {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if col, isCol := parseCSSColor(tok); isCol {
+			c = col
+			continue
+		}
+		if x, isLen := cssLengthToPxV(tok, base, vw); isLen {
+			lengths = append(lengths, x)
+		}
+	}
+	if len(lengths) == 0 {
+		return
+	}
+	ox = lengths[0]
+	if len(lengths) > 1 {
+		oy = lengths[1]
+	}
+	if len(lengths) > 2 {
+		blur = lengths[2]
+	}
+	if len(lengths) > 3 {
+		spread = lengths[3]
+	}
+	return ox, oy, blur, spread, c, c.A > 0
+}
+
 // parseRadius reads a border-radius value into per-corner pixels and
 // percentages (top-left, top-right, bottom-right, bottom-left). The one-to-four
 // value expansion is the same as margin.
@@ -638,6 +675,11 @@ type computedStyle struct {
 	hasMaxWidth  bool
 	maxHeightPx  float64
 	hasMaxHeight bool
+	// box-shadow (the first shadow), drawn as a soft rectangle behind the box.
+	shadowX, shadowY         float64
+	shadowBlur, shadowSpread float64
+	shadowColor              color.RGBA
+	hasShadow                bool
 	// Auto horizontal margins (margin: 0 auto) center a sized block.
 	marginLeftAuto  bool
 	marginRightAuto bool
@@ -1236,6 +1278,9 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 			cs.paddingRight = px
 		}
+	}
+	if v, ok := d["box-shadow"]; ok {
+		cs.shadowX, cs.shadowY, cs.shadowBlur, cs.shadowSpread, cs.shadowColor, cs.hasShadow = parseBoxShadow(v, cs.textColor, base, e.width)
 	}
 	if v, ok := d["box-sizing"]; ok && strings.EqualFold(strings.TrimSpace(v), "border-box") {
 		cs.boxSizingBorderBox = true

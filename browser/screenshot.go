@@ -522,6 +522,9 @@ func (c *collector) assignBox(start int, cs *computedStyle) {
 			b.boxBG = scaleAlpha(cs.background, cs.opacity)
 			b.boxHasBG = true
 		}
+		b.shadowX, b.shadowY = cs.shadowX, cs.shadowY
+		b.shadowBlur, b.shadowSpread = cs.shadowBlur, cs.shadowSpread
+		b.shadowColor, b.hasShadow = scaleAlpha(cs.shadowColor, cs.opacity), cs.hasShadow
 	}
 }
 
@@ -647,7 +650,7 @@ func (c *collector) walkElement(el *html.Node) {
 	// A block with a background, border or radius is drawn as one box: its
 	// background is painted as a (possibly rounded) rectangle instead of per
 	// line, so its own background must not propagate to the lines it contains.
-	boxed := block && (cs.hasBackground || cs.hasBorder || cs.hasRadius())
+	boxed := block && (cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow)
 	if boxed {
 		c.hasBG = false
 	}
@@ -834,6 +837,12 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		borderBox:      cs.boxSizingBorderBox,
 		marginRight:    cs.marginRight,
 		paddingRight:   cs.paddingRight,
+		shadowX:        cs.shadowX,
+		shadowY:        cs.shadowY,
+		shadowBlur:     cs.shadowBlur,
+		shadowSpread:   cs.shadowSpread,
+		shadowColor:    scaleAlpha(cs.shadowColor, cs.opacity),
+		hasShadow:      cs.hasShadow,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,

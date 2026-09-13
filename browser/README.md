@@ -375,8 +375,9 @@ same honest limits:
 - Element decoration: a block with a `background-color`, `border` or
   `border-radius` is drawn once as a rectangle (rounded when it has a radius,
   with anti-aliased corners) rather than per line, and nested boxes paint
-  parent-first. `opacity` scales the element's own colours. `box-shadow`,
-  `transform` and `filter` are not drawn.
+  parent-first. `opacity` scales the element's own colours, and `box-shadow`
+  (the first shadow) draws as a soft rectangle behind the box. `transform` and
+  `filter` are not drawn.
 - Block sizing: `width`, `max-width`, `max-height`, `height` (as a minimum) and
   `box-sizing: border-box` are applied, plus right margins and padding, and
   `margin: 0 auto` centers a sized block. `max-height` clips the overflowing

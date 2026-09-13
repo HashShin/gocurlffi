@@ -363,13 +363,17 @@ func drawBorder(img *image.RGBA, x, y, w, h, t float64, c color.RGBA) {
 // (rounded when it has a radius) instead of once per line. Boxes are collected
 // during layout and painted parent-first.
 type drawBox struct {
-	x, y, w, h float64
-	bg         color.RGBA
-	hasBG      bool
-	borderW    float64
-	borderC    color.RGBA
-	hasBorder  bool
-	radius     [4]float64 // resolved corner radii, in px
+	x, y, w, h               float64
+	bg                       color.RGBA
+	hasBG                    bool
+	borderW                  float64
+	borderC                  color.RGBA
+	hasBorder                bool
+	radius                   [4]float64 // resolved corner radii, in px
+	shadowX, shadowY         float64
+	shadowBlur, shadowSpread float64
+	shadowC                  color.RGBA
+	hasShadow                bool
 }
 
 func (b drawBox) draw(img *image.RGBA, scale float64) {
@@ -378,6 +382,9 @@ func (b drawBox) draw(img *image.RGBA, scale float64) {
 		return
 	}
 	r := [4]float64{b.radius[0] * scale, b.radius[1] * scale, b.radius[2] * scale, b.radius[3] * scale}
+	if b.hasShadow {
+		drawShadow(img, b.x*scale+b.shadowX*scale, b.y*scale+b.shadowY*scale, w, h, r, b.shadowSpread*scale, b.shadowBlur*scale, b.shadowC)
+	}
 	if b.hasBG {
 		if rounded(r) {
 			roundRectMaskDraw(img, x, y, w, h, r, 0, b.bg)
@@ -395,6 +402,37 @@ func (b drawBox) draw(img *image.RGBA, scale float64) {
 		} else {
 			drawBorder(img, x, y, w, h, t, b.borderC)
 		}
+	}
+}
+
+// drawShadow paints a soft rectangle behind a box: a solid expanded rectangle
+// when the blur is zero, otherwise a few expanding layers with falling alpha,
+// which reads as a glow at these sizes.
+func drawShadow(img *image.RGBA, x, y, w, h float64, r [4]float64, spread, blur float64, c color.RGBA) {
+	if c.A == 0 || w < 1 || h < 1 {
+		return
+	}
+	layers := 1
+	if blur > 0 {
+		layers = 4
+	}
+	for i := 0; i < layers; i++ {
+		grow := spread
+		alpha := float64(c.A)
+		if blur > 0 {
+			grow = spread + blur*float64(i+1)/float64(layers)
+			alpha = float64(c.A) * (1 - float64(i)/float64(layers)) * 0.4
+		}
+		cc := c
+		cc.A = uint8(alpha + 0.5)
+		if cc.A == 0 {
+			continue
+		}
+		rr := r
+		for j := range rr {
+			rr[j] += grow
+		}
+		roundRectMaskDraw(img, x-grow, y-grow, w+2*grow, h+2*grow, rr, 0, cc)
 	}
 }
 
@@ -630,6 +668,11 @@ type renderBlock struct {
 	marginRight  float64
 	paddingRight float64
 	maxHeight    float64
+	// box-shadow, drawn behind the box background.
+	shadowX, shadowY         float64
+	shadowBlur, shadowSpread float64
+	shadowColor              color.RGBA
+	hasShadow                bool
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -680,6 +723,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					x: x, w: w,
 					bg: b.boxBG, hasBG: b.boxHasBG,
 					borderW: b.borderW, borderC: b.borderColor, hasBorder: b.hasBorder,
+					shadowX: b.shadowX, shadowY: b.shadowY,
+					shadowBlur: b.shadowBlur, shadowSpread: b.shadowSpread,
+					hasShadow: b.hasShadow, shadowC: b.shadowColor,
 				},
 				radiusPx: b.radiusPx, radiusPct: b.radiusPct,
 			}
