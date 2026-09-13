@@ -457,6 +457,35 @@ type collector struct {
 
 	// boxSeq numbers the element boxes so each one is drawn once.
 	boxSeq int
+
+	// The current block-sizing context: the content-left, width, max-width and
+	// auto margins of the nearest ancestor that set one. Blocks inherit it, so
+	// max-width:1100px;margin:0 auto centers a whole subtree.
+	sizeLeft                    float64
+	sizeWidthPx, sizeWidthPct   float64
+	hasSizeWidth                bool
+	sizeMaxPx, sizeMaxPct       float64
+	hasSizeMax                  bool
+	sizeAutoLeft, sizeAutoRight bool
+}
+
+// assignSizing copies the current sizing context onto the blocks an element
+// produced, unless a nested element already gave them their own.
+func (c *collector) assignSizing(start int, cs *computedStyle) {
+	for i := start; i < len(c.blocks); i++ {
+		b := &c.blocks[i]
+		if b.hasSizing {
+			continue
+		}
+		b.hasSizing = true
+		b.sizeLeft = c.sizeLeft
+		b.boxWidthPx, b.boxWidthPct, b.hasBoxWidth = c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth
+		b.boxMaxWidthPx, b.boxMaxWidthPct, b.hasBoxMaxWidth = c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax
+		b.boxAutoLeft, b.boxAutoRight = c.sizeAutoLeft, c.sizeAutoRight
+		if cs != nil && cs.hasHeight && cs.heightPx > b.minHeight {
+			b.minHeight = cs.heightPx
+		}
+	}
 }
 
 // nextBoxID returns a fresh box id.
@@ -574,13 +603,21 @@ func (c *collector) walkElement(el *html.Node) {
 	tag := strings.ToLower(el.Data)
 
 	saved := struct {
-		style   renderStyle
-		content float64
-		quote   int
-		pre     bool
-		bg      color.RGBA
-		hasBG   bool
-	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG}
+		style                       renderStyle
+		content                     float64
+		quote                       int
+		pre                         bool
+		bg                          color.RGBA
+		hasBG                       bool
+		sizeLeft                    float64
+		sizeWidthPx, sizeWidthPct   float64
+		hasSizeWidth                bool
+		sizeMaxPx, sizeMaxPct       float64
+		hasSizeMax                  bool
+		sizeAutoLeft, sizeAutoRight bool
+	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG,
+		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
+		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -601,10 +638,10 @@ func (c *collector) walkElement(el *html.Node) {
 		letterSpacing: cs.letterSpacing,
 	}
 	block := isBlockDisplay(cs.display)
-	// A block with a border or a radius is drawn as one box: its background is
-	// painted as a (rounded) rectangle instead of per line, so its own
-	// background must not propagate to the lines it contains.
-	boxed := block && (cs.hasBorder || (cs.hasBackground && cs.hasRadius()))
+	// A block with a background, border or radius is drawn as one box: its
+	// background is painted as a (possibly rounded) rectangle instead of per
+	// line, so its own background must not propagate to the lines it contains.
+	boxed := block && (cs.hasBackground || cs.hasBorder || cs.hasRadius())
 	if boxed {
 		c.hasBG = false
 	}
@@ -612,6 +649,12 @@ func (c *collector) walkElement(el *html.Node) {
 		// Box edges: margin then padding, relative to the parent's content box.
 		boxLeft := c.content + cs.marginLeft
 		c.content = boxLeft + cs.paddingLeft
+		if cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto {
+			c.sizeLeft = c.content
+			c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = cs.widthPx, cs.widthPct, cs.hasWidth
+			c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = cs.maxWidthPx, cs.maxWidthPct, cs.hasMaxWidth
+			c.sizeAutoLeft, c.sizeAutoRight = cs.marginLeftAuto, cs.marginRightAuto
+		}
 	}
 	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
 	c.pre = c.pre || pre
@@ -619,6 +662,10 @@ func (c *collector) walkElement(el *html.Node) {
 	defer func() {
 		c.style, c.content, c.quote, c.pre = saved.style, saved.content, saved.quote, saved.pre
 		c.bg, c.hasBG = saved.bg, saved.hasBG
+		c.sizeLeft = saved.sizeLeft
+		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = saved.sizeWidthPx, saved.sizeWidthPct, saved.hasSizeWidth
+		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = saved.sizeMaxPx, saved.sizeMaxPct, saved.hasSizeMax
+		c.sizeAutoLeft, c.sizeAutoRight = saved.sizeAutoLeft, saved.sizeAutoRight
 	}()
 
 	switch tag {
@@ -686,6 +733,7 @@ func (c *collector) walkElement(el *html.Node) {
 		c.lists = c.lists[:len(c.lists)-1]
 		c.flush()
 		c.applyBoxEdges(start, cs)
+		c.assignSizing(start, cs)
 		if boxed {
 			c.assignBox(start, cs)
 		}
@@ -731,10 +779,18 @@ func (c *collector) walkElement(el *html.Node) {
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
 		c.walkChildren(el)
 		c.flush()
+		if boxed && len(c.blocks) == start {
+			// A boxed element with no content (a sized, empty div) still draws
+			// its box.
+			c.blocks = append(c.blocks, renderBlock{
+				kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
+			})
+		}
 		if isFlexColumnContainer(cs) {
 			applyColumnAlign(c.blocks[start:], cs.alignItems)
 		}
 		c.applyBoxEdges(start, cs)
+		c.assignSizing(start, cs)
 		if boxed {
 			c.assignBox(start, cs)
 		}
@@ -758,6 +814,17 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		minHeight: cs.minHeight,
 		marginTop: cs.marginTop, marginBottom: cs.marginBottom,
 		paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
+		// Inherit the current block-sizing context.
+		hasSizing:      true,
+		sizeLeft:       c.sizeLeft,
+		boxWidthPx:     c.sizeWidthPx,
+		boxWidthPct:    c.sizeWidthPct,
+		hasBoxWidth:    c.hasSizeWidth,
+		boxMaxWidthPx:  c.sizeMaxPx,
+		boxMaxWidthPct: c.sizeMaxPct,
+		hasBoxMaxWidth: c.hasSizeMax,
+		boxAutoLeft:    c.sizeAutoLeft,
+		boxAutoRight:   c.sizeAutoRight,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,

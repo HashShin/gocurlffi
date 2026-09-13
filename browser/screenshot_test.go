@@ -697,3 +697,30 @@ func TestVerticalMarginsCollapse(t *testing.T) {
 		t.Errorf("no margins gave %g, want less than the collapsed %g", none, collapsed)
 	}
 }
+
+// width, max-width and margin:auto size and center a block instead of filling
+// the column.
+func TestBlockSizingAndAutoCentering(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0">
+		<div style="width:100px;margin:0 auto;background:#ff0000;height:20px"></div>
+		</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	minX, _, maxX, _, ok := redBounds(img)
+	if !ok {
+		t.Fatal("the sized block was not drawn")
+	}
+	if w := maxX - minX; w < 95 || w > 105 {
+		t.Errorf("block width %d, want 100", w)
+	}
+	if center := (minX + maxX) / 2; center < 170 || center > 205 {
+		t.Errorf("block center %d, want it centered near 188-200", center)
+	}
+
+	// Without auto margins the block stays left aligned.
+	left := screenshotOf(t, `<html><body style="margin:0">
+		<div style="width:100px;background:#ff0000;height:20px"></div>
+		</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	minX, _, _, _, ok = redBounds(left)
+	if !ok || minX > 5 {
+		t.Errorf("left-aligned block starts at %d, want 0", minX)
+	}
+}

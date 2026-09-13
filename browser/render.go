@@ -612,6 +612,19 @@ type renderBlock struct {
 	boxHasBG  bool
 	radiusPx  [4]float64
 	radiusPct [4]float64
+	// Block sizing: width, max-width and auto horizontal margins. When set, the
+	// block's used width is min(available, width, max-width) and auto margins
+	// center it, instead of always filling the column.
+	hasSizing      bool
+	sizeLeft       float64
+	boxWidthPx     float64
+	boxWidthPct    float64
+	hasBoxWidth    bool
+	boxMaxWidthPx  float64
+	boxMaxWidthPct float64
+	hasBoxMaxWidth bool
+	boxAutoLeft    bool
+	boxAutoRight   bool
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -651,7 +664,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	accs := map[int]*boxAcc{}
 	var boxOrder []int
 	y := startY
-	recordBox := func(b renderBlock, top, bottom float64) {
+	recordBox := func(b renderBlock, top, bottom, x, w float64) {
 		if b.boxID == 0 {
 			return
 		}
@@ -659,7 +672,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		if acc == nil {
 			acc = &boxAcc{
 				dx: drawBox{
-					x: colX + b.borderLeft, w: colW - b.borderLeft,
+					x: x, w: w,
 					bg: b.boxBG, hasBG: b.boxHasBG,
 					borderW: b.borderW, borderC: b.borderColor, hasBorder: b.hasBorder,
 				},
@@ -687,9 +700,40 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
 		}
 		y += gap
+		// Block sizing: the used width is min(available, width, max-width), and
+		// auto horizontal margins center the block in what is left over.
+		available := colW - b.sizeLeft
+		if available < 0 {
+			available = 0
+		}
+		boxW := available
+		if b.hasBoxWidth {
+			if w := b.boxWidthPx + b.boxWidthPct*available; w >= 0 && w < boxW {
+				boxW = w
+			}
+		}
+		if b.hasBoxMaxWidth {
+			if mw := b.boxMaxWidthPx + b.boxMaxWidthPct*available; mw >= 0 && boxW > mw {
+				boxW = mw
+			}
+		}
+		extra := available - boxW
+		shift := 0.0
+		switch {
+		case b.boxAutoLeft && b.boxAutoRight:
+			shift = extra / 2
+		case b.boxAutoLeft:
+			shift = extra
+		}
+		if shift < 0 {
+			shift = 0
+		}
+		inner := b.textX - b.sizeLeft
+		boxX := colX + b.borderLeft + shift
+		boxWidthOuter := boxW + (b.boxLeft - b.borderLeft)
 		switch b.kind {
 		case blockImage:
-			w := colW - b.boxLeft
+			w := boxW
 			if w < 8 {
 				w = 8
 			}
@@ -711,22 +755,22 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			if h < 8 {
 				h = 8
 			}
-			out = append(out, drawLine{y: y, height: h, pic: b.pic, picX: colX + b.boxLeft, picW: w})
+			out = append(out, drawLine{y: y, height: h, pic: b.pic, picX: colX + b.boxLeft + shift, picW: w})
 			y += h
 		case blockRule:
 			out = append(out, drawLine{
 				y: y, height: 1, rule: true,
-				ruleX: colX + b.boxLeft, ruleW: colW - b.boxLeft,
+				ruleX: colX + b.boxLeft + shift, ruleW: boxW,
 			})
 			y += 12
 		case blockFlex:
-			ls, h := layoutFlex(b, colX, colW, y, baseSize, boxes)
+			ls, h := layoutFlex(b, colX+shift, boxW+b.boxLeft, y, baseSize, boxes)
 			out = append(out, ls...)
 			y += h
 		default:
 			blockTop := y
-			textStart := b.textX
-			limit := colW - b.textX
+			textStart := colX + b.textX + shift
+			limit := boxW - inner
 			if limit < 40 {
 				limit = 40
 			}
@@ -763,24 +807,24 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					height:   lh,
 					baseline: y + ascent + (lh-h)/2,
 					quote:    b.quote,
-					indent:   colX + textStart,
+					indent:   textStart,
 				}
 				lw := lineWidth(line)
 				if b.hasBG {
 					dl.bg = b.bg
 					dl.hasBG = true
 					if b.bgFull {
-						dl.bgX = colX + b.boxLeft
-						dl.bgW = colW - b.boxLeft
+						dl.bgX = colX + b.boxLeft + shift
+						dl.bgW = boxW
 					} else {
-						dl.bgX = colX + textStart
+						dl.bgX = textStart
 						dl.bgW = lw
 					}
 					if dl.bgW < 0 {
 						dl.bgW = 0
 					}
 				}
-				runX := colX + textStart
+				runX := textStart
 				if b.align == "center" || b.align == "right" {
 					space := limit - lw
 					if space > 0 {
@@ -793,7 +837,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				}
 				if i == 0 && b.marker != "" {
 					dl.marker = b.marker
-					dl.markerX = colX + b.boxLeft
+					dl.markerX = colX + b.boxLeft + shift
 				}
 				for _, sp := range line {
 					if sp.pic != nil {
@@ -818,7 +862,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				lh := h * lineFact
 				out = append(out, drawLine{
 					y: y, height: lh, baseline: y + h*0.8,
-					marker: b.marker, markerX: colX + b.boxLeft, quote: b.quote, indent: colX + textStart,
+					marker: b.marker, markerX: colX + b.boxLeft + shift, quote: b.quote, indent: textStart,
 				})
 				y += lh
 			}
@@ -829,13 +873,13 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				if b.hasBG {
 					out = append(out, drawLine{
 						y: y, height: gapH, hasBG: true, bg: b.bg,
-						bgX: colX + b.boxLeft, bgW: colW - b.boxLeft,
+						bgX: colX + b.boxLeft + shift, bgW: boxW,
 					})
 				}
 				y += gapH
 			}
 		}
-		recordBox(b, bTop, y)
+		recordBox(b, bTop, y, boxX, boxWidthOuter)
 		prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
 		havePrev = true
 	}
