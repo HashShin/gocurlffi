@@ -331,12 +331,21 @@ same honest limits:
 - The page's pictures are drawn: `<img>` and `srcset` (the largest candidate),
   PNG, JPEG, GIF and WebP, scaled to their box with a high-quality filter.
   Bounded and optional: at most 48 images and 16MB per render, fetched six at a
-  time, and `NoImages` / `--no-images` turns it off. Vector images (SVG) are not
-  rasterized and fall back to their `alt` text, and `background-image` and
-  gradients are not painted, so a page that is mostly SVG art still renders as
-  text. On `brave.com` a 900px render goes from 3s and 2,072 distinct colours
-  without images to 9s and 97,802 with them, which is what real photographs
-  look like.
+  time, and `NoImages` / `--no-images` turns it off. An image with a CSS width
+  or height is drawn at that size; otherwise its natural size, scaled down to
+  the column. `background-image` and gradients are not painted, so a page that
+  is mostly CSS art still renders as text. On `brave.com` a 900px render goes
+  from 3s and 2,072 distinct colours without images to 9s and 97,802 with them,
+  which is what real photographs look like.
+- Inline SVG icons are rasterized with a pure-Go renderer (oksvg + rasterx) and
+  drawn at the element's CSS size, with `currentColor` following the computed
+  text colour. Icons and images flow as inline replaced boxes, so one can sit
+  next to text on a line rather than forcing a line break.
+- Native form controls are drawn, not left blank: checkbox and radio (with
+  their checked state), range, and color swatch show a graphic, while text
+  inputs, textareas, buttons, file and select show their value, placeholder or
+  selected option. Custom-drawn controls (`appearance: none` with CSS borders)
+  get the native graphic, since borders are not rendered.
 - Still no box model: no borders, shadows, floats, positioning or gradients.
   CSS is
   cascaded for typography, colour, display, spacing, alignment and flat block
@@ -393,8 +402,7 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 This is a browsing core with a document renderer, not a web rendering engine.
 `Screenshot` flows text and draws a PNG, but there is no CSS box model, no
-image decoding, no backgrounds, borders or shadows, and no PDF output.
-Specifically absent:
+borders or shadows, and no PDF output. Specifically absent:
 
 - ES modules (`<script type="module">`, `import`/`export`) are skipped.
 - The JavaScript engine has no async generators or `for await (... of ...)`

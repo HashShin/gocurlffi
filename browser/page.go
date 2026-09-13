@@ -81,6 +81,10 @@ type Page struct {
 	// screenshot prefetches them in parallel.
 	imageMu sync.Mutex
 	images  map[string]*pageImage
+	// svgImages caches rasterized inline <svg> elements by node and size.
+	svgImages map[string]*pageImage
+	// widgetImages caches the drawn form-control graphics.
+	widgetImages map[string]*pageImage
 
 	// fontFaces are the @font-face rules the page declares, in document order.
 	// fontLoaded and fontFailed cache fetching and decoding their files, which

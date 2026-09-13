@@ -591,19 +591,22 @@ func (c *collector) walkElement(el *html.Node) {
 			quote: c.quote,
 		})
 		return
-	case "img":
-		if pic := c.page.image(resolveURL(c.page.baseURL(), imageSource(el))); pic != nil {
-			c.flush()
-			c.blocks = append(c.blocks, renderBlock{
-				kind:     blockImage,
-				pic:      pic,
-				picW:     float64(pic.size.X),
-				picH:     float64(pic.size.Y),
-				boxLeft:  c.content,
-				leading:  cs.marginTop,
-				trailing: cs.marginBottom,
-			})
+	case "img", "svg":
+		if tag == "svg" {
+			w, h := svgSize(el, cs)
+			if w > 0 && h > 0 {
+				if pic := c.page.rasterSVG(el, w, h, c.style.color); pic != nil {
+					c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{pic: pic, picW: w, picH: h})
+				}
+			}
+			// The children of <svg> are shapes, not text or layout.
 			return
+		}
+		if pic := c.page.image(resolveURL(c.page.baseURL(), imageSource(el))); pic != nil {
+			if w, h := inlineImageSize(cs, pic); w > 0 && h > 0 {
+				c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{pic: pic, picW: w, picH: h})
+				return
+			}
 		}
 		// Without the bytes, the alt text is all there is to draw.
 		if alt, ok := getAttr(el, "alt"); ok && strings.TrimSpace(alt) != "" {
@@ -611,6 +614,10 @@ func (c *collector) walkElement(el *html.Node) {
 			s.italic = true
 			c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{text: "[" + strings.TrimSpace(alt) + "]", style: s})
 		}
+		return
+	}
+
+	if c.emitFormControl(el, cs, tag) {
 		return
 	}
 

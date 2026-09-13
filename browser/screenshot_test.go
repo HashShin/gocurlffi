@@ -433,3 +433,114 @@ func TestFlexJustifyCenter(t *testing.T) {
 		t.Errorf("centered item x=%g, want it near the middle", x)
 	}
 }
+
+// An inline <svg> is rasterized and drawn; a red square must appear in it.
+func TestScreenshotDrawsInlineSVG(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0">
+		<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+			<rect width="40" height="40" fill="#ff0000"/>
+		</svg></body></html>`, ScreenshotOptions{Width: 200, NoImages: true})
+	n := 0
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 > 0xd0 && g>>8 < 0x40 && bl>>8 < 0x40 {
+				n++
+			}
+		}
+	}
+	if n < 800 {
+		t.Errorf("drew %d red pixels, want the 40x40 inline SVG", n)
+	}
+}
+
+// currentColor in an inline SVG follows the element's computed colour.
+func TestScreenshotInlineSVGUsesCurrentColor(t *testing.T) {
+	img := screenshotOf(t, `<html><head><style>body{color:#00ff00}</style></head>
+		<body style="margin:0">
+		<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+			<rect width="40" height="40" fill="currentColor"/>
+		</svg></body></html>`, ScreenshotOptions{Width: 200, NoImages: true})
+	n := 0
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if g>>8 > 0xd0 && r>>8 < 0x40 && bl>>8 < 0x40 {
+				n++
+			}
+		}
+	}
+	if n < 800 {
+		t.Errorf("drew %d green pixels, want currentColor green", n)
+	}
+}
+
+// An <img> with a CSS width is drawn at that width, not its natural size.
+func TestScreenshotInlineImageUsesCSSWidth(t *testing.T) {
+	pic := image.NewRGBA(image.Rect(0, 0, 120, 60))
+	draw.Draw(pic, pic.Bounds(), image.NewUniform(color.RGBA{R: 0xff, G: 0x00, B: 0xff, A: 0xff}), image.Point{}, draw.Src)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, pic); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/pic.png" {
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(buf.Bytes())
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body style="margin:0"><img src="/pic.png" style="width:20px"></body></html>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	out, err := p.Screenshot(ScreenshotOptions{Width: 200})
+	if err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	if n := magenta(out); n < 100 || n > 600 {
+		t.Errorf("drew %d magenta pixels, want about 20x10=200", n)
+	}
+}
+
+// Native controls draw something: a checked checkbox shows accent pixels, a
+// range shows a track, a color input shows its swatch, and text-like controls
+// and selects show their value.
+func TestScreenshotDrawsFormControls(t *testing.T) {
+	img := screenshotOf(t, `<html><body style="margin:0;background:#fff">
+		<input type="checkbox" checked>
+		<input type="radio" checked>
+		<input type="range">
+		<input type="color" value="#ff0000">
+		<input type="text" value="hello">
+		<select><option>a</option><option selected>b</option></select>
+		<input type="submit" value="Go">
+		</body></html>`, ScreenshotOptions{Width: 500, NoImages: true})
+	b := img.Bounds()
+	accent, red := 0, 0
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 < 0x30 && g>>8 > 0x40 && g>>8 < 0x80 && bl>>8 > 0xb0 {
+				accent++
+			}
+			if r>>8 > 0xd0 && g>>8 < 0x40 && bl>>8 < 0x40 {
+				red++
+			}
+		}
+	}
+	if accent < 20 {
+		t.Errorf("drew %d accent pixels, want the checkbox/range/radio widgets", accent)
+	}
+	if red < 100 {
+		t.Errorf("drew %d red pixels, want the color swatch", red)
+	}
+}

@@ -184,6 +184,11 @@ type drawRun struct {
 	x     float64
 	text  string
 	style renderStyle
+	// An inline replaced box (an <img>, an inline <svg> or a form-control
+	// widget) is drawn in place of text. imgW/imgH are the drawn size.
+	img  *pageImage
+	imgW float64
+	imgH float64
 }
 
 type drawLine struct {
@@ -250,6 +255,11 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 			drawString(img, s(ln.markerX), s(ln.baseline), ln.marker, faceKey{size: doc.baseSize}, renderTextColor)
 		}
 		for _, r := range ln.runs {
+			if r.img != nil {
+				h := s(r.imgH)
+				drawScaledImage(img, r.img, s(r.x), s(ln.baseline)-h, s(r.imgW), h, scale)
+				continue
+			}
 			drawRunText(img, s(r.x), s(ln.baseline), r.text, r.style, s(r.style.letterSpacing))
 			wpx := textWidth(r.style, r.text)
 			if r.style.underline {
@@ -375,6 +385,11 @@ const (
 type renderSpan struct {
 	text  string
 	style renderStyle
+	// A replaced box: when pic is set this span is an inline image of size
+	// picW x picH instead of text.
+	pic  *pageImage
+	picW float64
+	picH float64
 }
 
 type renderBlock struct {
@@ -488,24 +503,33 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 			if limit < 40 {
 				limit = 40
 			}
-			var lines []renderSpan
+			var lines [][]renderSpan
 			switch {
 			case b.pre:
-				lines = splitPreLines(b.spans)
+				for _, ln := range splitPreLines(b.spans) {
+					lines = append(lines, []renderSpan{ln})
+				}
 			case b.nowrap:
-				lines = []renderSpan{{text: joinSpanText(b.spans), style: firstStyle(b.spans)}}
+				lines = [][]renderSpan{b.spans}
 			default:
 				lines = wrapSpans(b.spans, limit)
 			}
-			for i, ln := range lines {
-				k := styleKey(ln.style)
+			for i, line := range lines {
+				style := firstStyle(line)
+				k := styleKey(style)
 				ascent, _, h := lineMetrics(k)
+				if ih := lineImageHeight(line, limit); ih > h {
+					h = ih
+				}
+				if ascent < h {
+					ascent = h
+				}
 				lh := h * lineFact
 				if b.lineH > 0 {
 					lh = b.lineH
 				}
-				if lh < ln.style.size {
-					lh = ln.style.size
+				if lh < style.size {
+					lh = style.size
 				}
 				dl := drawLine{
 					y:        y,
@@ -514,6 +538,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 					quote:    b.quote,
 					indent:   colX + textStart,
 				}
+				lw := lineWidth(line)
 				if b.hasBG {
 					dl.bg = b.bg
 					dl.hasBG = true
@@ -522,7 +547,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 						dl.bgW = colW - b.boxLeft
 					} else {
 						dl.bgX = colX + textStart
-						dl.bgW = textWidth(ln.style, ln.text)
+						dl.bgW = lw
 					}
 					if dl.bgW < 0 {
 						dl.bgW = 0
@@ -530,8 +555,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 				}
 				runX := colX + textStart
 				if b.align == "center" || b.align == "right" {
-					wpx := textWidth(ln.style, ln.text)
-					space := limit - wpx
+					space := limit - lw
 					if space > 0 {
 						if b.align == "center" {
 							runX += space / 2
@@ -544,7 +568,20 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64) ([
 					dl.marker = b.marker
 					dl.markerX = colX + b.boxLeft
 				}
-				dl.runs = append(dl.runs, drawRun{x: runX, text: ln.text, style: ln.style})
+				for _, sp := range line {
+					if sp.pic != nil {
+						w, hh := sp.picW, sp.picH
+						if w > limit && w > 0 {
+							hh = hh * limit / w
+							w = limit
+						}
+						dl.runs = append(dl.runs, drawRun{x: runX, img: sp.pic, imgW: w, imgH: hh})
+						runX += w
+						continue
+					}
+					dl.runs = append(dl.runs, drawRun{x: runX, text: sp.text, style: sp.style})
+					runX += textWidth(sp.style, sp.text)
+				}
 				out = append(out, dl)
 				y += lh
 			}
@@ -768,7 +805,7 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 		default:
 			// The block's own offset (margin + padding) is part of the item's
 			// width, or the text wraps inside its own padding.
-			if tw := b.boxLeft + textWidth(firstStyle(b.spans), joinSpanText(b.spans)); tw > w {
+			if tw := b.boxLeft + spansIntrinsicWidth(b.spans); tw > w {
 				w = tw
 			}
 		}
@@ -780,98 +817,160 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 }
 
 func firstStyle(spans []renderSpan) renderStyle {
-	if len(spans) > 0 {
-		return spans[0].style
+	for _, sp := range spans {
+		if sp.pic == nil {
+			return sp.style
+		}
 	}
 	return defaultRenderStyle()
+}
+
+// spansIntrinsicWidth is the max-content width of a run of spans: text widths
+// plus the natural width of any replaced boxes.
+func spansIntrinsicWidth(spans []renderSpan) float64 {
+	w := 0.0
+	for _, sp := range spans {
+		if sp.pic != nil {
+			w += sp.picW
+		} else {
+			w += textWidth(sp.style, sp.text)
+		}
+	}
+	return w
+}
+
+// lineWidth is the drawn width of a line: text runs plus replaced boxes.
+func lineWidth(line []renderSpan) float64 { return spansIntrinsicWidth(line) }
+
+// lineImageHeight is the height of the tallest replaced box on a line, 0 when
+// there is none. A box wider than the column is scaled down, so its height is
+// scaled the same way.
+func lineImageHeight(line []renderSpan, limit float64) float64 {
+	h := 0.0
+	for _, sp := range line {
+		if sp.pic == nil {
+			continue
+		}
+		hh := sp.picH
+		if sp.picW > limit && sp.picW > 0 {
+			hh = hh * limit / sp.picW
+		}
+		if hh > h {
+			h = hh
+		}
+	}
+	return h
 }
 
 func joinSpanText(spans []renderSpan) string {
 	var b strings.Builder
 	for _, s := range spans {
-		b.WriteString(s.text)
+		if s.pic == nil {
+			b.WriteString(s.text)
+		}
 	}
 	return b.String()
 }
 
-// wrapSpans greedily fills lines, breaking between words.
-func wrapSpans(spans []renderSpan, limit float64) []renderSpan {
-	type word struct {
-		text  string
-		style renderStyle
-		w     float64
+// wrapSpans greedily fills lines, breaking between words. Every line is a
+// sequence of spans, so an inline replaced box (an icon) can sit between text
+// runs on the same line.
+func wrapSpans(spans []renderSpan, limit float64) [][]renderSpan {
+	type item struct {
+		span renderSpan
+		w    float64
 	}
-	var words []word
+	var items []item
 	spaceStyles := map[int]renderStyle{}
 	for _, sp := range spans {
+		if sp.pic != nil {
+			items = append(items, item{span: sp, w: sp.picW})
+			continue
+		}
 		fields := strings.Fields(sp.text)
 		if len(fields) == 0 {
-			if len(words) > 0 {
-				spaceStyles[len(words)-1] = sp.style
+			if len(items) > 0 {
+				spaceStyles[len(items)-1] = sp.style
 			}
 			continue
 		}
 		for i, w := range fields {
 			if i > 0 {
-				spaceStyles[len(words)-1] = sp.style
+				spaceStyles[len(items)-1] = sp.style
 			}
-			words = append(words, word{text: w, style: sp.style,
-				w: textWidth(sp.style, w)})
+			items = append(items, item{span: renderSpan{text: w, style: sp.style}, w: textWidth(sp.style, w)})
 		}
 	}
-	if len(words) == 0 {
+	if len(items) == 0 {
 		return nil
 	}
 
-	var out []renderSpan
-	var cur strings.Builder
-	var curStyle renderStyle
+	var lines [][]renderSpan
+	var cur []renderSpan
 	curW := 0.0
 	flush := func() {
-		if cur.Len() > 0 {
-			out = append(out, renderSpan{text: cur.String(), style: curStyle})
-			cur.Reset()
+		if len(cur) > 0 {
+			lines = append(lines, mergeTextSpans(cur))
 		}
+		cur = nil
 		curW = 0
 	}
-	for i, w := range words {
+	for i, it := range items {
+		spaceW := 0.0
 		if i > 0 {
-			spStyle := spaceStyles[i-1]
-			spaceW := textWidth(spStyle, " ")
-			if curW+spaceW+w.w > limit && curW > 0 {
-				flush()
-			} else if curW > 0 {
-				cur.WriteString(" ")
-				curW += spaceW
+			if st, ok := spaceStyles[i-1]; ok {
+				spaceW = textWidth(st, " ")
+				if curW > 0 && curW+spaceW+it.w > limit {
+					flush()
+					spaceW = 0
+				}
 			}
 		}
-		if w.w > limit && curW == 0 {
+		if spaceW > 0 && curW > 0 {
+			cur = append(cur, renderSpan{text: " ", style: spaceStyles[i-1]})
+			curW += spaceW
+		}
+		if it.span.pic == nil && it.w > limit && curW == 0 {
 			// A word wider than the column: hard-break it.
 			var piece strings.Builder
 			pieceW := 0.0
-			for _, r := range w.text {
+			for _, r := range it.span.text {
 				rs := string(r)
-				rw := textWidth(w.style, rs)
+				rw := textWidth(it.span.style, rs)
 				if pieceW+rw > limit && piece.Len() > 0 {
-					out = append(out, renderSpan{text: piece.String(), style: w.style})
+					cur = append(cur, renderSpan{text: piece.String(), style: it.span.style})
+					flush()
 					piece.Reset()
 					pieceW = 0
 				}
 				piece.WriteString(rs)
 				pieceW += rw
 			}
-			cur.WriteString(piece.String())
-			curStyle = w.style
+			cur = append(cur, renderSpan{text: piece.String(), style: it.span.style})
 			curW = pieceW
 			continue
 		}
-		if cur.Len() == 0 {
-			curStyle = w.style
-		}
-		cur.WriteString(w.text)
-		curW += w.w
+		cur = append(cur, it.span)
+		curW += it.w
 	}
 	flush()
+	return lines
+}
+
+// mergeTextSpans joins adjacent text spans of the same style, so a line of
+// plain text stays a single run and keeps its shape.
+func mergeTextSpans(line []renderSpan) []renderSpan {
+	out := make([]renderSpan, 0, len(line))
+	for _, sp := range line {
+		if sp.pic == nil && len(out) > 0 {
+			last := &out[len(out)-1]
+			if last.pic == nil && last.style == sp.style {
+				last.text += sp.text
+				continue
+			}
+		}
+		out = append(out, sp)
+	}
 	return out
 }
 

@@ -569,6 +569,9 @@ type computedStyle struct {
 	widthPx        float64
 	widthPct       float64
 	hasWidth       bool
+	heightPx       float64
+	heightPct      float64
+	hasHeight      bool
 	columnGap      float64
 	rowGap         float64
 	justifyContent string
@@ -1119,6 +1122,11 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["width"]; ok {
 		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
 			cs.widthPct, cs.widthPx, cs.hasWidth = pct, px, true
+		}
+	}
+	if v, ok := d["height"]; ok {
+		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
+			cs.heightPct, cs.heightPx, cs.hasHeight = pct, px, true
 		}
 	}
 	if v, ok := d["flex-grow"]; ok {
