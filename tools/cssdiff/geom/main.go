@@ -122,8 +122,8 @@ func main() {
 		if r.GridCols != "" && r.GridCols != "none" {
 			layout = "grid[" + r.GridCols + "]"
 		}
-		fmt.Printf("y=%-6d %-7s %-8s %-34s %4dx%-5d %-18s %s\n",
-			r.Y, r.Tag, layout, trunc(r.Class, 34), r.W, r.H, trunc(r.Text, 18), r.ID)
+		fmt.Printf("y=%-6d x=%-5d %-7s %-8s %-30s %4dx%-5d %-16s %s\n",
+			r.Y, r.X, r.Tag, layout, trunc(r.Class, 30), r.W, r.H, trunc(r.Text, 16), r.ID)
 	}
 }
 
