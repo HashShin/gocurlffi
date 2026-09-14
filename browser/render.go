@@ -641,6 +641,9 @@ type renderBlock struct {
 	tableStretch bool
 	children     [][]renderBlock
 	grow         []float64
+	// shrink is each flex item's flex-shrink: how much of a row's overflow it
+	// absorbs, so "flex: none" items keep their width.
+	shrink []float64
 	basisPx      []float64
 	basisPct     []float64
 	hasBasis     []bool
@@ -1253,6 +1256,12 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		} else {
 			base[i] = intrinsicColumnWidth(col, avail, baseSize)
 		}
+		// A flex item takes up its outer size, margins included. The row
+		// distributes that, and the item's own layout reserves the margins
+		// again when it sizes its box.
+		if len(col) > 0 {
+			base[i] += col[0].boxLeft + col[0].marginRight
+		}
 		if base[i] < 0 {
 			base[i] = 0
 		}
@@ -1637,15 +1646,33 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 	}
 	sumGaps := gap * float64(n-1)
 	if sum+sumGaps > avail {
-		// Shrink to fit the row.
+		// Shrink to fit the row. Each item gives up a share of the overflow
+		// proportional to flex-shrink times its own size, so a "flex: none"
+		// item keeps its width while the rest of the row gives way.
 		room := avail - sumGaps
 		if room < 0 {
 			room = 0
 		}
-		if sum > 0 {
-			scale := room / sum
-			for i := range widths {
-				widths[i] *= scale
+		overflow := sum - room
+		weight := 0.0
+		for i, ci := range idx {
+			s := 1.0
+			if ci < len(b.shrink) {
+				s = b.shrink[ci]
+			}
+			weight += s * widths[i]
+		}
+		if weight > 0 {
+			for i, ci := range idx {
+				s := 1.0
+				if ci < len(b.shrink) {
+					s = b.shrink[ci]
+				}
+				w := widths[i] - overflow*s*widths[i]/weight
+				if w < 0 {
+					w = 0
+				}
+				widths[i] = w
 			}
 		}
 	} else if room := avail - sum - sumGaps; room > 0 {

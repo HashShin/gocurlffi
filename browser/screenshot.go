@@ -929,6 +929,14 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	}
 
+	// A list that is a flex or grid container is not a list: its items are
+	// laid out in a row. go.dev's header menu is <ul style="display:flex">,
+	// which stacks the menu entries down the page when the list path wins.
+	if (tag == "ul" || tag == "ol") && (isFlexRowContainer(cs) || isGridContainer(cs)) &&
+		c.collectFlexRow(el, cs, isGridContainer(cs)) {
+		return
+	}
+
 	switch tag {
 	case "ul", "ol":
 		c.flush()
@@ -1257,9 +1265,10 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 			continue
 		}
 		b.children = append(b.children, col)
-		grow, bx, bp, has := 0.0, 0.0, 0.0, false
+		grow, shrink, bx, bp, has := 0.0, 1.0, 0.0, 0.0, false
 		if child != nil {
 			grow = child.flexGrow
+			shrink = child.flexShrink
 			switch {
 			case child.hasFlexBasis:
 				bx, bp, has = child.flexBasisPx, child.flexBasisPct, true
@@ -1268,6 +1277,7 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 			}
 		}
 		b.grow = append(b.grow, grow)
+		b.shrink = append(b.shrink, shrink)
 		b.basisPx = append(b.basisPx, bx)
 		b.basisPct = append(b.basisPct, bp)
 		b.hasBasis = append(b.hasBasis, has)

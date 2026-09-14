@@ -652,6 +652,61 @@ func TestFlexBasisCalcAndWrap(t *testing.T) {
 	}
 }
 
+// Overflow in a flex row is shared out in proportion to flex-shrink times each
+// item's own size, and flex-shrink: 0 keeps an item's width outright. The
+// expected geometry is Chromium's getBoundingClientRect for the same page.
+func TestFlexShrinkSharesOverflow(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		.row { display: flex; width: 300px }
+		.item { width: 200px; height: 10px; background: #ccc }
+		.keep { flex: none; width: 200px; height: 10px; background: #ddd }
+	</style></head><body>
+		<div class="row"><div class="item"></div><div class="item"></div></div>
+		<div class="row"><div class="item"></div><div class="keep"></div></div>
+	</body></html>`, 400)
+	want := []struct{ x, y, w float64 }{
+		{0, 0, 150}, {150, 0, 150}, // 400px of items in a 300px row
+		{0, 10, 100}, {100, 10, 200}, // the item gives way, the flex:none one does not
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g, want x=%g y=%g w=%g",
+				i, got.x, got.y, got.w, w.x, w.y, w.w)
+		}
+	}
+}
+
+// A list that is a flex container lays its items out in a row, not down the
+// page. go.dev's header menu is <ul style="display:flex">, and rendering it as
+// a list stacks the entries and pushes the whole page down.
+func TestFlexListLaysItemsInARow(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		ul { display: flex }
+		li { flex: none; width: 50px; height: 10px; background: #ccc; list-style: none }
+	</style></head><body>
+		<ul><li></li><li></li><li></li></ul>
+	</body></html>`, 400)
+	want := []struct{ x, y, w float64 }{
+		{0, 0, 50}, {50, 0, 50}, {100, 0, 50},
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g, want x=%g y=%g w=%g",
+				i, got.x, got.y, got.w, w.x, w.y, w.w)
+		}
+	}
+}
+
 // "flex: none" is "0 0 auto": it cancels an earlier flex-basis:0 and lets the
 // item's width size it. A 2/3 column whose width was dropped collapsed to a
 // sliver and wrapped to a few characters per line.

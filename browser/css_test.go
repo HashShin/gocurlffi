@@ -448,6 +448,41 @@ func TestCSSDisplayValues(t *testing.T) {
 	}
 }
 
+// The hidden attribute is a user-agent rule, so it hides the element unless an
+// author display declaration overrides it. go.dev's dropdown descriptions are
+// <div class="screen-reader-only" hidden>, which a renderer that ignores the
+// attribute draws as five lines of menu instructions.
+func TestCSSHiddenAttribute(t *testing.T) {
+	b := newTestBrowser(t)
+	p := b.NewPage("https://example.test/")
+	_ = p.SetContent(`<!doctype html><html><head><style>
+		#override { display: block }
+		section { display: block }
+	</style></head><body>
+		<div id="plain" hidden>a</div>
+		<div id="override" hidden>c</div>
+		<section id="untilFound" hidden="until-found">d</section>
+		<section id="shown">e</section>
+	</body></html>`, "https://example.test/")
+	// An author display declaration wins by origin even when it is a plain
+	// type selector, which is what Chromium reports for the same page.
+	cases := map[string]string{
+		"plain":      "none",
+		"shown":      "block",
+		"override":   "block",
+		"untilFound": "block",
+	}
+	for id, want := range cases {
+		v, err := p.Eval(`getComputedStyle(document.getElementById('` + id + `')).display`)
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if got := v.String(); got != want {
+			t.Errorf("#%s display = %q, want %q", id, got, want)
+		}
+	}
+}
+
 // A theme built from custom properties, which is how Wikipedia, Bootstrap 5 and
 // most modern sites are written. Without var() support every such declaration
 // is dropped, and the page falls back to the user-agent defaults.

@@ -508,6 +508,12 @@ func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 		if head := strings.Fields(strings.TrimSpace(lv[:i])); len(head) > 0 {
 			if f, err := strconv.ParseFloat(head[0], 64); err == nil {
 				cs.flexGrow = f
+				cs.flexShrink = 1
+			}
+			if len(head) > 1 {
+				if f, err := strconv.ParseFloat(head[1], 64); err == nil && f >= 0 {
+					cs.flexShrink = f
+				}
 			}
 		}
 		if expr, ok := balancedCall(lv[i:]); ok {
@@ -525,11 +531,13 @@ func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 	case "none":
 		// flex: none is "0 0 auto": no growth, and the basis is the width.
 		cs.flexGrow = 0
+		cs.flexShrink = 0
 		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, false
 		return
 	case "auto":
 		// flex: auto is "1 1 auto".
 		cs.flexGrow = 1
+		cs.flexShrink = 1
 		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, false
 		return
 	}
@@ -537,6 +545,7 @@ func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 		// A bare flex factor implies a 0% basis until a later token says
 		// otherwise; this is why "flex: 1" ignores an item's width.
 		cs.flexGrow = f
+		cs.flexShrink = 1
 		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, true
 	}
 	for _, tok := range fields[1:] {
@@ -548,7 +557,10 @@ func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 		}
 		// A bare number is the shrink factor, not the basis.
 		if _, unit := splitCSSNumber(strings.ToLower(tok)); unit == "" {
-			if _, err := strconv.ParseFloat(tok, 64); err == nil {
+			if f, err := strconv.ParseFloat(tok, 64); err == nil {
+				if f >= 0 {
+					cs.flexShrink = f
+				}
 				continue
 			}
 		}
@@ -1105,6 +1117,10 @@ type computedStyle struct {
 	flexDirection string // row (default), column
 	flexWrap      bool
 	flexGrow      float64
+	// flexShrink is how much of a row's overflow the item absorbs. "flex:
+	// none" sets it to 0, which is what keeps the entries of a header menu
+	// their own width while the row around them gives way.
+	flexShrink float64
 	// flexBasisPx and flexBasisPct are the two parts of the item's main size:
 	// a percentage of the container plus a fixed length. calc() over the two
 	// is the common form ("flex: 0 0 calc(50% - 7px)").
@@ -1283,6 +1299,8 @@ func defaultComputedStyle() computedStyle {
 		whiteSpace: "normal",
 		textAlign:  "left",
 		opacity:    1,
+		// flex-shrink starts at 1, unlike the other flex longhands.
+		flexShrink: 1,
 	}
 }
 
@@ -1834,6 +1852,11 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			cs.flexGrow = f
 		}
 	}
+	if v, ok := d["flex-shrink"]; ok {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 {
+			cs.flexShrink = f
+		}
+	}
 	if v, ok := d["flex"]; ok {
 		applyFlexShorthand(cs, v, base, e.width)
 	}
@@ -1999,6 +2022,13 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 		"summary", "ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
 		"search", "legend", "optgroup":
 		cs.display = "block"
+	}
+
+	// The hidden attribute is a user-agent rule, so an author display
+	// declaration overrides it, exactly as in a browser. "until-found" keeps
+	// the element in the layout for find-in-page instead of hiding it.
+	if v, ok := getAttr(n, "hidden"); ok && !strings.EqualFold(strings.TrimSpace(v), "until-found") {
+		cs.display = "none"
 	}
 
 	// Typography. Heading sizes are em-relative (2em, 1.5em, ...) as in the
