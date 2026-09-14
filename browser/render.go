@@ -684,11 +684,17 @@ type renderBlock struct {
 	// Block sizing: width, max-width and auto horizontal margins. When set, the
 	// block's used width is min(available, width, max-width) and auto margins
 	// center it, instead of always filling the column.
-	hasSizing      bool
-	sizeLeft       float64
-	boxWidthPx     float64
-	boxWidthPct    float64
-	hasBoxWidth    bool
+	hasSizing   bool
+	sizeLeft    float64
+	boxWidthPx  float64
+	boxWidthPct float64
+	hasBoxWidth bool
+	// boxWidthIsOwn records that the declared width is the box's own fixed
+	// size, rather than a percentage or a viewport length that resolves
+	// against something else. Only that kind feeds intrinsic sizing, where
+	// otherwise a "width: 100%" box (stored as the parent's px width) would
+	// inflate any shrink-to-fit container it sits in.
+	boxWidthIsOwn  bool
 	boxMaxWidthPx  float64
 	boxMaxWidthPct float64
 	hasBoxMaxWidth bool
@@ -2049,7 +2055,17 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 			// The item's border-box width: text plus left/right padding and
 			// borders. Missing the right padding made a padded flex item too
 			// narrow, so its text wrapped one word per line.
-			if tw := b.textX + spansIntrinsicWidth(b.spans) + b.paddingRight + 2*b.borderW; tw > w {
+			tw := b.textX + spansIntrinsicWidth(b.spans) + b.paddingRight + 2*b.borderW
+			// A box with no content of its own still takes the size it was
+			// given: that is how an empty icon <span> of "width: 18px" counts,
+			// and with it the row that holds the icon. Only a width that is
+			// the box's own is used; a percentage or a viewport length
+			// resolves against something else, and feeding those in inflated
+			// every shrink-to-fit container that held a "width: 100%" box.
+			if len(b.spans) == 0 && b.boxWidthIsOwn && b.boxWidthPx > tw {
+				tw = b.boxWidthPx
+			}
+			if tw > w {
 				w = tw
 			}
 		}

@@ -1236,11 +1236,14 @@ type computedStyle struct {
 	widthPx      float64
 	widthPct     float64
 	hasWidth     bool
-	maxWidthPx   float64
-	maxWidthPct  float64
-	hasMaxWidth  bool
-	maxHeightPx  float64
-	hasMaxHeight bool
+	// widthFromViewport is set when the declared width was written in
+	// viewport units, which the parser resolves to px before layout.
+	widthFromViewport bool
+	maxWidthPx        float64
+	maxWidthPct       float64
+	hasMaxWidth       bool
+	maxHeightPx       float64
+	hasMaxHeight      bool
 	// box-shadow (the first shadow), drawn as a soft rectangle behind the box.
 	shadowX, shadowY         float64
 	shadowBlur, shadowSpread float64
@@ -1907,6 +1910,13 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["width"]; ok {
 		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
 			cs.widthPct, cs.widthPx, cs.hasWidth = pct, px, true
+			// A width that came from the viewport or a percentage is not a
+			// property of the box: it resolves against something the layout
+			// only knows later, so it must not be fed back into intrinsic
+			// sizing as if it were the box's own width.
+			lv := strings.ToLower(v)
+			cs.widthFromViewport = strings.Contains(lv, "vw") || strings.Contains(lv, "vh") ||
+				strings.Contains(lv, "vmin") || strings.Contains(lv, "vmax")
 		}
 	}
 	if v, ok := d["height"]; ok {

@@ -1709,6 +1709,50 @@ func TestFlexRowIntrinsicWidthCountsItsPadding(t *testing.T) {
 	}
 }
 
+// A box with no content of its own still takes the width it was given. An
+// empty icon <span> of "width: 18px" is how brave.com's header entries are
+// sized, and without it the row holding the icon measured as its 1px border,
+// so the item around that row came out narrower than its content and every
+// entry wrapped onto two lines.
+func TestEmptyBoxTakesItsDeclaredWidth(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.list { display: flex; width: 400px }
+		.item { display: flex; background: #ddd }
+		.icon { display: inline-flex; width: 18px; height: 18px; background: #ccc }
+	</style></head><body>
+		<div class="list">
+			<div class="item" id="with"><span class="icon"></span><span>Browser</span></div>
+			<div class="item" id="without"><span>Browser</span></div>
+		</div>
+	</body></html>`, 400)
+	var icon, with, without float64
+	for _, b := range doc.boxes {
+		switch {
+		case diff(b.w, 18) < 0.5 && diff(b.h, 18) < 0.5:
+			icon = b.w
+		case diff(b.w, 70) < 0.5:
+			without = b.w
+		default:
+			with = b.w
+		}
+	}
+	if icon == 0 {
+		t.Fatalf("the empty 18px box did not take its width: %+v", doc.boxes)
+	}
+	if with == 0 || without == 0 {
+		t.Fatalf("the two items did not measure: %+v", doc.boxes)
+	}
+	if diff(with-without, icon) > 0.5 {
+		t.Errorf("the item with an icon is %g and without %g, want the icon's %g between them",
+			with, without, icon)
+	}
+	if h := doc.lines[0].height; h > 30 {
+		t.Errorf("the first line is %g tall: the item's content wrapped", h)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

@@ -471,9 +471,12 @@ type collector struct {
 	// The current block-sizing context: the content-left, width, max-width and
 	// auto margins of the nearest ancestor that set one. Blocks inherit it, so
 	// max-width:1100px;margin:0 auto centers a whole subtree.
-	sizeLeft                    float64
-	sizeWidthPx, sizeWidthPct   float64
-	hasSizeWidth                bool
+	sizeLeft                  float64
+	sizeWidthPx, sizeWidthPct float64
+	hasSizeWidth              bool
+	// sizeWidthIsOwn is set when the declared width is the box's own fixed
+	// size rather than a percentage or a viewport length.
+	sizeWidthIsOwn              bool
 	sizeMaxPx, sizeMaxPct       float64
 	hasSizeMax                  bool
 	sizeAutoLeft, sizeAutoRight bool
@@ -539,6 +542,7 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		b.hasSizing = true
 		b.sizeLeft = c.sizeLeft
 		b.boxWidthPx, b.boxWidthPct, b.hasBoxWidth = c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth
+		b.boxWidthIsOwn = c.sizeWidthIsOwn
 		b.boxMaxWidthPx, b.boxMaxWidthPct, b.hasBoxMaxWidth = c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax
 		b.boxAutoLeft, b.boxAutoRight = c.sizeAutoLeft, c.sizeAutoRight
 		b.hasSizeOwner = c.hasSizeOwner
@@ -751,11 +755,13 @@ func (c *collector) walkElement(el *html.Node) {
 		sizePadLeft                 float64
 		sizePadRight                float64
 		sizeMarginRight             float64
+		sizeWidthIsOwn              bool
 	}{c.style, c.content, c.quote, c.pre, c.lineH, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
 		c.contW, c.hasContW, c.rightInset,
-		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight}
+		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight,
+		c.sizeWidthIsOwn}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -822,6 +828,7 @@ func (c *collector) walkElement(el *html.Node) {
 				}
 			}
 			c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = wPx, wPct, cs.hasWidth
+			c.sizeWidthIsOwn = cs.hasWidth && cs.widthPct == 0 && !cs.widthFromViewport
 			mPx, mPct := cs.maxWidthPx, cs.maxWidthPct
 			resolvedMax := true
 			if mPct != 0 {
@@ -882,6 +889,7 @@ func (c *collector) walkElement(el *html.Node) {
 		c.bg, c.hasBG = saved.bg, saved.hasBG
 		c.sizeLeft = saved.sizeLeft
 		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = saved.sizeWidthPx, saved.sizeWidthPct, saved.hasSizeWidth
+		c.sizeWidthIsOwn = saved.sizeWidthIsOwn
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = saved.sizeMaxPx, saved.sizeMaxPct, saved.hasSizeMax
 		c.sizeAutoLeft, c.sizeAutoRight = saved.sizeAutoLeft, saved.sizeAutoRight
 		c.hasSizeOwner, c.sizeBoxLeft = saved.hasSizeOwner, saved.sizeBoxLeft
