@@ -1256,3 +1256,28 @@ func TestTableSharesColumnsBetweenRows(t *testing.T) {
 		}
 	}
 }
+
+// A flex row is sized and centered like any other block: max-width shrinks it
+// and "margin: 0 auto" centers it, so its items share the row's width and not
+// the whole column. The expected geometry is Chromium's
+// getBoundingClientRect for the same page at a 400px viewport.
+func TestFlexRowHonoursItsOwnWidthAndAutoMargins(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 12px/1.6 monospace }
+		.row { display: flex; gap: 22px; max-width: 300px; margin: 0 auto }
+		.item { background: #ddd; flex: 1 }
+	</style></head><body>
+		<div class="row"><div class="item">one</div><div class="item">two</div></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 2 {
+		t.Fatalf("got %d boxes, want 2: %+v", len(doc.boxes), doc.boxes)
+	}
+	want := []struct{ x, w float64 }{{50, 139}, {211, 139}}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("item %d: got x=%g w=%g, want x=%g w=%g", i, got.x, got.w, w.x, w.w)
+		}
+	}
+}

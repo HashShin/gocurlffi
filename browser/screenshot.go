@@ -1286,6 +1286,10 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 	}
 	c.stampRight(&b)
 	c.blocks = append(c.blocks, b)
+	// The row's own width, max-width and auto margins size and center it like
+	// any other block: a "max-width: 300px; margin: 0 auto" row is centered and
+	// its items share 300px, not the whole column.
+	c.assignSizing(len(c.blocks)-1, cs)
 	return true
 }
 
