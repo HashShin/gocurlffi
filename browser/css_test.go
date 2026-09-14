@@ -1053,7 +1053,9 @@ func TestFlexShorthand(t *testing.T) {
 		basisPx  float64
 		hasBasis bool
 	}{
-		{"1", 1, 0, 0, false},
+		// flex: 1 is "1 1 0%": a bare factor pins a 0% basis.
+		{"1", 1, 0, 0, true},
+		// flex: none is "0 0 auto" and flex: 0 0 auto keeps the width basis.
 		{"none", 0, 0, 0, false},
 		{"0 0 auto", 0, 0, 0, false},
 		{"0 0 calc(50% - 7px)", 0, 0.5, -7, true},

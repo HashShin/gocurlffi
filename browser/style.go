@@ -261,7 +261,9 @@ func normalizeFlexAlign(v string) string {
 
 // applyFlexShorthand reads the flex shorthand: the grow factor, the shrink
 // factor and the basis. "flex: 1" grows, "flex: none" does not, and a later
-// length or percentage is the basis.
+// length or percentage is the basis. The shorthand always resets the basis, so
+// "flex: none" (which is "0 0 auto") cancels an earlier "flex-basis: 0" and
+// lets the item fall back to its width, and "flex: 1" pins a 0% basis.
 func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 	lv := strings.ToLower(v)
 	// "flex: 0 0 calc(50% - 7px)" contains spaces inside calc(), so the value
@@ -286,17 +288,27 @@ func applyFlexShorthand(cs *computedStyle, v string, base, vw float64) {
 	}
 	switch strings.ToLower(fields[0]) {
 	case "none":
+		// flex: none is "0 0 auto": no growth, and the basis is the width.
 		cs.flexGrow = 0
+		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, false
 		return
 	case "auto":
+		// flex: auto is "1 1 auto".
 		cs.flexGrow = 1
+		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, false
 		return
 	}
 	if f, err := strconv.ParseFloat(fields[0], 64); err == nil {
+		// A bare flex factor implies a 0% basis until a later token says
+		// otherwise; this is why "flex: 1" ignores an item's width.
 		cs.flexGrow = f
+		cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, true
 	}
 	for _, tok := range fields[1:] {
 		if strings.EqualFold(tok, "auto") {
+			// An "auto" basis means the item's own width decides, so it must
+			// clear the 0% default the grow factor set.
+			cs.flexBasisPx, cs.flexBasisPct, cs.hasFlexBasis = 0, 0, false
 			continue
 		}
 		// A bare number is the shrink factor, not the basis.

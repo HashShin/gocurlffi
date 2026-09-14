@@ -512,6 +512,24 @@ func TestFlexBasisCalcAndWrap(t *testing.T) {
 	}
 }
 
+// "flex: none" is "0 0 auto": it cancels an earlier flex-basis:0 and lets the
+// item's width size it. A 2/3 column whose width was dropped collapsed to a
+// sliver and wrapped to a few characters per line.
+func TestFlexNoneKeepsWidth(t *testing.T) {
+	p := flexPage(t, `<html><head><style>
+		.cols { display: flex }
+		.col { flex-basis: 0; flex-grow: 1 }
+		.col.wide { flex: none; width: 60% }
+	</style></head><body style="margin:0">
+		<div class="cols"><div class="col wide">alpha bravo charlie delta echo foxtrot</div></div>
+	</body></html>`)
+	const phrase = "alpha bravo charlie delta echo foxtrot"
+	pos := outlinePositions(t, p, 800)
+	if _, ok := pos[phrase]; !ok {
+		t.Fatalf("the column did not keep its width; outline: %v", pos)
+	}
+}
+
 // justify-content: center centers the row's content.
 func TestFlexJustifyCenter(t *testing.T) {
 	p := flexPage(t, `<html><head><style>
