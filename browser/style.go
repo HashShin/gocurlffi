@@ -654,7 +654,11 @@ type computedStyle struct {
 	link       bool
 	textAlign  string
 	lineHeight float64
-	whiteSpace string
+	// lineHeightFactor is the unitless line-height ("1.6"), kept so the value
+	// can be re-resolved against a descendant's own font size. A unitless
+	// line-height inherits as the factor; a length inherits as that length.
+	lineHeightFactor float64
+	whiteSpace       string
 	// textTransform is uppercase/lowercase/capitalize, "" for none.
 	textTransform string
 	// letterSpacing is extra space between characters, in px.
@@ -1157,9 +1161,21 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		if lv == "normal" {
 			cs.lineHeight = 0
 		} else if f, err := strconv.ParseFloat(lv, 64); err == nil {
+			cs.lineHeightFactor = f
 			cs.lineHeight = cs.fontSize * f
 		} else if px, ok2 := cssLengthToPxV(lv, cs.fontSize, e.width); ok2 {
 			cs.lineHeight = px
+		}
+	}
+	// line-height is inherited, but a unitless value carries the factor
+	// rather than the length it computed to in the parent: "body
+	// { line-height: 1.6 }" gives a 12px child 19.2px, not the body's 25.6px.
+	if _, ok := d["line-height"]; !ok && parent != nil {
+		if parent.lineHeightFactor > 0 {
+			cs.lineHeightFactor = parent.lineHeightFactor
+			cs.lineHeight = cs.fontSize * parent.lineHeightFactor
+		} else {
+			cs.lineHeight = parent.lineHeight
 		}
 	}
 	if v, ok := d["white-space"]; ok {

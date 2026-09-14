@@ -682,6 +682,10 @@ type renderBlock struct {
 	// containers between them.
 	rightInset    float64
 	hasRightInset bool
+	// hasRightEdges marks a block whose right margin and padding came from its
+	// own element, so an ancestor without blocks of its own cannot overwrite
+	// them.
+	hasRightEdges bool
 	// Out-of-flow children (position:absolute/fixed) placed relative to this
 	// block's content box, and the offset from position:relative.
 	abs   []absChild
@@ -730,7 +734,6 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 // colW, returning the draw lines (absolute positions) and the y after the last
 // block. A block's own offsets (boxLeft, textX) are relative to the column.
 func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
-	const lineFact = 1.45
 	var out []drawLine
 	var absLines []drawLine
 	var absBoxes []drawBox
@@ -772,15 +775,15 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		acc.started = true
 	}
-	var prevMarginBottom, prevPaddingBottom float64
+	var prevMarginBottom, prevPaddingBottom, prevBorderBottom float64
 	havePrev := false
 	for _, b := range blocks {
-		bTop := y
 		// Vertical margins of adjacent blocks collapse to the larger one;
-		// padding always adds.
-		gap := b.marginTop + b.paddingTop
+		// padding and border always add.
+		gap := b.marginTop + b.borderW + b.paddingTop
 		if havePrev {
-			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
+			gap = prevPaddingBottom + prevBorderBottom +
+				math.Max(prevMarginBottom, b.marginTop) + b.borderW + b.paddingTop
 		}
 		y += gap
 		if b.relDy != 0 {
@@ -942,8 +945,14 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			inner = b.textX - b.boxLeft
 			boxX = colX + b.borderLeft + shift
-			boxWidthOuter = contentW + edge
-			contentRight = b.paddingRight
+			// The border box: from the block's left edge to the used content
+			// edge plus the right padding and border.
+			contentRight = b.paddingRight + b.borderW
+			leftEdge := b.textX - b.boxLeft
+			if b.boxID != 0 {
+				leftEdge = b.boxLeft - b.borderLeft
+			}
+			boxWidthOuter = contentW - inner - contentRight + leftEdge + contentRight
 		}
 		switch b.kind {
 		case blockImage:
@@ -1010,7 +1019,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				if ascent < h {
 					ascent = h
 				}
-				lh := h * lineFact
+				// "line-height: normal" is the font's own line height, which
+				// is what the glyph raster's height already is.
+				lh := h
 				if b.lineH > 0 {
 					lh = b.lineH
 				}
@@ -1074,7 +1085,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			if len(lines) == 0 && b.marker != "" {
 				k := faceKey{size: baseSize}
 				_, _, h := lineMetrics(k)
-				lh := h * lineFact
+				lh := h
 				out = append(out, drawLine{
 					y: y, height: lh, baseline: y + h*0.8,
 					marker: b.marker, markerX: colX + b.boxLeft + shift, quote: b.quote, indent: textStart,
@@ -1114,15 +1125,19 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			originX := boxX + b.borderW + (b.textX - b.boxLeft)
 			absLines = append(absLines, layoutAbsChildren(b.abs, originX, contentTop, contentW, y-contentTop, baseSize, &absBoxes)...)
 		}
-		recordBox(b, bTop+b.relDy, y, boxX, boxWidthOuter)
+		// The box is the border box: from the top of the content box up over
+		// the top padding and border, and down past the bottom ones.
+		recordBox(b, contentTop-b.paddingTop-b.borderW,
+			y+b.paddingBottom+b.borderW, boxX, boxWidthOuter)
 		if b.relDy != 0 {
 			y -= b.relDy
 		}
 		prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
+		prevBorderBottom = b.borderW
 		havePrev = true
 	}
 	if havePrev {
-		y += prevPaddingBottom + prevMarginBottom
+		y += prevPaddingBottom + prevBorderBottom + prevMarginBottom
 	}
 	// Emit the boxes gathered in this column, parent (first seen) first.
 	for _, id := range boxOrder {

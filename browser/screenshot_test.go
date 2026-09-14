@@ -1099,3 +1099,85 @@ func greenBounds(img image.Image) (minX, minY, maxX, maxY int, ok bool) {
 	}
 	return
 }
+
+// A unitless line-height inherits as its factor, not as the length it computed
+// to in the parent, so it resolves against each descendant's own font size:
+// body{line-height:1.6} gives a 12px control 19.2px lines, not the body's
+// 25.6px, which is what Chromium lays out.
+func TestUnitlessLineHeightInheritsAsFactor(t *testing.T) {
+	doc := layoutDoc(t, `<html><head><style>
+		* { margin: 0 }
+		body { font-size: 16px; line-height: 1.6 }
+		.small { font-size: 12px }
+	</style></head><body>
+		<div class="small">Website URL</div>
+		<div>Body text</div>
+	</body></html>`, 400)
+	if len(doc.lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(doc.lines))
+	}
+	if h := doc.lines[0].height; h < 19.1 || h > 19.3 {
+		t.Errorf("12px child line height %g, want 19.2", h)
+	}
+	if h := doc.lines[1].height; h < 25.5 || h > 25.7 {
+		t.Errorf("16px child line height %g, want 25.6", h)
+	}
+}
+
+// A padded, bordered block still spans the whole column: padding and border
+// come out of the content box, they are not an extra inset. The border also
+// pushes the text in and the next block down.
+func TestPaddedBorderedBlockSpansTheColumn(t *testing.T) {
+	doc := layoutDoc(t, `<html><head><style>
+		* { margin: 0 }
+		body { font-size: 12px; line-height: 1.6 }
+		.tab { padding: 10px 28px; border: 1px solid #444; background: #222; color: #fff }
+	</style></head><body>
+		<div class="tab">Website URL</div>
+		<div>Next</div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want 1", len(doc.boxes))
+	}
+	b := doc.boxes[0]
+	if b.x != 0 || b.w != 400 {
+		t.Errorf("tab box x=%g w=%g, want x=0 w=400", b.x, b.w)
+	}
+	if b.y != 0 {
+		t.Errorf("tab box y=%g, want 0", b.y)
+	}
+	if b.h < 41.1 || b.h > 41.3 {
+		t.Errorf("tab box height %g, want 41.2 (19.2 line + 20 padding + 2 border)", b.h)
+	}
+	if ind := doc.lines[0].indent; ind != 29 {
+		t.Errorf("text indent %g, want 29 (28 padding + 1 border)", ind)
+	}
+	if y := doc.lines[1].y; y < 41.1 || y > 41.3 {
+		t.Errorf("block after the tab starts at y=%g, want 41.2", y)
+	}
+}
+
+// A container's right padding insets the content of everything inside it, even
+// when the container itself produces no block of its own.
+func TestWrappedTextStopsAtTheContainingBlocksPadding(t *testing.T) {
+	doc := layoutDoc(t, `<html><head><style>
+		* { margin: 0 }
+		body { font-size: 16px; line-height: 1.6 }
+		.outer { padding-right: 60px; background: #eee }
+		.inner { background: #fff }
+	</style></head><body>
+		<div class="outer"><div class="inner">one two three four five six seven eight nine ten eleven twelve</div></div>
+	</body></html>`, 400)
+	var inner *drawBox
+	for i := range doc.boxes {
+		if doc.boxes[i].w == 340 {
+			inner = &doc.boxes[i]
+		}
+	}
+	if inner == nil {
+		t.Fatalf("no 340px box for the inner element: %+v", doc.boxes)
+	}
+	if len(doc.lines) != 2 {
+		t.Errorf("got %d lines, want 2 (Chromium wraps this text into 2 lines at 340px)", len(doc.lines))
+	}
+}

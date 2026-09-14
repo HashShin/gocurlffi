@@ -773,8 +773,10 @@ func (c *collector) walkElement(el *html.Node) {
 	}
 	if block {
 		// Box edges: margin then padding, relative to the parent's content box.
+		// The border box starts at boxLeft; the content is inside the border and
+		// then the padding.
 		boxLeft := c.content + cs.marginLeft
-		c.content = boxLeft + cs.paddingLeft
+		c.content = boxLeft + cs.borderW + cs.paddingLeft
 		if cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto {
 			// A percentage width resolves against the containing block's content
 			// width, which an ancestor pins either with an explicit width or a
@@ -1200,7 +1202,14 @@ func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
 	last.marginBottom += cs.marginBottom
 	last.paddingBottom += cs.paddingBottom
 	last.trailing = last.marginBottom + last.paddingBottom
+	// Right edges are assigned rather than added, and an element that produces
+	// no blocks of its own hands its range to its first descendant's blocks:
+	// those already carry their own element's right edges, so keep them.
 	for i := start; i < len(c.blocks); i++ {
+		if c.blocks[i].hasRightEdges {
+			continue
+		}
+		c.blocks[i].hasRightEdges = true
 		c.blocks[i].marginRight = cs.marginRight
 		c.blocks[i].paddingRight = cs.paddingRight
 	}
