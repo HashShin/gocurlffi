@@ -2020,13 +2020,18 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 				w = tw
 			}
 		case blockFlex:
-			sub := b.boxLeft
+			// The row's border-box width: from its left edge, over the
+			// padding and border, then its items and the gaps between them.
+			// Using boxLeft here dropped the row's own horizontal padding,
+			// which is what a nav item's "padding: 0 12px" is.
+			sub := b.textX
 			for i, ch := range b.children {
 				if i > 0 {
 					sub += b.gap
 				}
 				sub += intrinsicColumnWidth(ch, limit, baseSize)
 			}
+			sub += b.paddingRight + b.borderW
 			if sub > w {
 				w = sub
 			}

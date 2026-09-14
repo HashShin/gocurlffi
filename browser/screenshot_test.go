@@ -1681,6 +1681,34 @@ func TestClosedDetailsHidesItsContent(t *testing.T) {
 	}
 }
 
+// A flex row that is sized to its content includes its own padding. Brave's
+// header nav items are "display:flex" spans with padding, and measuring the
+// row without it made each item narrower than its text, so every entry in the
+// header wrapped to two lines.
+func TestFlexRowIntrinsicWidthCountsItsPadding(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.padded, .plain { float: left; clear: both; background: #ccc }
+		.padded .row { padding: 0 20px }
+		.row { display: flex; background: #ddd }
+	</style></head><body>
+		<div class="padded"><div class="row"><span>Browser</span></div></div>
+		<div class="plain"><div class="row"><span>Browser</span></div></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 2 {
+		t.Fatalf("got %d boxes, want the two rows: %+v", len(doc.boxes), doc.boxes)
+	}
+	padded, plain := doc.boxes[0].w, doc.boxes[1].w
+	if diff(padded-plain, 40) > 0.5 {
+		t.Errorf("the padded row is %g wide and the plain one %g: want 40px of padding between them",
+			padded, plain)
+	}
+	if plain < 10 {
+		t.Errorf("the plain row measured %g wide, want its text width", plain)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

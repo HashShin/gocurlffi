@@ -1192,6 +1192,10 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 		marginBottom:  cs.marginBottom,
 		paddingTop:    cs.paddingTop,
 		paddingBottom: cs.paddingBottom,
+		// The table's own right edges; nothing else sets them for a table.
+		marginRight:   cs.marginRight,
+		paddingRight:  cs.paddingRight,
+		hasRightEdges: true,
 	}
 	// A table with a declared width fills it, distributing the extra space
 	// across its columns; one without shrinks to its content.
@@ -1287,6 +1291,11 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		marginBottom:  cs.marginBottom,
 		paddingTop:    cs.paddingTop,
 		paddingBottom: cs.paddingBottom,
+		// The row's own right edges. Without them the box was measured short
+		// of its padding, and an ancestor's edges replaced the row's own.
+		marginRight:   cs.marginRight,
+		paddingRight:  cs.paddingRight,
+		hasRightEdges: true,
 	}
 	if c.hasBG {
 		b.bg, b.hasBG, b.bgFull = c.bg, true, true
