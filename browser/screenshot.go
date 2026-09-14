@@ -786,6 +786,17 @@ func (c *collector) walkElement(el *html.Node) {
 	// own to carry the line height, so it is kept here for ensure.
 	c.lineH = cs.lineHeight
 	block := isBlockDisplay(cs.display)
+	// A <summary> is display:list-item, but inside an inline-block <details>
+	// the block formatting context it starts is contained by the atomic
+	// inline box, so the summary reads as the box's one label and the text
+	// after the details stays on the line. lobste.rs writes each story's
+	// "caches" dropdown this way, and the block summary broke the byline into
+	// three lines.
+	if block && tag == "summary" && el.Parent != nil && el.Parent.Type == html.ElementNode {
+		if pcs := c.engine.compute(el.Parent); pcs != nil && !isBlockDisplay(pcs.display) {
+			block = false
+		}
+	}
 	// The blocks this element produces live in its containing block, so they
 	// carry the inset of the parent's content box, not this element's own.
 	savedBlockInset := c.blockInset
@@ -998,6 +1009,13 @@ func (c *collector) walkElement(el *html.Node) {
 
 	switch tag {
 	case "ul", "ol":
+		if !block {
+			// An inline or inline-block list flows with the text around it:
+			// lobste.rs writes its story tags as an inline-block <ul>, and
+			// starting a block there puts every list on a line of its own.
+			c.walkChildren(el)
+			return
+		}
 		c.flush()
 		start := len(c.blocks)
 		c.lists = append(c.lists, listState{ordered: tag == "ol"})
@@ -1007,6 +1025,13 @@ func (c *collector) walkElement(el *html.Node) {
 		c.finishBlock(start, cs, boxed)
 		return
 	case "li":
+		if !block {
+			// An inline or inline-block list item flows with the text on its
+			// line: a lobste.rs story lays its tags out as inline-block <li>
+			// items, and flushing each one put every tag on its own line.
+			c.walkChildren(el)
+			return
+		}
 		c.flush()
 		if cs.listStyle != "none" {
 			if n := len(c.lists); n > 0 && c.lists[n-1].ordered {
