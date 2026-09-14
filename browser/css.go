@@ -866,7 +866,8 @@ func fontFormatRank(format, url string) int {
 	case strings.HasPrefix(f, "woff2"):
 		return 3
 	case strings.HasPrefix(f, "woff"):
-		return 2
+		// WOFF is unpacked to sfnt before it is parsed.
+		return 1
 	case f == "":
 		l := strings.ToLower(url)
 		switch {
@@ -875,7 +876,7 @@ func fontFormatRank(format, url string) int {
 		case strings.HasSuffix(l, ".woff2"):
 			return 3
 		case strings.HasSuffix(l, ".woff"):
-			return 2
+			return 1
 		}
 	}
 	return 1

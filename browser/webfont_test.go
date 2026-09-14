@@ -1,11 +1,15 @@
 package browser
 
 import (
+	"bytes"
+	"compress/zlib"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"golang.org/x/image/font/gofont/gomono"
+	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/opentype"
 )
 
 func TestParseFontFacePicksRawSfnt(t *testing.T) {
@@ -45,10 +49,12 @@ func TestFontFaceFormatRank(t *testing.T) {
 	}{
 		{"truetype", "https://x/a.ttf", 0},
 		{"", "https://x/a.otf", 0},
-		{"", "https://x/a.woff", 2},
+		// WOFF is unpacked to sfnt before it is parsed, so it is usable;
+		// WOFF2 is not decoded and ranks below a WOFF-only face.
+		{"", "https://x/a.woff", 1},
 		{"woff2", "https://x/a", 3},
 		{"woff2-variations", "https://x/a", 3},
-		{"woff", "https://x/a", 2},
+		{"woff", "https://x/a", 1},
 	}
 	for _, c := range cases {
 		if got := fontFormatRank(c.format, c.url); got != c.want {
@@ -171,5 +177,140 @@ body{color:#000}`
 	}
 	if stats.fontFaces[0].family != "A" || stats.fontFaces[0].weight != 400 {
 		t.Errorf("first face = %+v", stats.fontFaces[0])
+	}
+}
+
+// wrapWOFF packs an sfnt into the WOFF container the way a font foundry does:
+// a header, one directory entry per table, and the tables themselves
+// zlib-compressed back to back. It is the inverse of unpackWOFF, and writing it
+// here keeps the test offline and independent of any particular font file.
+func wrapWOFF(t *testing.T, sfnt []byte) []byte {
+	t.Helper()
+	if len(sfnt) < 12 {
+		t.Fatal("sfnt is too short")
+	}
+	numTables := int(be16(sfnt[4:6]))
+	type tbl struct {
+		tag              [4]byte
+		checksum         uint32
+		body             []byte
+		originalLength   int
+		compressedLength int
+	}
+	var tables []tbl
+	for i := 0; i < numTables; i++ {
+		e := sfnt[12+i*16 : 12+i*16+16]
+		var tag [4]byte
+		copy(tag[:], e[0:4])
+		off := int(be32(e[8:12]))
+		length := int(be32(e[12:16]))
+		if off+length > len(sfnt) {
+			t.Fatalf("table %q is out of range", tag)
+		}
+		var buf bytes.Buffer
+		zw := zlib.NewWriter(&buf)
+		if _, err := zw.Write(sfnt[off : off+length]); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		body := buf.Bytes()
+		if len(body) >= length {
+			body = sfnt[off : off+length] // stored, not compressed
+		}
+		tables = append(tables, tbl{
+			tag: tag, checksum: be32(e[4:8]), body: body,
+			originalLength: length, compressedLength: len(body),
+		})
+	}
+
+	offset := woffHeaderLen + woffEntryLen*numTables
+	out := make([]byte, woffHeaderLen)
+	copy(out[0:4], woffSignature)
+	copy(out[4:8], sfnt[0:4]) // the sfnt flavor comes through
+	be16Put(out[12:14], uint16(numTables))
+	be32Put(out[16:20], uint32(12+16*numTables)) // the size the sfnt would be
+	entries := make([]byte, 0, woffEntryLen*numTables)
+	for _, tb := range tables {
+		var e [woffEntryLen]byte
+		copy(e[0:4], tb.tag[:])
+		be32Put(e[4:8], uint32(offset))
+		be32Put(e[8:12], uint32(tb.compressedLength))
+		be32Put(e[12:16], uint32(tb.originalLength))
+		be32Put(e[16:20], tb.checksum)
+		entries = append(entries, e[:]...)
+		offset += (tb.compressedLength + 3) &^ 3
+	}
+	out = append(out, entries...)
+	for _, tb := range tables {
+		out = append(out, tb.body...)
+		for pad := (4 - len(tb.body)%4) % 4; pad > 0; pad-- {
+			out = append(out, 0)
+		}
+	}
+	return out
+}
+
+func TestUnpackWOFFRoundTripsAnEmbeddedFont(t *testing.T) {
+	plain := goregular.TTF
+	if !bytes.HasPrefix(plain, []byte{0x00, 0x01, 0x00, 0x00}) {
+		t.Fatalf("the embedded font is not an sfnt: % x", plain[:4])
+	}
+	packed := wrapWOFF(t, plain)
+	if !isWOFF(packed) {
+		t.Fatal("the wrapper did not produce a WOFF file")
+	}
+	got, err := unpackWOFF(packed)
+	if err != nil {
+		t.Fatalf("unpackWOFF: %v", err)
+	}
+	if len(got) != len(plain) {
+		t.Errorf("unpacked %d bytes, want the original %d", len(got), len(plain))
+	}
+	if _, err := opentype.Parse(got); err != nil {
+		t.Fatalf("opentype.Parse of the unpacked font: %v", err)
+	}
+	// Every table has to come back with its tag and length: that is what the
+	// parser above reads, and it is the whole of the format.
+	dir := func(sfnt []byte) map[string]int {
+		n := int(be16(sfnt[4:6]))
+		out := make(map[string]int, n)
+		for i := 0; i < n; i++ {
+			e := sfnt[12+i*16 : 12+i*16+16]
+			out[string(e[0:4])] = int(be32(e[12:16]))
+		}
+		return out
+	}
+	want, have := dir(plain), dir(got)
+	if len(want) != len(have) {
+		t.Fatalf("unpacked %d tables, want %d", len(have), len(want))
+	}
+	for tag, length := range want {
+		if got, ok := have[tag]; !ok || got != length {
+			t.Errorf("table %q: length %d present=%v, want %d", tag, got, ok, length)
+		}
+	}
+}
+
+// A truncated or malformed WOFF must be refused rather than panic: the data
+// comes from a page, and a font that fails to load is drawn with the built-in
+// face.
+func TestUnpackWOFFRejectsBadInput(t *testing.T) {
+	good := wrapWOFF(t, goregular.TTF)
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"empty", nil},
+		{"signature only", []byte("wOFF")},
+		{"header only", good[:woffHeaderLen]},
+		{"directory cut short", good[:woffHeaderLen+woffEntryLen]},
+		{"body cut short", good[:len(good)-16]},
+	}
+	for _, c := range cases {
+		if _, err := unpackWOFF(c.data); err == nil && len(c.data) > 0 {
+			t.Errorf("%s: unpackWOFF accepted %d bytes", c.name, len(c.data))
+		}
 	}
 }
