@@ -971,7 +971,8 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	}
 
-	if block && isFlexRowContainer(cs) && c.collectFlexRow(el, cs) {
+	if block && (isFlexRowContainer(cs) || isGridContainer(cs)) &&
+		c.collectFlexRow(el, cs, isGridContainer(cs)) {
 		return
 	}
 
@@ -1087,20 +1088,30 @@ func applyColumnAlign(blocks []renderBlock, align string) {
 
 // isFlexRowContainer reports whether an element lays its children out in a row.
 // A column flex container needs no special handling: a column of blocks is what
-// ordinary flow already produces. Grid is left to stack.
+// ordinary flow already produces.
 func isFlexRowContainer(cs *computedStyle) bool {
 	return (cs.display == "flex" || cs.display == "inline-flex") && cs.flexDirection != "column"
+}
+
+// isGridContainer reports whether an element lays its children out in a grid.
+// A grid with no template-columns is a single-column stack, which is what
+// ordinary flow already produces.
+func isGridContainer(cs *computedStyle) bool {
+	return (cs.display == "grid" || cs.display == "inline-grid") &&
+		(len(cs.grid.tracks) > 0 || cs.grid.autoFill)
 }
 
 // collectFlexRow builds a flex row block from an element's children and appends
 // it, returning true when it produced at least one child. Each child is
 // collected with its offsets relative to its own left edge, so the row layout
 // can place it at any x.
-func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
+func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) bool {
 	c.flush()
 	b := renderBlock{
 		kind:          blockFlex,
 		flexRow:       true,
+		grid:          grid,
+		gridTmpl:      cs.grid,
 		boxLeft:       c.content,
 		textX:         c.content,
 		quote:         c.quote,
@@ -1157,6 +1168,15 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
 		b.basisPx = append(b.basisPx, bx)
 		b.basisPct = append(b.basisPct, bp)
 		b.hasBasis = append(b.hasBasis, has)
+		span := 1
+		if child != nil {
+			if child.gridSpanAll {
+				span = 1 << 20 // clamped to the track count at layout time
+			} else if child.gridSpan > 1 {
+				span = child.gridSpan
+			}
+		}
+		b.gridSpans = append(b.gridSpans, span)
 	}
 	if len(b.children) == 0 {
 		return false

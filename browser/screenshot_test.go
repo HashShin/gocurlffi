@@ -1181,3 +1181,43 @@ func TestWrappedTextStopsAtTheContainingBlocksPadding(t *testing.T) {
 		t.Errorf("got %d lines, want 2 (Chromium wraps this text into 2 lines at 340px)", len(doc.lines))
 	}
 }
+
+// A grid container places its children in the tracks of
+// grid-template-columns, left to right, starting a new row when the tracks run
+// out. The expected geometry is Chromium's getBoundingClientRect for the same
+// page at a 400px viewport.
+func TestGridPlacesChildrenInTracks(t *testing.T) {
+	doc := layoutDoc(t, `<html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 12px/1.6 monospace }
+		.g { display: grid; grid-template-columns: repeat(3, 100px); gap: 10px }
+		.c { background: #ccc }
+		.af { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px }
+		.af .c { background: #ddd }
+		.span { display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
+		.wide { grid-column: 1 / -1; background: #eee }
+		.col { background: #ddd }
+	</style></head><body>
+		<div class="g"><div class="c">a</div><div class="c">b</div><div class="c">c</div><div class="c">d</div></div>
+		<div class="af"><div class="c">one</div><div class="c">two</div><div class="c">three</div></div>
+		<div class="span"><div class="wide">whole row</div><div class="col">left</div><div class="col">right</div></div>
+	</body></html>`, 400)
+	want := []struct{ x, y, w float64 }{
+		{0, 0, 100}, {110, 0, 100}, {220, 0, 100}, // three fixed tracks
+		{0, 29.2, 100},                   // wrapped to a second row
+		{0, 48.4, 195}, {205, 48.4, 195}, // repeat(auto-fill, minmax(150px,1fr))
+		{0, 77.6, 195},                 // third item wraps
+		{0, 96.8, 400},                 // grid-column: 1 / -1 spans the row
+		{0, 126, 195}, {205, 126, 195}, // the row after the spanning item
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g, want x=%g y=%g w=%g",
+				i, got.x, got.y, got.w, w.x, w.y, w.w)
+		}
+	}
+}

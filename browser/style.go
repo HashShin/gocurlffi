@@ -633,6 +633,100 @@ func cssColorToken(v string) string {
 
 // --- computed style ---
 
+// gridTrack is one column of grid-template-columns.
+type gridTrack struct {
+	px    float64 // a fixed length
+	pct   float64 // a percentage of the container's content width
+	fr    float64 // the flexible share ("1fr")
+	auto  bool    // "auto" (sized to content, approximated as an equal share)
+	minPx float64 // a minmax() lower bound
+}
+
+// gridTemplate is grid-template-columns after parsing. repeat(auto-fill, ...)
+// keeps its pattern and is expanded against the container width at layout time.
+type gridTemplate struct {
+	tracks   []gridTrack
+	autoFill bool
+	autoFit  bool
+	auto     gridTrack
+}
+
+// resolveTracks turns the template into pixel track widths for a container of
+// the given content width, with columnGap between tracks.
+func (g gridTemplate) resolve(width, gap float64) []float64 {
+	tracks := g.tracks
+	if g.autoFill {
+		step := g.auto.minPx + gap
+		if step <= 0 {
+			step = 1
+		}
+		n := int((width + gap) / step)
+		if n < 1 {
+			n = 1
+		}
+		if n > 100 {
+			n = 100
+		}
+		tracks = make([]gridTrack, n)
+		for i := range tracks {
+			tracks[i] = g.auto
+		}
+	}
+	if len(tracks) == 0 {
+		return nil
+	}
+	n := len(tracks)
+	free := width - gap*float64(n-1)
+	if free < 0 {
+		free = 0
+	}
+	out := make([]float64, n)
+	fixed, frSum := 0.0, 0.0
+	autoN := 0
+	for i, t := range tracks {
+		switch {
+		case t.fr > 0:
+			frSum += t.fr
+		case t.px == 0 && t.pct == 0:
+			autoN++
+		default:
+			w := t.px + t.pct/100*width
+			if w < t.minPx {
+				w = t.minPx
+			}
+			out[i] = w
+			fixed += w
+		}
+	}
+	left := free - fixed
+	if left < 0 {
+		left = 0
+	}
+	switch {
+	case frSum > 0:
+		// Flexible tracks share the leftover, never dropping below a
+		// minmax() minimum.
+		for i, t := range tracks {
+			if t.fr == 0 {
+				continue
+			}
+			w := left * t.fr / frSum
+			if w < t.minPx {
+				w = t.minPx
+			}
+			out[i] = w
+		}
+	case autoN > 0:
+		share := left / float64(autoN)
+		for i, t := range tracks {
+			if t.fr == 0 && t.px == 0 && t.pct == 0 {
+				out[i] = share
+			}
+		}
+	}
+	return out
+}
+
 type computedStyle struct {
 	display       string
 	visibility    string
@@ -706,8 +800,15 @@ type computedStyle struct {
 	hasHeight          bool
 	columnGap          float64
 	rowGap             float64
-	justifyContent     string
-	alignItems         string
+	// grid is grid-template-columns, the only part of grid layout the renderer
+	// implements: grid-row-* is left to source order.
+	grid gridTemplate
+	// gridSpan is how many column tracks the item spans (grid-column), and
+	// gridSpanAll is "1 / -1": span the whole row.
+	gridSpan       int
+	gridSpanAll    bool
+	justifyContent string
+	alignItems     string
 	// borderW/borderColor describe a uniform box border, the only kind drawn.
 	borderW     float64
 	borderColor color.RGBA
@@ -1278,6 +1379,20 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			}
 		}
 	}
+	if v, ok := d["grid-template-columns"]; ok {
+		cs.grid = parseGridTemplate(v)
+	}
+	if v, ok := d["grid-column"]; ok {
+		cs.setGridColumn(v)
+	}
+	if v, ok := d["grid-column-start"]; ok {
+		if strings.EqualFold(strings.TrimSpace(v), "span 1") {
+			// A span with no count is one track; leave the default.
+			cs.gridSpan = 1
+		} else {
+			cs.setGridColumn("1 / " + v)
+		}
+	}
 	if v, ok := d["flex-basis"]; ok {
 		if pct, px, ok2 := cssSizeParts(v, base, e.width); ok2 {
 			cs.flexBasisPct, cs.flexBasisPx, cs.hasFlexBasis = pct, px, true
@@ -1753,4 +1868,226 @@ func isFlexOrGridContainer(display string) bool {
 		return true
 	}
 	return false
+}
+
+// parseGridTemplate parses grid-template-columns into its column tracks.
+// repeat(auto-fill|auto-fit, ...) is kept as a pattern and expanded at layout
+// time, when the container width is known.
+func parseGridTemplate(v string) gridTemplate {
+	var g gridTemplate
+	for _, tok := range splitGridTokens(v) {
+		tok = strings.ToLower(strings.TrimSpace(tok))
+		switch {
+		case tok == "", tok == "none", tok == "subgrid", tok == "masonry":
+			// Not a track list we can use.
+		case strings.HasPrefix(tok, "repeat("):
+			inner := tok[len("repeat(") : len(tok)-1]
+			parts := splitGridArgs(inner)
+			if len(parts) != 2 {
+				continue
+			}
+			count := strings.TrimSpace(parts[0])
+			body := strings.TrimSpace(parts[1])
+			if count == "auto-fill" || count == "auto-fit" {
+				g.autoFill = true
+				g.autoFit = count == "auto-fit"
+				subs := splitGridTokens(body)
+				if len(subs) > 0 {
+					g.auto, _ = parseGridTrack(subs[0])
+				}
+				continue
+			}
+			n, err := strconv.Atoi(count)
+			if err != nil || n < 0 || n > 100 {
+				continue
+			}
+			for i := 0; i < n; i++ {
+				for _, sub := range splitGridTokens(body) {
+					if t, ok := parseGridTrack(sub); ok {
+						g.tracks = append(g.tracks, t)
+					}
+				}
+			}
+		default:
+			if t, ok := parseGridTrack(tok); ok {
+				g.tracks = append(g.tracks, t)
+			}
+		}
+	}
+	return g
+}
+
+// parseGridTrack parses one track: a length, a percentage, "auto", an "fr"
+// share, or minmax(min, max).
+func parseGridTrack(tok string) (gridTrack, bool) {
+	tok = strings.ToLower(strings.TrimSpace(tok))
+	if tok == "" {
+		return gridTrack{}, false
+	}
+	if strings.HasPrefix(tok, "minmax(") {
+		parts := splitGridArgs(tok[len("minmax(") : len(tok)-1])
+		if len(parts) != 2 {
+			return gridTrack{}, false
+		}
+		t := gridTrack{}
+		if px, _, ok := gridLength(parts[0]); ok {
+			t.minPx = px
+		}
+		hi := strings.TrimSpace(parts[1])
+		if f, ok := gridFr(hi); ok {
+			t.fr = f
+		} else if px, pct, ok := gridLength(hi); ok {
+			t.px, t.pct = px, pct
+		}
+		if t.minPx > 0 && t.px == 0 && t.pct == 0 && t.fr == 0 {
+			// minmax(200px, max-content) and friends: treat the lower bound
+			// as the size.
+			t.px = t.minPx
+		}
+		return t, true
+	}
+	if f, ok := gridFr(tok); ok {
+		return gridTrack{fr: f}, true
+	}
+	if px, pct, ok := gridLength(tok); ok {
+		return gridTrack{px: px, pct: pct}, true
+	}
+	switch tok {
+	case "auto", "min-content", "max-content", "fit-content", "fit-content(100%)":
+		return gridTrack{auto: true}, true
+	}
+	return gridTrack{}, false
+}
+
+// gridFr parses an "fr" value.
+func gridFr(v string) (float64, bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasSuffix(v, "fr") {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(v, "fr")), 64)
+	if err != nil || f <= 0 {
+		return 0, false
+	}
+	return f, true
+}
+
+// gridLength parses a track length: a px value, or a percentage of the
+// container's width, which resolveTracks applies later.
+func gridLength(v string) (px, pct float64, ok bool) {
+	v = strings.TrimSpace(v)
+	if strings.HasSuffix(v, "%") {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return 0, f, true
+	}
+	if strings.HasSuffix(v, "px") {
+		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "px"), 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return f, 0, true
+	}
+	return 0, 0, false
+}
+
+// splitGridTokens splits a track list on whitespace, keeping parentheses
+// together ("minmax(200px, 1fr)" is one token).
+func splitGridTokens(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ' ', '\t', '\n':
+			if depth == 0 {
+				if i > start {
+					out = append(out, s[start:i])
+				}
+				start = i + 1
+			}
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// splitGridArgs splits a parenthesised argument list on top-level commas.
+func splitGridArgs(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// setGridColumn reads "grid-column": a bare number or span, or "start / end".
+// "1 / -1" spans every track in the row.
+func (cs *computedStyle) setGridColumn(v string) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" || v == "auto" {
+		return
+	}
+	if i := strings.Index(v, "/"); i >= 0 {
+		end := strings.TrimSpace(v[i+1:])
+		if end == "-1" {
+			cs.gridSpanAll = true
+			return
+		}
+		if n, ok := gridSpanCount(end); ok {
+			cs.gridSpan = n
+			return
+		}
+		if n, err := strconv.Atoi(end); err == nil && n > 0 {
+			// "2 / 4": two tracks.
+			if start, err2 := strconv.Atoi(strings.TrimSpace(v[:i])); err2 == nil {
+				if d := n - start; d > 0 {
+					cs.gridSpan = d
+				}
+			}
+		}
+		return
+	}
+	if n, ok := gridSpanCount(v); ok {
+		cs.gridSpan = n
+	}
+}
+
+// gridSpanCount parses "span N" (or "span 1").
+func gridSpanCount(v string) (int, bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "span") {
+		return 0, false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(v, "span"))
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }

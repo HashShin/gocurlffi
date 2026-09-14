@@ -623,7 +623,13 @@ type renderBlock struct {
 	// of the container (basisPct) plus a fixed length (basisPx), which covers
 	// "flex: 1" as well as "flex: 0 0 calc(50% - 7px)". Children are collected
 	// with their internal offsets relative to their own left edge.
-	flexRow    bool
+	flexRow bool
+	// A grid container places its children in the tracks of grid-template
+	// columns, left to right, filling a new row when the tracks run out.
+	grid     bool
+	gridTmpl gridTemplate
+	// gridSpans is the column tracks each child spans in a grid.
+	gridSpans  []int
 	children   [][]renderBlock
 	grow       []float64
 	basisPx    []float64
@@ -987,6 +993,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			})
 			y += 12
 		case blockFlex:
+			if b.grid {
+				ls, h := layoutGrid(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
+				out = append(out, ls...)
+				y += h
+				continue
+			}
 			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
 			out = append(out, ls...)
 			y += h
@@ -1250,6 +1262,119 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		total += h
 	}
 	// The container's own background spans the whole row.
+	if b.hasBG {
+		lines = append([]drawLine{{
+			y: y, height: total, hasBG: true, bg: b.bg, bgX: contentX, bgW: avail,
+		}}, lines...)
+	}
+	return lines, total
+}
+
+// layoutGrid places a grid container's children in the column tracks of its
+// grid-template-columns. Auto placement is row-major: items fill the tracks
+// left to right and a new row starts when the remaining tracks cannot hold the
+// next item's span. Each row is as tall as its tallest item.
+func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+	n := len(b.children)
+	if n == 0 {
+		return nil, 0
+	}
+	contentX := colX + b.boxLeft
+	avail := colW - b.boxLeft
+	if avail < 10 {
+		avail = 10
+	}
+	gap := b.gap
+	tracks := b.gridTmpl.resolve(avail, gap)
+	if len(tracks) == 0 {
+		return nil, 0
+	}
+	cols := len(tracks)
+	rowGap := b.rowGap
+	if rowGap == 0 {
+		rowGap = gap
+	}
+	spanOf := func(i int) int {
+		sp := 1
+		if i < len(b.gridSpans) && b.gridSpans[i] > 1 {
+			sp = b.gridSpans[i]
+		}
+		if sp > cols {
+			sp = cols
+		}
+		return sp
+	}
+
+	var lines []drawLine
+	total := 0.0
+	for i := 0; i < n; {
+		// Gather one row of items and the x and width of each.
+		var row []int
+		var xs, ws []float64
+		x, col := contentX, 0
+		for i < n {
+			sp := spanOf(i)
+			if col > 0 && col+sp > cols {
+				break
+			}
+			if sp > cols-col {
+				sp = cols - col
+			}
+			w := gap * float64(sp-1)
+			for k := 0; k < sp; k++ {
+				w += tracks[col+k]
+			}
+			row = append(row, i)
+			xs = append(xs, x)
+			ws = append(ws, w)
+			x += w + gap
+			col += sp
+			i++
+			if col >= cols {
+				break
+			}
+		}
+		if len(row) == 0 {
+			break
+		}
+		if total > 0 {
+			total += rowGap
+		}
+		maxH := 0.0
+		childLines := make([][]drawLine, len(row))
+		childH := make([]float64, len(row))
+		for k, ci := range row {
+			// A grid item's width comes from its tracks, so an ancestor's
+			// width context no longer applies.
+			col := b.children[ci]
+			for j := range col {
+				col[j].hasSizeOwner = false
+			}
+			cl, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, boxes)
+			childLines[k] = cl
+			childH[k] = endY - (y + total)
+			if childH[k] > maxH {
+				maxH = childH[k]
+			}
+		}
+		for k := range childLines {
+			dy := 0.0
+			switch b.alignItems {
+			case "center":
+				dy = (maxH - childH[k]) / 2
+			case "end":
+				dy = maxH - childH[k]
+			}
+			if dy != 0 {
+				for j := range childLines[k] {
+					childLines[k][j].y += dy
+				}
+			}
+			lines = append(lines, childLines[k]...)
+		}
+		total += maxH
+	}
+	// The container's own background spans every track.
 	if b.hasBG {
 		lines = append([]drawLine{{
 			y: y, height: total, hasBG: true, bg: b.bg, bgX: contentX, bgW: avail,
