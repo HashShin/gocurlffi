@@ -641,7 +641,12 @@ func (c *collector) collectPositioned(el *html.Node, cs *computedStyle) {
 		left:   cs.left, top: cs.top, right: cs.right, bottom: cs.bottom,
 		hasLeft: cs.hasLeft, hasTop: cs.hasTop, hasRight: cs.hasRight, hasBottom: cs.hasBottom,
 		hasWidth: cs.hasWidth, widthPx: cs.widthPx, widthPct: cs.widthPct,
-		z: cs.zIndex,
+		z:             cs.zIndex,
+		translateX:    cs.translateX,
+		translateY:    cs.translateY,
+		translateXPct: cs.translateXPct,
+		translateYPct: cs.translateYPct,
+		hasTranslate:  cs.hasTranslate,
 	}
 	if c.absOwner != nil {
 		c.absOwner.children = append(c.absOwner.children, child)

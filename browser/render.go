@@ -734,6 +734,12 @@ type absChild struct {
 	hasWidth                             bool
 	widthPx, widthPct                    float64
 	z                                    int
+	// translateX/translateY are the element's "transform: translate()"
+	// offset. A percentage is a fraction of its own box, which is how an
+	// off-screen drawer is parked with translateX(100%).
+	translateX, translateY       float64
+	translateXPct, translateYPct float64
+	hasTranslate                 bool
 }
 
 // layoutBlocks flows blocks into a single column of the given width.
@@ -1333,6 +1339,13 @@ func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, bo
 			y = oy + child.top
 		case child.hasBottom:
 			y = oy + ch - child.bottom
+		}
+		// A translated element moves from wherever it would have been. The
+		// vertical percentage is not applied: it needs the element's own
+		// height, which is only known once it has been laid out.
+		if child.hasTranslate {
+			x += child.translateX + child.translateXPct*w
+			y += child.translateY
 		}
 		lines, _ := layoutColumn(child.blocks, x, w, y, baseSize, boxes)
 		out = append(out, lines...)

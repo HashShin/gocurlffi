@@ -470,6 +470,82 @@ func calcAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z
 
 func calcNameByte(c byte) bool { return calcAlpha(c) || c == '-' }
 
+// setTransform reads the translation part of "transform": translateX(),
+// translateY(), translate() and translate3d(). Rotation and scaling are not
+// modelled, but a translation is what decides whether an element is on the
+// page at all, and an off-screen panel is parked with translateX(100%).
+func (cs *computedStyle) setTransform(v string, base float64) {
+	v = strings.ToLower(v)
+	if strings.TrimSpace(v) == "" || strings.TrimSpace(v) == "none" {
+		return
+	}
+	for i := 0; i < len(v); {
+		open := strings.IndexByte(v[i:], '(')
+		if open < 0 {
+			return
+		}
+		open += i
+		name := strings.TrimSpace(v[i:open])
+		end := matchingParen(v, open)
+		if end < 0 {
+			return
+		}
+		args := splitGridArgs(v[open+1 : end])
+		add := func(tok string, x bool) {
+			px, pct, ok := translateOffset(tok, base)
+			if !ok {
+				return
+			}
+			cs.hasTranslate = true
+			if x {
+				cs.translateX += px
+				cs.translateXPct += pct
+			} else {
+				cs.translateY += px
+				cs.translateYPct += pct
+			}
+		}
+		switch name {
+		case "translatex":
+			if len(args) > 0 {
+				add(args[0], true)
+			}
+		case "translatey":
+			if len(args) > 0 {
+				add(args[0], false)
+			}
+		case "translate", "translate3d":
+			if len(args) > 0 {
+				add(args[0], true)
+			}
+			if len(args) > 1 {
+				add(args[1], false)
+			}
+		}
+		i = end + 1
+	}
+}
+
+// translateOffset resolves one component of a translate(): a percentage of the
+// element's own size, or a length.
+func translateOffset(tok string, base float64) (px, pct float64, ok bool) {
+	tok = strings.TrimSpace(tok)
+	if tok == "" {
+		return 0, 0, false
+	}
+	if strings.HasSuffix(tok, "%") {
+		f, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(tok, "%")), 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return 0, f / 100, true
+	}
+	if x, ok := cssLengthToPxV(tok, base, 0); ok {
+		return x, 0, true
+	}
+	return 0, 0, false
+}
+
 // normalizeFlexAlign reduces the alignment keywords to the few the layout
 // distinguishes: start, center, end, stretch and the space-* values.
 func normalizeFlexAlign(v string) string {
@@ -1174,8 +1250,14 @@ type computedStyle struct {
 	position                             string
 	left, top, right, bottom             float64
 	hasLeft, hasTop, hasRight, hasBottom bool
-	zIndex                               int
-	hasZ                                 bool
+	// translateX/translateY are the translation parts of "transform". A
+	// percentage is a fraction of the element's own box, which is how a
+	// drawer is parked beside the page with translateX(100%).
+	translateX, translateY       float64
+	translateXPct, translateYPct float64
+	hasTranslate                 bool
+	zIndex                       int
+	hasZ                         bool
 	// radiusPx and radiusPct are the corner radii (top-left, top-right,
 	// bottom-right, bottom-left); a percentage resolves against the box.
 	radiusPx  [4]float64
@@ -1841,6 +1923,9 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			cs.zIndex, cs.hasZ = n, true
 		}
+	}
+	if v, ok := d["transform"]; ok {
+		cs.setTransform(v, base)
 	}
 	if v, ok := d["box-shadow"]; ok {
 		cs.shadowX, cs.shadowY, cs.shadowBlur, cs.shadowSpread, cs.shadowColor, cs.hasShadow = parseBoxShadow(v, cs.textColor, base, e.width)

@@ -1457,6 +1457,45 @@ func TestFloatInsideFlexItemKeepsItsWidth(t *testing.T) {
 	}
 }
 
+// The translation part of "transform" moves a positioned element from where it
+// would have been. A percentage is a fraction of the element's own box, which
+// is how a drawer is parked beside the page instead of over it: go.dev's
+// navigation drawer is a fixed panel at translateX(100%), and without the
+// transform its links are drawn across the article. The expected geometry is
+// Chromium's getBoundingClientRect for the same page at 400px.
+func TestTransformTranslatesPositionedElements(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.drawer { position: fixed; top: 0; right: 0; width: 200px; height: 100px;
+			transform: translateX(100%); background: #ccc }
+		.shifted { position: absolute; top: 50px; left: 10px; transform: translate(5px, 5px) }
+	</style></head><body>
+		<div class="drawer">drawer</div>
+		<div class="shifted">shifted</div>
+		<p>page text</p>
+	</body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want the drawer: %+v", len(doc.boxes), doc.boxes)
+	}
+	if b := doc.boxes[0]; diff(b.x, 400) > 0.5 || diff(b.y, 0) > 0.5 ||
+		diff(b.w, 200) > 0.5 || diff(b.h, 100) > 0.5 {
+		t.Errorf("drawer box = x=%g y=%g w=%g h=%g, want x=400 y=0 w=200 h=100", b.x, b.y, b.w, b.h)
+	}
+	at := map[string]drawLine{}
+	for _, l := range doc.lines {
+		if len(l.runs) > 0 {
+			at[l.runs[0].text] = l
+		}
+	}
+	if l, ok := at["drawer"]; !ok || diff(l.runs[0].x, 400) > 0.5 {
+		t.Errorf("the drawer text is at %+v, want x=400, off the page", l)
+	}
+	if l, ok := at["shifted"]; !ok || diff(l.runs[0].x, 15) > 0.5 || diff(l.y, 55) > 0.5 {
+		t.Errorf("the translated block is at %+v, want x=15 y=55", l)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page
