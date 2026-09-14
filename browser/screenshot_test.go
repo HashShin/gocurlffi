@@ -1587,6 +1587,64 @@ func TestFloatsStackAlongTheirSide(t *testing.T) {
 	}
 }
 
+// grid-template's area map places items by name, and a minifier splits the
+// declaration into "grid-template: <rows> / <columns>" plus a separate
+// "grid-template-areas" with single-quoted strings. Wikipedia's desktop skin
+// is built from this: the article column, the left menu and the page tools are
+// grid areas, and reading only grid-template-columns stacks them. The expected
+// geometry is Chromium's getBoundingClientRect for the same page.
+func TestGridTemplateAreasPlaceItems(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.g { display: grid; grid-template: min-content 1fr / 196px minmax(0,1fr); column-gap: 24px;
+			grid-template-areas: 'top top' 'side main'; width: 600px }
+		.top { grid-area: top; background: #ccc; height: 20px }
+		.side { grid-area: side; background: #ddd; height: 30px }
+		.main { grid-area: main; background: #eee; height: 40px }
+	</style></head><body>
+		<div class="g"><div class="side"></div><div class="main"></div><div class="top"></div></div>
+	</body></html>`, 600)
+	// The DOM order is side, main, top; the areas put top first, spanning.
+	want := []struct{ x, y, w, h float64 }{
+		{0, 0, 600, 20},
+		{0, 20, 196, 30},
+		{220, 20, 380, 40},
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 ||
+			diff(got.w, w.w) > 0.5 || diff(got.h, w.h) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g h=%g, want x=%g y=%g w=%g h=%g",
+				i, got.x, got.y, got.w, got.h, w.x, w.y, w.w, w.h)
+		}
+	}
+}
+
+// An area name is an identifier and keeps its case. Lowercasing it left
+// Wikipedia's "grid-area: pageContent" unmatched against the template's
+// "pageContent", so the article column fell back to auto placement.
+func TestGridAreaNameIsCaseSensitive(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.g { display: grid; grid-template: 40px 40px / 100px 100px; width: 200px;
+			grid-template-areas: 'pageContent columnEnd' 'footer footer' }
+		.main { grid-area: pageContent; background: #ccc }
+	</style></head><body>
+		<div class="g"><div class="main"></div></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want 1: %+v", len(doc.boxes), doc.boxes)
+	}
+	if b := doc.boxes[0]; diff(b.x, 0) > 0.5 || diff(b.y, 0) > 0.5 || diff(b.w, 100) > 0.5 {
+		t.Errorf("the item is at x=%g y=%g w=%g, want the pageContent area at 0,0 100 wide", b.x, b.y, b.w)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

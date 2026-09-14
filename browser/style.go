@@ -956,6 +956,13 @@ func cssColorToken(v string) string {
 
 // --- computed style ---
 
+// gridArea is a named area of grid-template-areas: the rows and columns it
+// covers. An item is placed with "grid-area: <name>".
+type gridArea struct {
+	row, col         int
+	rowSpan, colSpan int
+}
+
 // gridTrack is one column of grid-template-columns.
 type gridTrack struct {
 	px    float64 // a fixed length
@@ -976,6 +983,12 @@ type gridTemplate struct {
 	// has n+1 lines. A name may repeat, and a line named "foo-start" or
 	// "foo-end" is also reachable as "foo".
 	lineNames [][]string
+	// rows are the explicit row track sizes, which grid-template and
+	// grid-template-rows declare.
+	rows []gridTrack
+	// areas are the named areas of grid-template-areas, and the row and
+	// column each starts at and covers. An item is placed by name.
+	areas map[string]gridArea
 }
 
 // gridPlacement is an item's grid-column value before the container's line
@@ -983,6 +996,23 @@ type gridTemplate struct {
 // empty for auto.
 type gridPlacement struct {
 	start, end string
+}
+
+// placeRow resolves a grid-row value for a grid of n row tracks, returning the
+// 0-based row the item starts in (-1 when it is auto-placed) and how many rows
+// it spans. grid-row's names come from the row line names, which
+// grid-template-rows declares.
+func (g gridTemplate) placeRow(p gridPlacement, n int) (row, span int) {
+	return g.place(p, n)
+}
+
+// areaRect returns the row and column rectangle of a named grid area.
+func (g gridTemplate) areaRect(name string) (row, col, rowSpan, colSpan int, ok bool) {
+	a, ok := g.areas[name]
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+	return a.row, a.col, a.rowSpan, a.colSpan, true
 }
 
 // place resolves a grid-column value against the template's line names for a
@@ -1233,6 +1263,12 @@ type computedStyle struct {
 	// normal flow: it is placed against that edge of its container, and the
 	// content after it flows beside it.
 	floatSide string
+	// gridAreaName is the item's "grid-area: <name>", which grid-template's
+	// area map resolves to a row and column.
+	gridAreaName string
+	// gridRow is the item's "grid-row"/"grid-area" rows, resolved like
+	// gridColumn.
+	gridRow gridPlacement
 	// gridColumn is the item's grid-column. The container's line names
 	// resolve it to a track and a span, which the item itself cannot do: it
 	// does not know the template it will be placed in.
@@ -1823,6 +1859,18 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["grid-template-columns"]; ok {
 		cs.grid = parseGridTemplate(v, base, e.width)
 	}
+	if v, ok := d["grid-template-rows"]; ok {
+		cs.grid.rows = parseGridTemplate(v, base, e.width).tracks
+	}
+	if v, ok := d["grid-template"]; ok {
+		cs.grid = parseGridShorthand(v, base, e.width)
+	}
+	if v, ok := d["grid-template-areas"]; ok {
+		cs.grid.areas = parseGridAreas(v)
+	}
+	if v, ok := d["grid-area"]; ok {
+		cs.setGridArea(v)
+	}
 	if v, ok := d["grid-column"]; ok {
 		cs.setGridColumn(v)
 	}
@@ -2401,6 +2449,109 @@ func parseGridTemplate(v string, base, vw float64) gridTemplate {
 	return g
 }
 
+// parseGridShorthand reads the "grid-template" shorthand:
+//
+//	grid-template: "header header" auto "nav main" 1fr / 12rem minmax(0, 1fr)
+//
+// The quoted strings are the rows of a grid-area map, each with an optional
+// track size after it, and the tracks after the slash are the columns. The
+// two-part form without strings is rows over columns. Wikipedia's desktop
+// skin is built entirely from this.
+func parseGridShorthand(v string, base, vw float64) gridTemplate {
+	var g gridTemplate
+	g.lineNames = [][]string{{}}
+	head, tail := v, ""
+	if i := strings.IndexByte(v, '/'); i >= 0 {
+		head, tail = v[:i], v[i+1:]
+	}
+	var area [][]string
+	toks := splitGridTokens(head)
+	for i := 0; i < len(toks); i++ {
+		tok := toks[i]
+		if strings.HasPrefix(tok, "[") {
+			j := i
+			for j < len(toks) && !strings.HasSuffix(toks[j], "]") {
+				j++
+			}
+			if j < len(toks) {
+				names := strings.TrimSuffix(strings.TrimPrefix(strings.Join(toks[i:j+1], " "), "["), "]")
+				for _, nm := range strings.Fields(strings.ToLower(names)) {
+					if len(g.lineNames) > 0 {
+						last := len(g.lineNames) - 1
+						g.lineNames[last] = append(g.lineNames[last], nm)
+					}
+				}
+				i = j
+			}
+			continue
+		}
+		if len(tok) > 0 && (tok[0] == '"' || tok[0] == '\'') {
+			row := strings.Fields(strings.ReplaceAll(strings.Trim(tok, `"'`), ".", " "))
+			area = append(area, row)
+			continue
+		}
+		if t, ok := parseGridTrack(strings.ToLower(strings.TrimSpace(tok)), base, vw); ok {
+			g.rows = append(g.rows, t)
+		}
+	}
+	if tail != "" {
+		g.tracks = parseGridTemplate(tail, base, vw).tracks
+	}
+	if len(area) > 0 {
+		g.areas = gridAreas(area)
+	}
+	return g
+}
+
+// parseGridAreas reads "grid-template-areas": one quoted string per row, each
+// a list of area names. A minifier splits the template shorthand into this
+// plus "grid-template", which is why both are read.
+func parseGridAreas(v string) map[string]gridArea {
+	var rows [][]string
+	for _, tok := range splitGridTokens(v) {
+		if len(tok) == 0 || (tok[0] != '"' && tok[0] != '\'') {
+			continue
+		}
+		body := strings.Trim(tok, `"'`)
+		rows = append(rows, strings.Fields(strings.ReplaceAll(body, ".", " ")))
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := gridAreas(rows)
+	return out
+}
+
+// gridAreas turns a grid-template-areas map into the rectangle each name
+// covers. A name may repeat across a rectangle of cells; anything else is a
+// malformed template and its cells are left unnamed.
+func gridAreas(rows [][]string) map[string]gridArea {
+	out := map[string]gridArea{}
+	for r, row := range rows {
+		for c, name := range row {
+			if name == "" || name == "." {
+				continue
+			}
+			a, ok := out[name]
+			if !ok {
+				out[name] = gridArea{row: r, col: c, rowSpan: 1, colSpan: 1}
+				continue
+			}
+			if r < a.row || c < a.col {
+				continue
+			}
+			if r-a.row+1 > a.rowSpan {
+				a.rowSpan = r - a.row + 1
+			}
+			if c-a.col+1 > a.colSpan {
+				a.colSpan = c - a.col + 1
+			}
+			out[name] = a
+		}
+	}
+	return out
+}
+
 // parseGridTrack parses one track: a length, a percentage, "auto", an "fr"
 // share, or minmax(min, max). A track whose size cannot be resolved is sized
 // to its content rather than collapsing to nothing, which would otherwise wrap
@@ -2480,15 +2631,26 @@ func gridLength(v string, base, vw float64) (px, pct float64, ok bool) {
 func splitGridTokens(s string) []string {
 	var out []string
 	depth, start := 0, 0
-	for i, r := range s {
-		switch r {
-		case '(':
+	// A quoted string is one token, spaces and all: grid-template's row of
+	// area names is written "header header" / "nav main". Minifiers write it
+	// with single quotes, so both are recognised.
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '(':
 			depth++
-		case ')':
+		case c == ')':
 			if depth > 0 {
 				depth--
 			}
-		case ' ', '\t', '\n':
+		case c == ' ' || c == '\t' || c == '\n':
 			if depth == 0 {
 				if i > start {
 					out = append(out, s[start:i])
@@ -2526,6 +2688,38 @@ func splitGridArgs(s string) []string {
 		out = append(out, s[start:])
 	}
 	return out
+}
+
+// setGridArea reads "grid-area". The named form places the item at that area
+// of the container's grid-template-areas; the four-line form is "row-start /
+// column-start / row-end / column-end", which the layout also understands.
+func (cs *computedStyle) setGridArea(v string) {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "auto") {
+		return
+	}
+	if !strings.Contains(v, "/") {
+		// An area name is an identifier, so it keeps its case: Wikipedia's
+		// template names its areas "pageContent" and "columnStart".
+		cs.gridAreaName = v
+		return
+	}
+	v = strings.ToLower(v)
+	parts := strings.Split(v, "/")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	if len(parts) >= 2 {
+		cs.gridColumn = gridPlacement{start: parts[1], end: ""}
+	}
+	if len(parts) >= 4 {
+		cs.gridColumn.end = parts[3]
+	}
+	if len(parts) >= 3 {
+		cs.gridRow = gridPlacement{start: parts[0], end: parts[2]}
+	} else {
+		cs.gridRow = gridPlacement{start: parts[0], end: ""}
+	}
 }
 
 // setGridColumn reads "grid-column": a bare number or span, or "start / end".

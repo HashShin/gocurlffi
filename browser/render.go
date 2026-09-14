@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -639,9 +640,12 @@ type renderBlock struct {
 	gridTmpl gridTemplate
 	// gridCols and gridSpans are each child's column placement in a grid:
 	// the 0-based track it starts in (-1 when it is auto-placed) and how
-	// many tracks it spans.
-	gridCols  []int
-	gridSpans []int
+	// many tracks it spans. gridRows and gridRowSpans are the same for the
+	// explicit rows a grid-template area asks for.
+	gridCols     []int
+	gridSpans    []int
+	gridRows     []int
+	gridRowSpans []int
 	// A table lays its rows out as cells in shared columns.
 	table bool
 	rows  []tableRow
@@ -1671,56 +1675,116 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		return x, w
 	}
 
-	var lines []drawLine
-	total := 0.0
-	for i := 0; i < n; {
-		// Gather one row of items and the x and width of each.
-		var row []int
-		var xs, ws []float64
-		taken := make([]bool, cols)
-		for i < n {
-			sp := spanOf(i)
-			col := colOf(i)
-			if col < 0 {
-				col = -1
-				for c := 0; c+sp <= cols; c++ {
-					free := true
-					for k := c; k < c+sp; k++ {
-						if taken[k] {
-							free = false
-							break
-						}
-					}
-					if free {
-						col = c
+	// Placement. An item with a grid-area, or with both a grid-row and a
+	// grid-column, is fixed where it says; anything else is auto-placed into
+	// the first free cell, in row-major order.
+	type gridCell struct{ col, span, row, rowSpan int }
+	cells := make([]gridCell, n)
+	for i := range cells {
+		sp := spanOf(i)
+		col := colOf(i)
+		if col >= 0 && col+sp > cols {
+			col = cols - sp
+		}
+		row := -1
+		if i < len(b.gridRows) && b.gridRows[i] >= 0 {
+			row = b.gridRows[i]
+		}
+		rowSpan := 1
+		if i < len(b.gridRowSpans) && b.gridRowSpans[i] > 1 {
+			rowSpan = b.gridRowSpans[i]
+		}
+		cells[i] = gridCell{col: col, span: sp, row: row, rowSpan: rowSpan}
+	}
+	occupied := map[[2]int]bool{}
+	for i, it := range cells {
+		if it.col < 0 || it.row < 0 {
+			continue
+		}
+		cells[i].col = it.col
+		for r := it.row; r < it.row+it.rowSpan; r++ {
+			for c := it.col; c < it.col+it.span && c < cols; c++ {
+				occupied[[2]int{r, c}] = true
+			}
+		}
+	}
+	cursorRow, cursorCol := 0, 0
+	for i := range cells {
+		it := &cells[i]
+		if it.col >= 0 && it.row >= 0 {
+			continue
+		}
+		if it.col >= 0 {
+			// A definite column: the first row where it fits.
+			for r := 0; ; r++ {
+				free := true
+				for c := it.col; c < it.col+it.span && c < cols; c++ {
+					if occupied[[2]int{r, c}] {
+						free = false
 						break
 					}
 				}
-				if col < 0 {
+				if free {
+					it.row = r
 					break
 				}
 			}
-			if col+sp > cols {
-				col = cols - sp
+			for c := it.col; c < it.col+it.span && c < cols; c++ {
+				occupied[[2]int{it.row, c}] = true
 			}
-			busy := col < 0
-			for k := col; !busy && k < col+sp; k++ {
-				busy = taken[k]
+			continue
+		}
+		// Fully auto: the first free run from the cursor on.
+		for {
+			if cursorCol+it.span > cols {
+				cursorRow++
+				cursorCol = 0
+				continue
 			}
-			if busy {
+			free := true
+			for c := cursorCol; c < cursorCol+it.span; c++ {
+				if occupied[[2]int{cursorRow, c}] {
+					free = false
+					break
+				}
+			}
+			if free {
+				it.row, it.col = cursorRow, cursorCol
+				for c := cursorCol; c < cursorCol+it.span; c++ {
+					occupied[[2]int{cursorRow, c}] = true
+				}
+				cursorCol += it.span
 				break
 			}
-			for k := col; k < col+sp; k++ {
-				taken[k] = true
-			}
-			x, w := trackX(col, sp)
+			cursorCol++
+		}
+	}
+	rowOrder := make([]int, 0, n)
+	rowItems := map[int][]int{}
+	for i, it := range cells {
+		if _, ok := rowItems[it.row]; !ok {
+			rowOrder = append(rowOrder, it.row)
+		}
+		rowItems[it.row] = append(rowItems[it.row], i)
+	}
+	sort.Ints(rowOrder)
+
+	var lines []drawLine
+	total := 0.0
+	for _, r := range rowOrder {
+		// The row's items, left to right.
+		var row []int
+		var xs, ws []float64
+		idxs := rowItems[r]
+		sort.SliceStable(idxs, func(a, b int) bool { return cells[idxs[a]].col < cells[idxs[b]].col })
+		for _, i := range idxs {
+			x, w := trackX(cells[i].col, cells[i].span)
 			row = append(row, i)
 			xs = append(xs, x)
 			ws = append(ws, w)
-			i++
 		}
 		if len(row) == 0 {
-			break
+			continue
 		}
 		if total > 0 {
 			total += rowGap

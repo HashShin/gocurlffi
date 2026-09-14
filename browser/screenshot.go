@@ -1333,12 +1333,21 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		b.hasBasis = append(b.hasBasis, has)
 		// A grid-column value only means something against the container's
 		// own template, so the track and span are read from b.gridTmpl.
-		gridCol, span := -1, 1
+		gridCol, span, gridRow, rowSpan := -1, 1, -1, 1
 		if child != nil {
-			gridCol, span = b.gridTmpl.place(child.gridColumn, len(b.gridTmpl.tracks))
+			// A named area gives both axes; a grid-column or grid-row on its
+			// own gives one. Anything left over is auto-placed.
+			if r, c, rs, cs2, ok := b.gridTmpl.areaRect(child.gridAreaName); ok {
+				gridRow, gridCol, rowSpan, span = r, c, rs, cs2
+			} else {
+				gridCol, span = b.gridTmpl.place(child.gridColumn, len(b.gridTmpl.tracks))
+				gridRow, rowSpan = b.gridTmpl.placeRow(child.gridRow, len(b.gridTmpl.rows))
+			}
 		}
 		b.gridCols = append(b.gridCols, gridCol)
 		b.gridSpans = append(b.gridSpans, span)
+		b.gridRows = append(b.gridRows, gridRow)
+		b.gridRowSpans = append(b.gridRowSpans, rowSpan)
 	}
 	if len(b.children) == 0 {
 		return false

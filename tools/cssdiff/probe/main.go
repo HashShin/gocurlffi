@@ -15,6 +15,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 )
 
@@ -23,6 +24,7 @@ func main() {
 	js := flag.String("js", "1", "expression to evaluate")
 	width := flag.Int("width", 1200, "viewport width")
 	ua := flag.String("ua", "", "user agent override")
+	nojs := flag.Bool("nojs", false, "disable JavaScript, to see the no-JS layout a page falls back to")
 	flag.Parse()
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
@@ -43,11 +45,15 @@ func main() {
 	defer cancelTimeout()
 
 	var out string
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate(*url),
-		chromedp.Sleep(3*time.Second),
-		chromedp.Evaluate(*js, &out),
-	); err != nil {
+	actions := []chromedp.Action{chromedp.Navigate(*url), chromedp.Sleep(3 * time.Second)}
+	if *nojs {
+		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
+			return emulation.SetScriptExecutionDisabled(true).Do(ctx)
+		}))
+		actions = append(actions, chromedp.Navigate(*url), chromedp.Sleep(2*time.Second))
+	}
+	actions = append(actions, chromedp.Evaluate(*js, &out))
+	if err := chromedp.Run(ctx, actions...); err != nil {
 		fmt.Fprintln(os.Stderr, "chromedp:", err)
 		os.Exit(1)
 	}
