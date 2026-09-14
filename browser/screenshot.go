@@ -490,6 +490,18 @@ type collector struct {
 	// against it instead of the page width.
 	contW    float64
 	hasContW bool
+
+	// rightInset is how far the containing block's content edge sits inside the
+	// column's right edge, accumulated over the containers between them. It is
+	// zero at the top of the document, where the column itself is the
+	// containing block, and grows with a container's right padding, border and
+	// margin. The column's width is only known at layout time (a flex item
+	// column differs from the page), so the inset is what is recorded.
+	rightInset float64
+	// blockInset is the inset that applies to the blocks the element being
+	// walked produces: the inset of the containing block they sit in, which is
+	// their parent's content box, not their own.
+	blockInset float64
 }
 
 // finishBlock applies an element's box edges, sizing context and box to the
@@ -497,9 +509,11 @@ type collector struct {
 // content of its own (a sized, empty div).
 func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 	if boxed && len(c.blocks) == start {
-		c.blocks = append(c.blocks, renderBlock{
+		b := renderBlock{
 			kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
-		})
+		}
+		c.stampRight(&b)
+		c.blocks = append(c.blocks, b)
 	}
 	c.applyBoxEdges(start, cs)
 	c.assignSizing(start, cs)
@@ -631,6 +645,12 @@ func (c *collector) collectPositioned(el *html.Node, cs *computedStyle) {
 	}
 }
 
+// stampRight records the containing block's content right edge on a block, so
+// the layout can wrap its text against the container it actually sits in.
+func (c *collector) stampRight(b *renderBlock) {
+	b.rightInset, b.hasRightInset = c.blockInset, c.blockInset > 0
+}
+
 func (c *collector) ensure(cs *computedStyle) *renderBlock {
 	if c.cur == nil {
 		b := &renderBlock{
@@ -641,6 +661,7 @@ func (c *collector) ensure(cs *computedStyle) *renderBlock {
 			pre:     c.pre,
 			marker:  c.marker,
 		}
+		c.stampRight(b)
 		if cs != nil {
 			b.align = cs.textAlign
 			b.lineH = cs.lineHeight
@@ -706,6 +727,7 @@ func (c *collector) walkElement(el *html.Node) {
 		sizeAutoLeft, sizeAutoRight bool
 		contW                       float64
 		hasContW                    bool
+		rightInset                  float64
 		hasSizeOwner                bool
 		sizeBoxLeft                 float64
 		sizePadLeft                 float64
@@ -714,7 +736,7 @@ func (c *collector) walkElement(el *html.Node) {
 	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
-		c.contW, c.hasContW,
+		c.contW, c.hasContW, c.rightInset,
 		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight}
 
 	if cs.hasBackground {
@@ -736,6 +758,10 @@ func (c *collector) walkElement(el *html.Node) {
 		letterSpacing: cs.letterSpacing,
 	}
 	block := isBlockDisplay(cs.display)
+	// The blocks this element produces live in its containing block, so they
+	// carry the inset of the parent's content box, not this element's own.
+	savedBlockInset := c.blockInset
+	c.blockInset = c.rightInset
 	// A block with a background, border or radius is drawn as one box: its
 	// background is painted as a (possibly rounded) rectangle instead of per
 	// line, so its own background must not propagate to the lines it contains.
@@ -816,6 +842,12 @@ func (c *collector) walkElement(el *html.Node) {
 			} else {
 				c.contW, c.hasContW = 0, false
 			}
+		} else {
+			// A container that does not declare its own width still insets what
+			// it contains: its padding, border and right margin pull the content
+			// edge in from the containing block's. Without this the text inside
+			// a padded wrapper would wrap against the page, not the wrapper.
+			c.rightInset += cs.marginRight + cs.paddingRight + cs.borderW
 		}
 	}
 	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
@@ -832,6 +864,8 @@ func (c *collector) walkElement(el *html.Node) {
 		c.sizePadLeft, c.sizePadRight = saved.sizePadLeft, saved.sizePadRight
 		c.sizeMarginRight = saved.sizeMarginRight
 		c.contW, c.hasContW = saved.contW, saved.hasContW
+		c.rightInset = saved.rightInset
+		c.blockInset = savedBlockInset
 	}()
 
 	switch tag {
@@ -840,10 +874,12 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	case "hr":
 		c.flush()
-		c.blocks = append(c.blocks, renderBlock{
+		rb := renderBlock{
 			kind: blockRule, boxLeft: c.content, textX: c.content,
 			quote: c.quote,
-		})
+		}
+		c.stampRight(&rb)
+		c.blocks = append(c.blocks, rb)
 		return
 	case "img", "svg":
 		if tag == "svg" {
@@ -1022,6 +1058,7 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 	if c.hasBG {
 		b.boxBG, b.boxHasBG = c.bg, true
 	}
+	c.stampRight(&b)
 	c.blocks = append(c.blocks, b)
 	return len(c.blocks) - 1
 }
@@ -1122,6 +1159,7 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
 	if len(b.children) == 0 {
 		return false
 	}
+	c.stampRight(&b)
 	c.blocks = append(c.blocks, b)
 	return true
 }
@@ -1130,7 +1168,11 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle) bool {
 // returns the blocks it produced (not appended to the main list).
 func (c *collector) collectNode(n *html.Node) []renderBlock {
 	saved := c.content
+	savedInset, savedBlockInset := c.rightInset, c.blockInset
 	c.content = 0
+	// The subtree is measured from its own left edge, so the page column's
+	// right edge no longer applies: the caller sets the width instead.
+	c.rightInset, c.blockInset = 0, 0
 	c.flush()
 	start := len(c.blocks)
 	c.walkNode(n)
@@ -1138,6 +1180,7 @@ func (c *collector) collectNode(n *html.Node) []renderBlock {
 	out := append([]renderBlock(nil), c.blocks[start:]...)
 	c.blocks = c.blocks[:start]
 	c.content = saved
+	c.rightInset, c.blockInset = savedInset, savedBlockInset
 	return out
 }
 

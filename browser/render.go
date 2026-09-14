@@ -677,6 +677,11 @@ type renderBlock struct {
 	marginRight  float64
 	paddingRight float64
 	maxHeight    float64
+	// rightInset is how far the containing block's content edge sits inside the
+	// column's right edge, from the padding, border and right margin of the
+	// containers between them.
+	rightInset    float64
+	hasRightInset bool
 	// Out-of-flow children (position:absolute/fixed) placed relative to this
 	// block's content box, and the offset from position:relative.
 	abs   []absChild
@@ -790,12 +795,18 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// margins center whatever is left over.
 		var bb, edge, contentW, inner, boxX, boxWidthOuter, contentRight float64
 		var extra, shift float64
+		// The containing block's content right edge: the column's, less any
+		// inset an ancestor container put on it.
+		contRight := colW
+		if b.hasRightInset {
+			contRight -= b.rightInset
+		}
 		if b.hasSizeOwner {
 			// A width context is active. Resolve the box of the element that
 			// declared it: "max-width:1200px;margin:0 auto" centers that
 			// element, and everything inside it follows the same shift and is
 			// measured against its content edge.
-			obb := colW - b.sizeBoxLeft - b.sizeMarginRight
+			obb := contRight - b.sizeBoxLeft - b.sizeMarginRight
 			if obb < 0 {
 				obb = 0
 			}
@@ -844,7 +855,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				bb, edge, contentW, extra = obb, oedge, oContent, oExtra
 				shift = oShift
 				inner = b.textX - b.sizeLeft
-				boxX = colX + b.borderLeft + shift
+				boxX = colX + b.sizeBoxLeft + shift
 				boxWidthOuter = outer
 			default:
 				// A block inside the declaring element: it is measured from
@@ -893,7 +904,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				boxWidthOuter = contentW + edge
 			}
 		} else {
-			bb = colW - b.boxLeft - b.marginRight
+			bb = contRight - b.boxLeft - b.marginRight
 			if bb < 0 {
 				bb = 0
 			}

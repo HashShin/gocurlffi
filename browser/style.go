@@ -1289,7 +1289,11 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		}
 	}
 	if v, ok := d["margin-right"]; ok {
-		if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+		if strings.EqualFold(strings.TrimSpace(v), "auto") {
+			// The used value of an auto margin is resolved by the layout; until
+			// then it is zero, and it must clear any default it overrides.
+			cs.marginRight = 0
+		} else if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 			cs.marginRight = px
 		}
 	}
@@ -1433,6 +1437,8 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["list-style-type"]; ok {
 		cs.listStyle = strings.ToLower(strings.TrimSpace(v))
 	}
+	// "auto" is only valid on the margin sides; on the others it is an invalid
+	// value a browser drops, which leaves the property as it was.
 	for _, side := range []struct {
 		prop string
 		dst  *float64
@@ -1445,7 +1451,9 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		{"padding-left", &cs.paddingLeft},
 	} {
 		if v, ok := d[side.prop]; ok {
-			if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
+			if strings.EqualFold(strings.TrimSpace(v), "auto") && strings.HasPrefix(side.prop, "margin") {
+				*side.dst = 0
+			} else if px, ok2 := cssLengthToPxV(v, base, e.width); ok2 {
 				*side.dst = px
 			}
 		}
@@ -1597,7 +1605,7 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 	switch tag {
 	case "body":
 		cs.marginTop, cs.marginBottom = 8, 8
-		cs.marginLeft = 8
+		cs.marginLeft, cs.marginRight = 8, 8
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		cs.marginTop = uaHeadingMargin[tag] * cs.fontSize
 		cs.marginBottom = cs.marginTop

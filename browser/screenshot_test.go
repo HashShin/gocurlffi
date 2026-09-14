@@ -200,6 +200,58 @@ func TestBoxSizingAndAutoMargins(t *testing.T) {
 	}
 }
 
+// auto overrides an inherited margin length. The default body margin is 8px on
+// every side, so "margin: 0 auto" has to clear the right margin as well as the
+// left; otherwise the centering slack is measured 8px short.
+func TestAutoMarginClearsDefault(t *testing.T) {
+	// example.com sizes its body to 60vw and centers it with auto margins.
+	// Chromium puts that body at x = (1280 - 768) / 2 = 256.
+	doc := layoutDoc(t, `<html><body style="width:60vw;margin:15vh auto">`+
+		`<div><h1>Example Domain</h1></div></body></html>`, 1280)
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	if x := doc.lines[0].indent; x != 256 {
+		t.Errorf("centered body text x=%g, want 256", x)
+	}
+}
+
+// An unset body margin is 8px on all four sides, so a block fills the body's
+// 384px of content between the two margins, as in a browser.
+func TestBodyDefaultMarginInsertsBothEdges(t *testing.T) {
+	doc := layoutDoc(t, `<html><body style="background:#fff">`+
+		`<div style="background:#eee">one two</div></body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("boxes = %d, want 1: %+v", len(doc.boxes), doc.boxes)
+	}
+	if b := doc.boxes[0]; b.x != 8 || b.w != 384 {
+		t.Errorf("block x=%g w=%g, want x=8 w=384 (the body's content box)", b.x, b.w)
+	}
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	if x := doc.lines[0].indent; x != 8 {
+		t.Errorf("text x=%g, want 8 (the body's default left margin)", x)
+	}
+}
+
+// A padded wrapper that declares no width still insets what it contains: the
+// text inside wraps against the wrapper's content box, not the page. Chromium
+// reports the inner block at x=40 w=320 for this page.
+func TestPaddedWrapperInsetsContent(t *testing.T) {
+	doc := layoutDoc(t, `<html><body style="margin:0">`+
+		`<div style="padding:0 40px;background:#eee">`+
+		`<div style="background:#ddd">one two three four</div></div></body></html>`, 400)
+	if len(doc.boxes) == 0 {
+		t.Fatal("no boxes drawn")
+	}
+	// The inner block starts at the wrapper's content edge and ends 40px short
+	// of the page, where the wrapper's right padding begins.
+	if inner := doc.boxes[len(doc.boxes)-1]; inner.x != 40 || inner.w != 320 {
+		t.Errorf("inner block x=%g w=%g, want x=40 w=320", inner.x, inner.w)
+	}
+}
+
 // Text-align moves the runs inside the block's content box: left keeps them at
 // the content edge, center splits the slack, right fills it.
 func TestTextAlignPositionsRuns(t *testing.T) {
