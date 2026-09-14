@@ -163,77 +163,312 @@ func cssSizeParts(v string, base, vw float64) (pct, px float64, ok bool) {
 	return 0, 0, false
 }
 
-// cssCalcParts resolves the inside of a calc() to a percentage plus a fixed
-// length, which is the form flex-basis and width need. Only addition and
-// subtraction of length atoms are understood.
+// cssCalcParts resolves the inside of a calc() to a percentage fraction plus a
+// fixed length, which is the form flex-basis and width need.
 func cssCalcParts(inner string, vw float64) (pct, px float64, ok bool) {
-	terms, signs := splitCalcTerms(inner)
-	if len(terms) == 0 {
+	v, ok2 := evalCalc(inner, 16, vw)
+	if !ok2 || v.scalar {
 		return 0, 0, false
 	}
-	for i, term := range terms {
-		p, x, okAtom := calcAtom(term, vw)
-		if !okAtom {
-			return 0, 0, false
-		}
-		pct += signs[i] * p
-		px += signs[i] * x
-	}
-	return pct, px, true
+	return v.pct, v.px, true
 }
 
-// splitCalcTerms splits a calc() body on top-level + and -, returning each term
-// and the sign that applies to it.
-func splitCalcTerms(s string) (terms []string, signs []float64) {
-	var cur strings.Builder
-	sign := 1.0
-	depth := 0
-	flush := func() {
-		if t := strings.TrimSpace(cur.String()); t != "" {
-			terms = append(terms, t)
-			signs = append(signs, sign)
-		}
-		cur.Reset()
+// calcValue is the value of one subexpression of calc(). pct is a fraction of
+// the container width (0.5 for 50%) and px is a fixed length; a plain number
+// ("2" in "2 * 100px") carries its value in px and sets scalar.
+type calcValue struct {
+	pct    float64
+	px     float64
+	scalar bool
+}
+
+// evalCalc evaluates a calc() body: a sum of products of numbers, percentages
+// and lengths, with parenthesised subexpressions, a nested calc(), and the
+// min(), max() and clamp() functions. base is the font size em resolves
+// against. Site CSS leans on this shape heavily, e.g. a grid bleed of
+// "minmax(0, calc((100% - calc(1024px + (2rem * 2))) / 2))".
+func evalCalc(s string, base, vw float64) (calcValue, bool) {
+	p := calcParser{s: strings.ToLower(strings.TrimSpace(s)), base: base, vw: vw}
+	v, ok := p.sum()
+	if !ok {
+		return calcValue{}, false
 	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '(':
-			depth++
-			cur.WriteByte(c)
-		case c == ')':
-			depth--
-			cur.WriteByte(c)
-		case depth == 0 && (c == '+' || c == '-') && i > 0 && (s[i-1] == ' ' || s[i-1] == ')'):
-			flush()
-			if c == '-' {
-				sign = -1
-			} else {
-				sign = 1
+	p.space()
+	if p.i != len(p.s) {
+		return calcValue{}, false
+	}
+	return v, true
+}
+
+// calcParser is a recursive-descent reader over a calc() body.
+type calcParser struct {
+	s    string
+	i    int
+	base float64
+	vw   float64
+}
+
+func (p *calcParser) space() {
+	for p.i < len(p.s) {
+		switch p.s[p.i] {
+		case ' ', '\t', '\n', '\r':
+			p.i++
+			continue
+		}
+		return
+	}
+}
+
+// sum reads terms separated by + and -, which must be of the same kind: two
+// lengths, or two plain numbers.
+func (p *calcParser) sum() (calcValue, bool) {
+	left, ok := p.product()
+	if !ok {
+		return calcValue{}, false
+	}
+	for {
+		p.space()
+		if p.i >= len(p.s) || (p.s[p.i] != '+' && p.s[p.i] != '-') {
+			return left, true
+		}
+		op := p.s[p.i]
+		p.i++
+		right, ok := p.product()
+		if !ok || left.scalar != right.scalar {
+			return calcValue{}, false
+		}
+		if op == '+' {
+			left.pct += right.pct
+			left.px += right.px
+		} else {
+			left.pct -= right.pct
+			left.px -= right.px
+		}
+	}
+}
+
+// product reads factors separated by * and /. A length may be scaled by a
+// plain number; two lengths cannot be multiplied.
+func (p *calcParser) product() (calcValue, bool) {
+	left, ok := p.factor()
+	if !ok {
+		return calcValue{}, false
+	}
+	for {
+		p.space()
+		if p.i >= len(p.s) || (p.s[p.i] != '*' && p.s[p.i] != '/') {
+			return left, true
+		}
+		op := p.s[p.i]
+		p.i++
+		right, ok := p.factor()
+		if !ok {
+			return calcValue{}, false
+		}
+		if op == '/' {
+			if !right.scalar || right.px == 0 {
+				return calcValue{}, false
 			}
+			left.pct /= right.px
+			left.px /= right.px
+			continue
+		}
+		switch {
+		case left.scalar && right.scalar:
+			left.px *= right.px
+		case left.scalar:
+			left = calcValue{pct: left.px * right.pct, px: left.px * right.px}
+		case right.scalar:
+			left.pct *= right.px
+			left.px *= right.px
 		default:
-			cur.WriteByte(c)
+			return calcValue{}, false
 		}
 	}
-	flush()
-	return terms, signs
 }
 
-// calcAtom resolves one term of a calc(): a percentage, or a length.
-func calcAtom(term string, vw float64) (pct, px float64, ok bool) {
-	term = strings.TrimSpace(strings.ToLower(term))
-	if strings.HasSuffix(term, "%") {
-		f, err := strconv.ParseFloat(strings.TrimSuffix(term, "%"), 64)
-		if err != nil {
-			return 0, 0, false
+// factor reads a parenthesised group, a signed value, a function call or a
+// number with an optional unit.
+func (p *calcParser) factor() (calcValue, bool) {
+	p.space()
+	if p.i >= len(p.s) {
+		return calcValue{}, false
+	}
+	switch c := p.s[p.i]; {
+	case c == '(':
+		p.i++
+		v, ok := p.sum()
+		if !ok {
+			return calcValue{}, false
 		}
-		return f / 100, 0, true
+		p.space()
+		if p.i >= len(p.s) || p.s[p.i] != ')' {
+			return calcValue{}, false
+		}
+		p.i++
+		return v, true
+	case c == '+' || c == '-':
+		p.i++
+		v, ok := p.factor()
+		if !ok {
+			return calcValue{}, false
+		}
+		v.pct, v.px = -v.pct, -v.px
+		return v, true
 	}
-	if x, ok2 := cssLengthToPxV(term, 16, vw); ok2 {
-		return 0, x, true
+	if name, inner, ok := p.call(); ok {
+		return p.function(name, inner)
 	}
-	return 0, 0, false
+	num, unit, ok := p.number()
+	if !ok {
+		return calcValue{}, false
+	}
+	if unit == "%" {
+		f, err := strconv.ParseFloat(num, 64)
+		if err != nil {
+			return calcValue{}, false
+		}
+		return calcValue{pct: f / 100}, true
+	}
+	if unit == "" {
+		f, err := strconv.ParseFloat(num, 64)
+		if err != nil {
+			return calcValue{}, false
+		}
+		return calcValue{px: f, scalar: true}, true
+	}
+	if px, ok := cssLengthToPxV(num+unit, p.base, p.vw); ok {
+		return calcValue{px: px}, true
+	}
+	return calcValue{}, false
 }
+
+// call reads "name(...)" at the cursor if one is there.
+func (p *calcParser) call() (name, inner string, ok bool) {
+	start := p.i
+	for p.i < len(p.s) && calcNameByte(p.s[p.i]) {
+		p.i++
+	}
+	if p.i == start || p.i >= len(p.s) || p.s[p.i] != '(' {
+		p.i = start
+		return "", "", false
+	}
+	name = p.s[start:p.i]
+	end := matchingParen(p.s, p.i)
+	if end < 0 {
+		p.i = start
+		return "", "", false
+	}
+	inner = p.s[p.i+1 : end]
+	p.i = end + 1
+	return name, inner, true
+}
+
+// function evaluates the calc functions the layout understands.
+func (p *calcParser) function(name, inner string) (calcValue, bool) {
+	if name == "calc" {
+		return evalCalc(inner, p.base, p.vw)
+	}
+	if name != "min" && name != "max" && name != "clamp" {
+		return calcValue{}, false
+	}
+	args := splitGridArgs(inner)
+	if len(args) == 0 || (name == "clamp" && len(args) != 3) {
+		return calcValue{}, false
+	}
+	vals := make([]calcValue, 0, len(args))
+	axis := -1
+	for _, a := range args {
+		v, ok := evalCalc(a, p.base, p.vw)
+		if !ok {
+			return calcValue{}, false
+		}
+		a2 := 0 // a plain number
+		switch {
+		case v.scalar:
+		case v.pct != 0 && v.px != 0:
+			// A value that mixes both units cannot be compared here.
+			return calcValue{}, false
+		case v.pct != 0:
+			a2 = 1 // a pure percentage
+		default:
+			a2 = 2 // a pure length
+		}
+		if axis < 0 {
+			axis = a2
+		} else if axis != a2 {
+			return calcValue{}, false
+		}
+		vals = append(vals, v)
+	}
+	num := func(v calcValue) float64 {
+		if axis == 1 {
+			return v.pct
+		}
+		return v.px
+	}
+	if name == "clamp" {
+		lo, v, hi := vals[0], vals[1], vals[2]
+		if num(v) < num(lo) {
+			return lo, true
+		}
+		if num(v) > num(hi) {
+			return hi, true
+		}
+		return v, true
+	}
+	best := vals[0]
+	for _, v := range vals[1:] {
+		if name == "min" && num(v) < num(best) {
+			best = v
+		}
+		if name == "max" && num(v) > num(best) {
+			best = v
+		}
+	}
+	return best, true
+}
+
+// number reads a number with an optional exponent, and then its unit.
+func (p *calcParser) number() (num, unit string, ok bool) {
+	start := p.i
+	for p.i < len(p.s) && (calcDigit(p.s[p.i]) || p.s[p.i] == '.') {
+		p.i++
+	}
+	if p.i == start {
+		return "", "", false
+	}
+	if p.i < len(p.s) && (p.s[p.i] == 'e' || p.s[p.i] == 'E') {
+		save := p.i
+		p.i++
+		if p.i < len(p.s) && (p.s[p.i] == '+' || p.s[p.i] == '-') {
+			p.i++
+		}
+		if p.i < len(p.s) && calcDigit(p.s[p.i]) {
+			for p.i < len(p.s) && calcDigit(p.s[p.i]) {
+				p.i++
+			}
+		} else {
+			p.i = save
+		}
+	}
+	num = p.s[start:p.i]
+	if p.i < len(p.s) && p.s[p.i] == '%' {
+		p.i++
+		return num, "%", true
+	}
+	unitStart := p.i
+	for p.i < len(p.s) && calcAlpha(p.s[p.i]) {
+		p.i++
+	}
+	return num, p.s[unitStart:p.i], true
+}
+
+func calcDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func calcAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
+func calcNameByte(c byte) bool { return calcAlpha(c) || c == '-' }
 
 // normalizeFlexAlign reduces the alignment keywords to the few the layout
 // distinguishes: start, center, end, stretch and the space-* values.
@@ -649,6 +884,100 @@ type gridTemplate struct {
 	autoFill bool
 	autoFit  bool
 	auto     gridTrack
+	// lineNames is the name list of every grid line: a template of n tracks
+	// has n+1 lines. A name may repeat, and a line named "foo-start" or
+	// "foo-end" is also reachable as "foo".
+	lineNames [][]string
+}
+
+// gridPlacement is an item's grid-column value before the container's line
+// names are known: a grid line is a 1-based number, a line name, "span N", or
+// empty for auto.
+type gridPlacement struct {
+	start, end string
+}
+
+// place resolves a grid-column value against the template's line names for a
+// grid of n tracks, returning the 0-based track the item starts in and how
+// many tracks it spans. A start of -1 means the item is auto-placed.
+//
+// A lone named start line runs to the next line with the same name, so
+// "grid-column: main-content" fills the whole main-content area, which is what
+// a browser does for the "main-content-start"/"main-content-end" line pair.
+func (g gridTemplate) place(p gridPlacement, n int) (col, span int) {
+	if n <= 0 {
+		return -1, 1
+	}
+	startTok := strings.ToLower(strings.TrimSpace(p.start))
+	endTok := strings.ToLower(strings.TrimSpace(p.end))
+	if startTok == "" || startTok == "auto" {
+		if k, ok := gridSpanCount(endTok); ok {
+			return -1, k
+		}
+		return -1, 1
+	}
+	// A span with no line to start from leaves the item auto-placed.
+	if k, ok := gridSpanCount(startTok); ok {
+		return -1, k
+	}
+	col, ok := g.line(startTok, n)
+	if !ok {
+		return -1, 1
+	}
+	if k, ok := gridSpanCount(endTok); ok {
+		return col, clampSpan(k, n-col)
+	}
+	if endTok == "" || endTok == "auto" {
+		if end, ok := g.nextLine(startTok, col+1, n); ok {
+			return col, clampSpan(end-col, n-col)
+		}
+		return col, 1
+	}
+	end, ok := g.line(endTok, n)
+	if !ok || end <= col {
+		return col, 1
+	}
+	return col, clampSpan(end-col, n-col)
+}
+
+// line resolves one grid line to its 0-based index: a positive number counts
+// from the start of the grid, a negative one from its end, and anything else
+// is a line name.
+func (g gridTemplate) line(tok string, n int) (int, bool) {
+	if k, err := strconv.Atoi(tok); err == nil {
+		switch {
+		case k > 0:
+			return k - 1, true
+		case k < 0:
+			// Line -1 is the line after the last track.
+			return n + 1 + k, true
+		}
+		return 0, false
+	}
+	return g.nextLine(tok, 0, n)
+}
+
+// nextLine finds the first line at or after from that carries name.
+func (g gridTemplate) nextLine(name string, from, n int) (int, bool) {
+	for i := from; i <= n && i < len(g.lineNames); i++ {
+		for _, nm := range g.lineNames[i] {
+			if nm == name || nm == name+"-start" || nm == name+"-end" {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// clampSpan keeps a span inside the grid.
+func clampSpan(span, room int) int {
+	if span > room {
+		span = room
+	}
+	if span < 1 {
+		span = 1
+	}
+	return span
 }
 
 // resolveTracks turns the template into pixel track widths for a container of
@@ -693,6 +1022,11 @@ func (g gridTemplate) resolve(width, gap float64) []float64 {
 			w := t.px + t.pct/100*width
 			if w < t.minPx {
 				w = t.minPx
+			}
+			if w < 0 {
+				// A bleed column can resolve to a negative width when the
+				// container is narrower than the layout's max width.
+				w = 0
 			}
 			out[i] = w
 			fixed += w
@@ -803,10 +1137,10 @@ type computedStyle struct {
 	// grid is grid-template-columns, the only part of grid layout the renderer
 	// implements: grid-row-* is left to source order.
 	grid gridTemplate
-	// gridSpan is how many column tracks the item spans (grid-column), and
-	// gridSpanAll is "1 / -1": span the whole row.
-	gridSpan       int
-	gridSpanAll    bool
+	// gridColumn is the item's grid-column. The container's line names
+	// resolve it to a track and a span, which the item itself cannot do: it
+	// does not know the template it will be placed in.
+	gridColumn gridPlacement
 	justifyContent string
 	alignItems     string
 	// borderW/borderColor describe a uniform box border, the only kind drawn.
@@ -1380,17 +1714,19 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 		}
 	}
 	if v, ok := d["grid-template-columns"]; ok {
-		cs.grid = parseGridTemplate(v)
+		cs.grid = parseGridTemplate(v, base, e.width)
 	}
 	if v, ok := d["grid-column"]; ok {
 		cs.setGridColumn(v)
 	}
 	if v, ok := d["grid-column-start"]; ok {
-		if strings.EqualFold(strings.TrimSpace(v), "span 1") {
-			// A span with no count is one track; leave the default.
-			cs.gridSpan = 1
-		} else {
-			cs.setGridColumn("1 / " + v)
+		if s, _ := splitGridColumn(v); s != "" {
+			cs.gridColumn.start = s
+		}
+	}
+	if v, ok := d["grid-column-end"]; ok {
+		if _, e2 := splitGridColumn(v); e2 != "" {
+			cs.gridColumn.end = e2
 		}
 	}
 	if v, ok := d["flex-basis"]; ok {
@@ -1872,10 +2208,36 @@ func isFlexOrGridContainer(display string) bool {
 
 // parseGridTemplate parses grid-template-columns into its column tracks.
 // repeat(auto-fill|auto-fit, ...) is kept as a pattern and expanded at layout
-// time, when the container width is known.
-func parseGridTemplate(v string) gridTemplate {
+// time, when the container width is known. base and vw resolve the lengths the
+// tracks are written in.
+func parseGridTemplate(v string, base, vw float64) gridTemplate {
 	var g gridTemplate
-	for _, tok := range splitGridTokens(v) {
+	g.lineNames = [][]string{{}}
+	track := func(t gridTrack) {
+		g.tracks = append(g.tracks, t)
+		g.lineNames = append(g.lineNames, nil)
+	}
+	toks := splitGridTokens(v)
+	for i := 0; i < len(toks); i++ {
+		tok := toks[i]
+		// A "[name name]" line list may contain spaces, so it can be split
+		// over several tokens.
+		if strings.HasPrefix(tok, "[") {
+			j := i
+			for j < len(toks) && !strings.HasSuffix(toks[j], "]") {
+				j++
+			}
+			if j < len(toks) {
+				names := strings.Join(toks[i:j+1], " ")
+				names = strings.TrimSuffix(strings.TrimPrefix(names, "["), "]")
+				for _, nm := range strings.Fields(strings.ToLower(names)) {
+					last := len(g.lineNames) - 1
+					g.lineNames[last] = append(g.lineNames[last], nm)
+				}
+				i = j
+			}
+			continue
+		}
 		tok = strings.ToLower(strings.TrimSpace(tok))
 		switch {
 		case tok == "", tok == "none", tok == "subgrid", tok == "masonry":
@@ -1893,7 +2255,7 @@ func parseGridTemplate(v string) gridTemplate {
 				g.autoFit = count == "auto-fit"
 				subs := splitGridTokens(body)
 				if len(subs) > 0 {
-					g.auto, _ = parseGridTrack(subs[0])
+					g.auto, _ = parseGridTrack(subs[0], base, vw)
 				}
 				continue
 			}
@@ -1903,14 +2265,14 @@ func parseGridTemplate(v string) gridTemplate {
 			}
 			for i := 0; i < n; i++ {
 				for _, sub := range splitGridTokens(body) {
-					if t, ok := parseGridTrack(sub); ok {
-						g.tracks = append(g.tracks, t)
+					if t, ok := parseGridTrack(sub, base, vw); ok {
+						track(t)
 					}
 				}
 			}
 		default:
-			if t, ok := parseGridTrack(tok); ok {
-				g.tracks = append(g.tracks, t)
+			if t, ok := parseGridTrack(tok, base, vw); ok {
+				track(t)
 			}
 		}
 	}
@@ -1918,8 +2280,10 @@ func parseGridTemplate(v string) gridTemplate {
 }
 
 // parseGridTrack parses one track: a length, a percentage, "auto", an "fr"
-// share, or minmax(min, max).
-func parseGridTrack(tok string) (gridTrack, bool) {
+// share, or minmax(min, max). A track whose size cannot be resolved is sized
+// to its content rather than collapsing to nothing, which would otherwise wrap
+// every word in the column to a single character.
+func parseGridTrack(tok string, base, vw float64) (gridTrack, bool) {
 	tok = strings.ToLower(strings.TrimSpace(tok))
 	if tok == "" {
 		return gridTrack{}, false
@@ -1930,26 +2294,32 @@ func parseGridTrack(tok string) (gridTrack, bool) {
 			return gridTrack{}, false
 		}
 		t := gridTrack{}
-		if px, _, ok := gridLength(parts[0]); ok {
+		if px, _, ok := gridLength(parts[0], base, vw); ok {
 			t.minPx = px
 		}
 		hi := strings.TrimSpace(parts[1])
 		if f, ok := gridFr(hi); ok {
 			t.fr = f
-		} else if px, pct, ok := gridLength(hi); ok {
+		} else if px, pct, ok := gridLength(hi, base, vw); ok {
 			t.px, t.pct = px, pct
 		}
-		if t.minPx > 0 && t.px == 0 && t.pct == 0 && t.fr == 0 {
-			// minmax(200px, max-content) and friends: treat the lower bound
-			// as the size.
-			t.px = t.minPx
+		if t.px == 0 && t.pct == 0 && t.fr == 0 {
+			if t.minPx > 0 {
+				// minmax(200px, max-content) and friends: treat the lower
+				// bound as the size.
+				t.px = t.minPx
+			} else {
+				// Nothing about the upper bound could be resolved, so fall
+				// back to an automatic track.
+				t.auto = true
+			}
 		}
 		return t, true
 	}
 	if f, ok := gridFr(tok); ok {
 		return gridTrack{fr: f}, true
 	}
-	if px, pct, ok := gridLength(tok); ok {
+	if px, pct, ok := gridLength(tok, base, vw); ok {
 		return gridTrack{px: px, pct: pct}, true
 	}
 	switch tok {
@@ -1972,25 +2342,15 @@ func gridFr(v string) (float64, bool) {
 	return f, true
 }
 
-// gridLength parses a track length: a px value, or a percentage of the
-// container's width, which resolveTracks applies later.
-func gridLength(v string) (px, pct float64, ok bool) {
-	v = strings.TrimSpace(v)
-	if strings.HasSuffix(v, "%") {
-		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		return 0, f, true
+// gridLength parses a track length: a length, a calc() over one, or a
+// percentage of the container's width, which resolveTracks applies later. The
+// percentage is returned in percent units (50 for 50%).
+func gridLength(v string, base, vw float64) (px, pct float64, ok bool) {
+	p, x, ok := cssSizeParts(v, base, vw)
+	if !ok {
+		return 0, 0, false
 	}
-	if strings.HasSuffix(v, "px") {
-		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "px"), 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		return f, 0, true
-	}
-	return 0, 0, false
+	return x, p * 100, true
 }
 
 // splitGridTokens splits a track list on whitespace, keeping parentheses
@@ -2047,35 +2407,35 @@ func splitGridArgs(s string) []string {
 }
 
 // setGridColumn reads "grid-column": a bare number or span, or "start / end".
-// "1 / -1" spans every track in the row.
+// Each end may be a line number, a line name, or "span N". "1 / -1" spans
+// every track in the row. The value is kept as written, because a line name
+// only means something against the container's grid-template-columns.
 func (cs *computedStyle) setGridColumn(v string) {
+	start, end := splitGridColumn(v)
+	if start != "" {
+		cs.gridColumn.start = start
+	}
+	if end != "" {
+		cs.gridColumn.end = end
+	}
+}
+
+// splitGridColumn splits a grid-column value into its start and end tokens,
+// with "auto" (and an absent end) reported as empty.
+func splitGridColumn(v string) (start, end string) {
 	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "" || v == "auto" {
-		return
-	}
 	if i := strings.Index(v, "/"); i >= 0 {
-		end := strings.TrimSpace(v[i+1:])
-		if end == "-1" {
-			cs.gridSpanAll = true
-			return
-		}
-		if n, ok := gridSpanCount(end); ok {
-			cs.gridSpan = n
-			return
-		}
-		if n, err := strconv.Atoi(end); err == nil && n > 0 {
-			// "2 / 4": two tracks.
-			if start, err2 := strconv.Atoi(strings.TrimSpace(v[:i])); err2 == nil {
-				if d := n - start; d > 0 {
-					cs.gridSpan = d
-				}
-			}
-		}
-		return
+		start, end = strings.TrimSpace(v[:i]), strings.TrimSpace(v[i+1:])
+	} else {
+		start = v
 	}
-	if n, ok := gridSpanCount(v); ok {
-		cs.gridSpan = n
+	if start == "auto" {
+		start = ""
 	}
+	if end == "auto" {
+		end = ""
+	}
+	return start, end
 }
 
 // gridSpanCount parses "span N" (or "span 1").

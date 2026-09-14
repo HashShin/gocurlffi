@@ -1271,14 +1271,13 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		b.basisPx = append(b.basisPx, bx)
 		b.basisPct = append(b.basisPct, bp)
 		b.hasBasis = append(b.hasBasis, has)
-		span := 1
+		// A grid-column value only means something against the container's
+		// own template, so the track and span are read from b.gridTmpl.
+		gridCol, span := -1, 1
 		if child != nil {
-			if child.gridSpanAll {
-				span = 1 << 20 // clamped to the track count at layout time
-			} else if child.gridSpan > 1 {
-				span = child.gridSpan
-			}
+			gridCol, span = b.gridTmpl.place(child.gridColumn, len(b.gridTmpl.tracks))
 		}
+		b.gridCols = append(b.gridCols, gridCol)
 		b.gridSpans = append(b.gridSpans, span)
 	}
 	if len(b.children) == 0 {

@@ -1021,6 +1021,18 @@ func TestCSSSizeParts(t *testing.T) {
 		{"calc(50% - 7px)", 0, 0.5, -7, true},
 		{"calc(33.333% - 10px)", 0, 0.33333, -10, true},
 		{"calc(50% + 4px)", 0, 0.5, 4, true},
+		// The shape a layout's bleed column is written in: a percentage
+		// minus a nested calc(), halved.
+		{"calc((100% - calc(300px + (2rem * 2))) / 2)", 0, 0.5, -182, true},
+		{"calc(2 * 45.7375rem)", 0, 0, 1463.6, true},
+		{"calc(10px + 2 * 3px)", 0, 0, 16, true},
+		{"calc(max(10px, 4px) + 1px)", 0, 0, 11, true},
+		{"calc(min(10px, 4px) + 1px)", 0, 0, 5, true},
+		{"calc(clamp(10px, 4px, 20px) + 1px)", 0, 0, 11, true},
+		// A percentage cannot be multiplied by a length, and a division
+		// needs a plain number on the right.
+		{"calc(50% * 10px)", 0, 0, 0, false},
+		{"calc(100px / 50%)", 0, 0, 0, false},
 		{"auto", 0, 0, 0, false},
 	}
 	for _, c := range cases {

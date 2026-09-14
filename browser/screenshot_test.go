@@ -1222,6 +1222,65 @@ func TestGridPlacesChildrenInTracks(t *testing.T) {
 	}
 }
 
+// A "grid-column: main-content" picks the line named main-content, which a
+// template reaches through the -start/-end line names, and runs to the next
+// line with that name: the item fills the whole main-content area. The tracks
+// themselves can be written as calc() over a custom property, which is how a
+// "bleed" layout centres a fixed-width content column in a wide viewport.
+// The expected geometry is Chromium's getBoundingClientRect for the same page
+// at a 400px viewport.
+func TestGridNamedLinesSpanTheContentArea(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 12px/1.6 monospace }
+		.g { display: grid;
+			--bleed: minmax(0, calc((100% - 300px) / 2));
+			grid-template-columns: var(--bleed) [main-content-start] minmax(0,1fr) [article-start] minmax(0,120px) [article-end] minmax(0,1fr) [main-content-end] var(--bleed);
+			column-gap: 10px }
+		.g > * { grid-column: main-content; background: #eee }
+		.wide { grid-column: 1 / -1; background: #ddd }
+	</style></head><body>
+		<div class="g"><div class="wide">bleed</div><div>one</div><div>two</div></div>
+	</body></html>`, 400)
+	want := []struct{ x, y, w float64 }{
+		{0, 0, 400},     // grid-column: 1 / -1 spans every track
+		{60, 19.2, 280}, // 50px bleed + 10px gap, main-content area
+		{60, 38.4, 280}, // the next row of the same area
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g, want x=%g y=%g w=%g",
+				i, got.x, got.y, got.w, w.x, w.y, w.w)
+		}
+	}
+}
+
+// A track whose size cannot be resolved must not collapse to nothing: a
+// zero-width column wraps every word to a single character, which turns a
+// 7000px page into a 40000px one. "minmax(0, max-content)" is not a sizing we
+// can compute, so the track takes a share of the leftover space instead.
+func TestGridUnresolvableTrackKeepsContentReadable(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 12px/1.6 monospace }
+		.g { display: grid; grid-template-columns: minmax(0, max-content) 200px }
+		.a { background: #ccc }
+		.b { background: #ddd }
+	</style></head><body>
+		<div class="g"><div class="a">the quick brown fox</div><div class="b">two</div></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 2 {
+		t.Fatalf("got %d boxes, want 2: %+v", len(doc.boxes), doc.boxes)
+	}
+	if w := doc.boxes[0].w; w < 100 {
+		t.Errorf("unresolvable track is %g wide, want a share of the leftover space", w)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

@@ -628,7 +628,10 @@ type renderBlock struct {
 	// columns, left to right, filling a new row when the tracks run out.
 	grid     bool
 	gridTmpl gridTemplate
-	// gridSpans is the column tracks each child spans in a grid.
+	// gridCols and gridSpans are each child's column placement in a grid:
+	// the 0-based track it starts in (-1 when it is auto-placed) and how
+	// many tracks it spans.
+	gridCols  []int
 	gridSpans []int
 	// A table lays its rows out as cells in shared columns.
 	table bool
@@ -1457,10 +1460,9 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		return nil, 0
 	}
 	cols := len(tracks)
+	// row-gap defaults to zero, not to column-gap: "column-gap: 10px" alone
+	// leaves the rows touching.
 	rowGap := b.rowGap
-	if rowGap == 0 {
-		rowGap = gap
-	}
 	spanOf := func(i int) int {
 		sp := 1
 		if i < len(b.gridSpans) && b.gridSpans[i] > 1 {
@@ -1471,6 +1473,26 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		}
 		return sp
 	}
+	// colOf is the track the item's grid-column puts it in, or -1 when it
+	// is auto-placed and has to fill the first free track instead.
+	colOf := func(i int) int {
+		if i < len(b.gridCols) && b.gridCols[i] >= 0 {
+			return b.gridCols[i]
+		}
+		return -1
+	}
+	// trackX is the x offset and width of a run of tracks.
+	trackX := func(col, sp int) (x, w float64) {
+		x = contentX
+		for k := 0; k < col; k++ {
+			x += tracks[k] + gap
+		}
+		w = gap * float64(sp-1)
+		for k := 0; k < sp; k++ {
+			w += tracks[col+k]
+		}
+		return x, w
+	}
 
 	var lines []drawLine
 	total := 0.0
@@ -1478,28 +1500,47 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		// Gather one row of items and the x and width of each.
 		var row []int
 		var xs, ws []float64
-		x, col := contentX, 0
+		taken := make([]bool, cols)
 		for i < n {
 			sp := spanOf(i)
-			if col > 0 && col+sp > cols {
+			col := colOf(i)
+			if col < 0 {
+				col = -1
+				for c := 0; c+sp <= cols; c++ {
+					free := true
+					for k := c; k < c+sp; k++ {
+						if taken[k] {
+							free = false
+							break
+						}
+					}
+					if free {
+						col = c
+						break
+					}
+				}
+				if col < 0 {
+					break
+				}
+			}
+			if col+sp > cols {
+				col = cols - sp
+			}
+			busy := col < 0
+			for k := col; !busy && k < col+sp; k++ {
+				busy = taken[k]
+			}
+			if busy {
 				break
 			}
-			if sp > cols-col {
-				sp = cols - col
+			for k := col; k < col+sp; k++ {
+				taken[k] = true
 			}
-			w := gap * float64(sp-1)
-			for k := 0; k < sp; k++ {
-				w += tracks[col+k]
-			}
+			x, w := trackX(col, sp)
 			row = append(row, i)
 			xs = append(xs, x)
 			ws = append(ws, w)
-			x += w + gap
-			col += sp
 			i++
-			if col >= cols {
-				break
-			}
 		}
 		if len(row) == 0 {
 			break
