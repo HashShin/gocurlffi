@@ -702,10 +702,10 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 		colW = 40
 	}
 	var boxes []drawBox
-	lines, endY := layoutColumn(blocks, 0, colW, margin, baseSize, &boxes)
+	lines, endY := layoutColumn(blocks, 0, colW, 0, baseSize, &boxes)
 	doc.lines = lines
 	doc.boxes = boxes
-	doc.height = int(endY + margin + 0.5)
+	doc.height = int(endY + 0.5)
 	if doc.height < 1 {
 		doc.height = 1
 	}

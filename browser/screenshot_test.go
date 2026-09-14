@@ -112,6 +112,42 @@ func TestNestedPercentageWidth(t *testing.T) {
 	}
 }
 
+// Text-align moves the runs inside the block's content box: left keeps them at
+// the content edge, center splits the slack, right fills it.
+func TestTextAlignPositionsRuns(t *testing.T) {
+	const width = 400
+	bounds := func(align string) (int, int) {
+		img := screenshotOf(t, `<html><body style="margin:0;background:#fff">`+
+			`<div style="text-align:`+align+`;color:#ff0000">MMMMMM</div></body></html>`,
+			ScreenshotOptions{Width: width, NoImages: true})
+		minX, _, maxX, _, ok := redBounds(img)
+		if !ok {
+			t.Fatalf("text-align:%s drew nothing", align)
+		}
+		return minX, maxX
+	}
+	lmin, lmax := bounds("left")
+	cmin, cmax := bounds("center")
+	rmin, rmax := bounds("right")
+	if lmin > 8 {
+		t.Errorf("left-aligned text starts at %d, want near the content edge", lmin)
+	}
+	// The center of the centered run sits near the middle of the page.
+	if c := (cmin + cmax) / 2; c < width/2-12 || c > width/2+12 {
+		t.Errorf("centered run midpoint %d, want near %d", c, width/2)
+	}
+	if rmax < width-40 {
+		t.Errorf("right-aligned text ends at %d, want near %d", rmax, width)
+	}
+	// The three runs must not coincide: alignment has to move them.
+	if lmin == cmin || cmin == rmin {
+		t.Errorf("left/center/right runs did not move: %d %d %d", lmin, cmin, rmin)
+	}
+	if lmax > cmin+40 {
+		t.Errorf("left run %d overlaps centered run %d", lmax, cmin)
+	}
+}
+
 func TestScreenshotBasic(t *testing.T) {
 	img := screenshotOf(t, `<html><body><h1>Title</h1><p>Some body text that should be drawn.</p></body></html>`,
 		ScreenshotOptions{Width: 800})
@@ -859,9 +895,10 @@ func TestAbsolutePositioning(t *testing.T) {
 	if w := maxX - minX; w < 28 || w > 32 {
 		t.Errorf("absolute width = %d, want 30", w)
 	}
-	// top: content top (24) + 10.
-	if minY < 30 || minY > 38 {
-		t.Errorf("absolute top = %d, want about 34", minY)
+	// top: the relative parent's content top (0 here) + 10. The renderer no
+	// longer adds a page-wide top inset, matching a browser.
+	if minY < 6 || minY > 14 {
+		t.Errorf("absolute top = %d, want about 10", minY)
 	}
 	_ = maxY
 	if _, _, _, _, ok := redBounds(img); !ok {
