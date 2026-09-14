@@ -112,6 +112,94 @@ func TestNestedPercentageWidth(t *testing.T) {
 	}
 }
 
+// layoutDoc lays the page out and returns the document, for asserting box
+// geometry and text placement.
+func layoutDoc(t *testing.T, html string, width int) *renderDoc {
+	t.Helper()
+	p := flexPage(t, html)
+	doc, _, err := p.layOut(ScreenshotOptions{Width: width, NoImages: true})
+	if err != nil {
+		t.Fatalf("layOut: %v", err)
+	}
+	return doc
+}
+
+// The page column is the viewport. An element's own margins (including the
+// body's 8px default) are the only inset; a page-wide gutter would make every
+// page's text wrap early.
+func TestColumnIsTheViewport(t *testing.T) {
+	doc := layoutDoc(t, `<html><body style="margin:0;background:#fff">
+		<div style="width:100%;background:#eee;height:10px"></div></body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("boxes = %d, want 1", len(doc.boxes))
+	}
+	if w := doc.boxes[0].w; w != 400 {
+		t.Errorf("width:100%% block is %g wide, want the 400px viewport", w)
+	}
+
+	// A default body margin insets the text by 8px on each side.
+	doc = layoutDoc(t, `<html><body><p>text</p></body></html>`, 400)
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	if x := doc.lines[0].indent; x != 8 {
+		t.Errorf("text starts at x=%g, want the body's 8px margin", x)
+	}
+}
+
+// max-width with auto margins centers the container in the containing block,
+// and its content is measured from the container's own content box.
+func TestMaxWidthAutoMarginsCenterContainer(t *testing.T) {
+	doc := layoutDoc(t, `<html><body style="margin:0;background:#fff"><style>
+		* { box-sizing: border-box }
+		.wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px; background: #eee }
+	</style><div class="wrap"><p>hello</p></div></body></html>`, 1280)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("boxes = %d, want just the wrap: %+v", len(doc.boxes), doc.boxes)
+	}
+	wrap := doc.boxes[0]
+	// (1280 - 1200) / 2 = 40 of slack on each side.
+	if wrap.x != 40 || wrap.w != 1200 {
+		t.Errorf("wrap box x=%g w=%g, want x=40 w=1200", wrap.x, wrap.w)
+	}
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	// The text starts at the wrap's content edge: 40 + 40 of padding.
+	if x := doc.lines[0].indent; x != 80 {
+		t.Errorf("text x=%g, want 80 (the wrap's content edge)", x)
+	}
+}
+
+// box-sizing and auto margins on a sized block, checked against the geometry
+// Chromium reports for the same page.
+func TestBoxSizingAndAutoMargins(t *testing.T) {
+	doc := layoutDoc(t, `<html><body style="margin:0;background:#fff"><style>
+		* { box-sizing: border-box }
+		.a { width: 300px; padding: 20px; background: #eee }
+		.b { width: 300px; padding: 20px; box-sizing: content-box; background: #ddd }
+		.c { max-width: 400px; margin: 0 auto; padding: 0 30px; background: #ccc }
+	</style>
+	<div class="a">a</div><div class="b">b</div><div class="c"><p>c</p></div>
+	</body></html>`, 1280)
+	if len(doc.boxes) != 3 {
+		t.Fatalf("boxes = %d, want 3", len(doc.boxes))
+	}
+	// border-box: 300 wide including its padding.
+	if a := doc.boxes[0]; a.w != 300 {
+		t.Errorf("border-box block w=%g, want 300", a.w)
+	}
+	// content-box: 300 of content plus 20 of padding on each side.
+	if b := doc.boxes[1]; b.w != 340 {
+		t.Errorf("content-box block w=%g, want 340", b.w)
+	}
+	// max-width:400 with auto margins: centered in the 1280 viewport.
+	c := doc.boxes[2]
+	if c.x != 440 || c.w != 400 {
+		t.Errorf("centered block x=%g w=%g, want x=440 w=400", c.x, c.w)
+	}
+}
+
 // Text-align moves the runs inside the block's content box: left keeps them at
 // the content edge, center splits the slack, right fills it.
 func TestTextAlignPositionsRuns(t *testing.T) {
@@ -928,9 +1016,9 @@ func TestAbsolutePositioning(t *testing.T) {
 		t.Fatal("right-anchored child not drawn")
 	}
 	_ = gminX
-	// right:10 in a 376px-wide container: the child ends 10px from the edge.
-	if gmaxX < 360 || gmaxX > 372 {
-		t.Errorf("right-anchored child ends at %d, want about 365", gmaxX)
+	// right:10 in a 400px-wide container: the child ends 10px from the edge.
+	if gmaxX < 386 || gmaxX > 394 {
+		t.Errorf("right-anchored child ends at %d, want about 390", gmaxX)
 	}
 }
 

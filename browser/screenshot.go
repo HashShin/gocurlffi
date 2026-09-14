@@ -112,7 +112,7 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 	root := &absFrame{}
 	// Seed the containing-block content width with the page column, so a
 	// percentage width at the top of the document resolves against it.
-	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width) - 24, hasContW: true}
+	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width), hasContW: true}
 	c.walkChildren(p.doc)
 	c.flush()
 	if len(root.children) > 0 {
@@ -477,6 +477,13 @@ type collector struct {
 	sizeMaxPx, sizeMaxPct       float64
 	hasSizeMax                  bool
 	sizeAutoLeft, sizeAutoRight bool
+	// The declaring element's box, so layout can measure the width from it
+	// rather than from the block that inherits the context.
+	hasSizeOwner    bool
+	sizeBoxLeft     float64
+	sizePadLeft     float64
+	sizePadRight    float64
+	sizeMarginRight float64
 
 	// contW is the content box width of the current containing block, when it
 	// is known from an ancestor's explicit width. A percentage width resolves
@@ -514,6 +521,9 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		b.boxWidthPx, b.boxWidthPct, b.hasBoxWidth = c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth
 		b.boxMaxWidthPx, b.boxMaxWidthPct, b.hasBoxMaxWidth = c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax
 		b.boxAutoLeft, b.boxAutoRight = c.sizeAutoLeft, c.sizeAutoRight
+		b.hasSizeOwner = c.hasSizeOwner
+		b.sizeBoxLeft, b.sizePadLeft = c.sizeBoxLeft, c.sizePadLeft
+		b.sizePadRight, b.sizeMarginRight = c.sizePadRight, c.sizeMarginRight
 		if cs != nil {
 			b.borderBox = cs.boxSizingBorderBox
 			if cs.hasHeight && cs.heightPx > b.minHeight {
@@ -696,10 +706,16 @@ func (c *collector) walkElement(el *html.Node) {
 		sizeAutoLeft, sizeAutoRight bool
 		contW                       float64
 		hasContW                    bool
+		hasSizeOwner                bool
+		sizeBoxLeft                 float64
+		sizePadLeft                 float64
+		sizePadRight                float64
+		sizeMarginRight             float64
 	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
-		c.contW, c.hasContW}
+		c.contW, c.hasContW,
+		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -741,6 +757,11 @@ func (c *collector) walkElement(el *html.Node) {
 			parentW, haveParent := c.contW, c.hasContW
 			edge := cs.paddingLeft + cs.paddingRight + 2*cs.borderW
 			c.sizeLeft = c.content
+			c.hasSizeOwner = true
+			c.sizeBoxLeft = boxLeft
+			c.sizePadLeft = cs.paddingLeft + cs.borderW
+			c.sizePadRight = cs.paddingRight + cs.borderW
+			c.sizeMarginRight = cs.marginRight
 			wPx, wPct := cs.widthPx, cs.widthPct
 			resolved := true
 			if wPct != 0 {
@@ -807,6 +828,9 @@ func (c *collector) walkElement(el *html.Node) {
 		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = saved.sizeWidthPx, saved.sizeWidthPct, saved.hasSizeWidth
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = saved.sizeMaxPx, saved.sizeMaxPct, saved.hasSizeMax
 		c.sizeAutoLeft, c.sizeAutoRight = saved.sizeAutoLeft, saved.sizeAutoRight
+		c.hasSizeOwner, c.sizeBoxLeft = saved.hasSizeOwner, saved.sizeBoxLeft
+		c.sizePadLeft, c.sizePadRight = saved.sizePadLeft, saved.sizePadRight
+		c.sizeMarginRight = saved.sizeMarginRight
 		c.contW, c.hasContW = saved.contW, saved.hasContW
 	}()
 
@@ -962,25 +986,30 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		marginTop: cs.marginTop, marginBottom: cs.marginBottom,
 		paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
 		// Inherit the current block-sizing context.
-		hasSizing:      true,
-		sizeLeft:       c.sizeLeft,
-		boxWidthPx:     c.sizeWidthPx,
-		boxWidthPct:    c.sizeWidthPct,
-		hasBoxWidth:    c.hasSizeWidth,
-		boxMaxWidthPx:  c.sizeMaxPx,
-		boxMaxWidthPct: c.sizeMaxPct,
-		hasBoxMaxWidth: c.hasSizeMax,
-		boxAutoLeft:    c.sizeAutoLeft,
-		boxAutoRight:   c.sizeAutoRight,
-		borderBox:      cs.boxSizingBorderBox,
-		marginRight:    cs.marginRight,
-		paddingRight:   cs.paddingRight,
-		shadowX:        cs.shadowX,
-		shadowY:        cs.shadowY,
-		shadowBlur:     cs.shadowBlur,
-		shadowSpread:   cs.shadowSpread,
-		shadowColor:    scaleAlpha(cs.shadowColor, cs.opacity),
-		hasShadow:      cs.hasShadow,
+		hasSizing:       true,
+		sizeLeft:        c.sizeLeft,
+		boxWidthPx:      c.sizeWidthPx,
+		boxWidthPct:     c.sizeWidthPct,
+		hasBoxWidth:     c.hasSizeWidth,
+		boxMaxWidthPx:   c.sizeMaxPx,
+		boxMaxWidthPct:  c.sizeMaxPct,
+		hasBoxMaxWidth:  c.hasSizeMax,
+		boxAutoLeft:     c.sizeAutoLeft,
+		boxAutoRight:    c.sizeAutoRight,
+		hasSizeOwner:    c.hasSizeOwner,
+		sizeBoxLeft:     c.sizeBoxLeft,
+		sizePadLeft:     c.sizePadLeft,
+		sizePadRight:    c.sizePadRight,
+		sizeMarginRight: c.sizeMarginRight,
+		borderBox:       cs.boxSizingBorderBox,
+		marginRight:     cs.marginRight,
+		paddingRight:    cs.paddingRight,
+		shadowX:         cs.shadowX,
+		shadowY:         cs.shadowY,
+		shadowBlur:      cs.shadowBlur,
+		shadowSpread:    cs.shadowSpread,
+		shadowColor:     scaleAlpha(cs.shadowColor, cs.opacity),
+		hasShadow:       cs.hasShadow,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,

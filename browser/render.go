@@ -664,6 +664,15 @@ type renderBlock struct {
 	boxAutoLeft    bool
 	boxAutoRight   bool
 	borderBox      bool
+	// The block that carries the sizing may be a descendant of the element
+	// that declared it: a plain container produces no block of its own, so its
+	// width lands on the blocks inside it. These record the declaring
+	// element's box so the width is measured from it and not from the block.
+	hasSizeOwner    bool
+	sizeBoxLeft     float64 // declaring element's border-box left
+	sizePadLeft     float64 // its left padding plus border
+	sizePadRight    float64 // its right padding plus border
+	sizeMarginRight float64
 	// Right edges and a height cap (with clipping) for scroll boxes like a log.
 	marginRight  float64
 	paddingRight float64
@@ -693,11 +702,11 @@ type absChild struct {
 
 // layoutBlocks flows blocks into a single column of the given width.
 func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc {
-	const margin = 24.0
 	doc := &renderDoc{width: width, baseSize: baseSize}
-	// The right edge keeps the gutter the flat layout used, so a block at
-	// offset x can use colW-x without recomputing the page margin.
-	colW := float64(width) - margin
+	// The column is the viewport: an element's own margins (the body's 8px
+	// default included) are what inset it, exactly as a browser does. An extra
+	// gutter here would narrow every page's text and wrap it early.
+	colW := float64(width)
 	if colW < 40 {
 		colW = 40
 	}
@@ -779,46 +788,152 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// The used content width is min(bb, width, max-width) with
 		// box-sizing:border-box subtracting the edge, and auto horizontal
 		// margins center whatever is left over.
-		bb := colW - b.boxLeft - b.marginRight
-		if bb < 0 {
-			bb = 0
-		}
-		edge := (b.textX - b.boxLeft) + b.paddingRight + 2*b.borderW
-		contentW := bb
-		specW := func(px, pct float64) float64 {
-			w := px + pct*bb
-			if b.borderBox {
-				w -= edge
+		var bb, edge, contentW, inner, boxX, boxWidthOuter, contentRight float64
+		var extra, shift float64
+		if b.hasSizeOwner {
+			// A width context is active. Resolve the box of the element that
+			// declared it: "max-width:1200px;margin:0 auto" centers that
+			// element, and everything inside it follows the same shift and is
+			// measured against its content edge.
+			obb := colW - b.sizeBoxLeft - b.sizeMarginRight
+			if obb < 0 {
+				obb = 0
 			}
-			if w < 0 {
-				w = 0
+			oedge := b.sizePadLeft + b.sizePadRight
+			outer := obb
+			specOwner := func(px, pct float64) float64 {
+				w := px + pct*obb
+				if !b.borderBox {
+					w += oedge
+				}
+				if w < 0 {
+					w = 0
+				}
+				return w
 			}
-			return w
-		}
-		if b.hasBoxWidth {
-			if w := specW(b.boxWidthPx, b.boxWidthPct); w < contentW {
-				contentW = w
+			if b.hasBoxWidth {
+				if w := specOwner(b.boxWidthPx, b.boxWidthPct); w < outer {
+					outer = w
+				}
 			}
-		}
-		if b.hasBoxMaxWidth {
-			if w := specW(b.boxMaxWidthPx, b.boxMaxWidthPct); w < contentW {
-				contentW = w
+			if b.hasBoxMaxWidth {
+				if w := specOwner(b.boxMaxWidthPx, b.boxMaxWidthPct); w < outer {
+					outer = w
+				}
 			}
+			oContent := outer - oedge
+			if oContent < 0 {
+				oContent = 0
+			}
+			oExtra := obb - outer
+			if oExtra < 0 {
+				oExtra = 0
+			}
+			oShift := 0.0
+			switch {
+			case b.boxAutoLeft && b.boxAutoRight:
+				oShift = oExtra / 2
+			case b.boxAutoLeft:
+				oShift = oExtra
+			}
+			// The declaring element's own block: the textX it carries is
+			// already its content edge.
+			own := b.boxLeft == b.sizeLeft
+			switch {
+			case own:
+				bb, edge, contentW, extra = obb, oedge, oContent, oExtra
+				shift = oShift
+				inner = b.textX - b.sizeLeft
+				boxX = colX + b.borderLeft + shift
+				boxWidthOuter = outer
+			default:
+				// A block inside the declaring element: it is measured from
+				// where it starts to the declaring element's content edge, and
+				// inherits the declaring element's shift.
+				bb = b.sizeLeft + oContent - b.boxLeft
+				if bb < 0 {
+					bb = 0
+				}
+				edge = (b.textX - b.boxLeft) + b.paddingRight + 2*b.borderW
+				contentW = bb
+				specW := func(px, pct float64) float64 {
+					w := px + pct*bb
+					if b.borderBox {
+						w -= edge
+					}
+					if w < 0 {
+						w = 0
+					}
+					return w
+				}
+				if b.hasBoxWidth {
+					if w := specW(b.boxWidthPx, b.boxWidthPct); w < contentW {
+						contentW = w
+					}
+				}
+				if b.hasBoxMaxWidth {
+					if w := specW(b.boxMaxWidthPx, b.boxMaxWidthPct); w < contentW {
+						contentW = w
+					}
+				}
+				extra = bb - (contentW + edge)
+				if extra < 0 {
+					extra = 0
+				}
+				shift = oShift
+				switch {
+				case b.boxAutoLeft && b.boxAutoRight:
+					shift += extra / 2
+				case b.boxAutoLeft:
+					shift += extra
+				}
+				inner = b.textX - b.boxLeft
+				contentRight = b.paddingRight
+				boxX = colX + b.borderLeft + shift
+				boxWidthOuter = contentW + edge
+			}
+		} else {
+			bb = colW - b.boxLeft - b.marginRight
+			if bb < 0 {
+				bb = 0
+			}
+			edge = (b.textX - b.boxLeft) + b.paddingRight + 2*b.borderW
+			contentW = bb
+			specW := func(px, pct float64) float64 {
+				w := px + pct*bb
+				if b.borderBox {
+					w -= edge
+				}
+				if w < 0 {
+					w = 0
+				}
+				return w
+			}
+			if b.hasBoxWidth {
+				if w := specW(b.boxWidthPx, b.boxWidthPct); w < contentW {
+					contentW = w
+				}
+			}
+			if b.hasBoxMaxWidth {
+				if w := specW(b.boxMaxWidthPx, b.boxMaxWidthPct); w < contentW {
+					contentW = w
+				}
+			}
+			extra = bb - (contentW + edge)
+			if extra < 0 {
+				extra = 0
+			}
+			switch {
+			case b.boxAutoLeft && b.boxAutoRight:
+				shift = extra / 2
+			case b.boxAutoLeft:
+				shift = extra
+			}
+			inner = b.textX - b.boxLeft
+			boxX = colX + b.borderLeft + shift
+			boxWidthOuter = contentW + edge
+			contentRight = b.paddingRight
 		}
-		extra := bb - (contentW + edge)
-		if extra < 0 {
-			extra = 0
-		}
-		shift := 0.0
-		switch {
-		case b.boxAutoLeft && b.boxAutoRight:
-			shift = extra / 2
-		case b.boxAutoLeft:
-			shift = extra
-		}
-		inner := b.textX - b.boxLeft
-		boxX := colX + b.borderLeft + shift
-		boxWidthOuter := contentW + edge
 		switch b.kind {
 		case blockImage:
 			w := contentW
@@ -859,7 +974,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			blockTop := y
 			lineStart := len(out)
 			textStart := colX + b.textX + shift
-			limit := contentW - inner - b.paddingRight
+			limit := contentW - inner - contentRight
 			if limit < 40 {
 				limit = 40
 			}
@@ -1218,7 +1333,13 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 	childH := make([]float64, n)
 	maxH := 0.0
 	for i, ci := range idx {
-		cl, endY := layoutColumn(b.children[ci], x, widths[i], y, baseSize, boxes)
+		// A flex item's width comes from the row, so an ancestor's width
+		// context no longer applies: reset it before laying the column out.
+		col := b.children[ci]
+		for j := range col {
+			col[j].hasSizeOwner = false
+		}
+		cl, endY := layoutColumn(col, x, widths[i], y, baseSize, boxes)
 		childLines[i] = cl
 		childH[i] = endY - y
 		if childH[i] > maxH {
