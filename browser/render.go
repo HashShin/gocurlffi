@@ -576,6 +576,7 @@ const (
 	blockRule
 	blockImage
 	blockFlex
+	blockFloat
 )
 
 type renderSpan struct {
@@ -624,6 +625,14 @@ type renderBlock struct {
 	// "flex: 1" as well as "flex: 0 0 calc(50% - 7px)". Children are collected
 	// with their internal offsets relative to their own left edge.
 	flexRow bool
+	// A floated block leaves the flow. Its own content is held in
+	// floatBlocks and measured at the float's own width, and the blocks that
+	// follow it in the column flow beside it.
+	floatSide   string
+	floatW      float64
+	floatPct    float64
+	hasFloatW   bool
+	floatBlocks []renderBlock
 	// A grid container places its children in the tracks of grid-template
 	// columns, left to right, filling a new row when the tracks run out.
 	grid     bool
@@ -795,6 +804,40 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	}
 	var prevMarginBottom, prevPaddingBottom, prevBorderBottom float64
 	havePrev := false
+	// Floated boxes in this column: the blocks after one flow beside it until
+	// its bottom passes, which is what wraps text around an image or an
+	// infobox. Each inset is measured from the column's own content edges.
+	type floatBox struct {
+		side         string
+		x, w, bottom float64
+	}
+	var floats []floatBox
+	floatBottom := func() float64 {
+		bottom := 0.0
+		for _, f := range floats {
+			if f.bottom > bottom {
+				bottom = f.bottom
+			}
+		}
+		return bottom
+	}
+	// floatInsets returns how far the content edge is pulled in on each side
+	// by the floats still open at y.
+	floatInsets := func(at float64) (left, right float64) {
+		for _, f := range floats {
+			if at >= f.bottom {
+				continue
+			}
+			if f.side == "left" {
+				if e := f.x + f.w - colX; e > left {
+					left = e
+				}
+			} else if e := colX + colW - f.x; e > right {
+				right = e
+			}
+		}
+		return left, right
+	}
 	for _, b := range blocks {
 		// Vertical margins of adjacent blocks collapse to the larger one;
 		// padding and border always add.
@@ -1022,11 +1065,58 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
 			out = append(out, ls...)
 			y += h
+		case blockFloat:
+			// A float is sized to its content unless it declares a width,
+			// then placed against its side of the column. It does not move y:
+			// the blocks after it flow beside it.
+			fw := floatWidth(b, colW, baseSize)
+			fx := colX
+			if b.floatSide == "right" {
+				fx = colX + colW - fw
+			}
+			fy := y
+			fl, fend := layoutColumn(b.floatBlocks, fx, fw, fy, baseSize, boxes)
+			out = append(out, fl...)
+			fh := fend - fy
+			if fh < 0 {
+				fh = 0
+			}
+			floats = append(floats, floatBox{side: b.floatSide, x: fx, w: fw, bottom: fy + fh})
+			continue
 		default:
 			textStart := colX + b.textX + shift
 			limit := contentW - inner - contentRight
 			if limit < 40 {
 				limit = 40
+			}
+			// Text beside a float is narrower until the float's bottom
+			// passes. The line height is estimated from the block's first
+			// span, which is what the wrap uses to know where the float ends.
+			estLH := 0.0
+			if len(b.spans) > 0 {
+				st := firstStyle(b.spans)
+				_, _, estLH = lineMetrics(styleKey(st))
+				if b.lineH > 0 {
+					estLH = b.lineH
+				}
+				if estLH < st.size {
+					estLH = st.size
+				}
+			}
+			fBottom := floatBottom()
+			fl, fr := floatInsets(y)
+			narrowLimit := limit - fl - fr
+			if narrowLimit < 40 {
+				narrowLimit = 40
+			}
+			limitAt := func(k int) float64 {
+				if len(floats) == 0 || estLH <= 0 {
+					return limit
+				}
+				if y+float64(k)*estLH < fBottom {
+					return narrowLimit
+				}
+				return limit
 			}
 			var lines [][]renderSpan
 			switch {
@@ -1037,13 +1127,21 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			case b.nowrap:
 				lines = [][]renderSpan{b.spans}
 			default:
-				lines = wrapSpans(b.spans, limit)
+				lines = wrapSpansWidth(b.spans, limitAt)
 			}
 			for i, line := range lines {
 				style := firstStyle(line)
 				k := styleKey(style)
 				ascent, _, h := lineMetrics(k)
-				if ih := lineImageHeight(line, limit); ih > h {
+				// This line's own available width, and the x its text starts
+				// at, from the floats still open across it.
+				li, ri := floatInsets(y)
+				lineLimit := limit - li - ri
+				if lineLimit < 40 {
+					lineLimit = 40
+				}
+				lineStart := textStart + li
+				if ih := lineImageHeight(line, lineLimit); ih > h {
 					h = ih
 				}
 				if ascent < h {
@@ -1063,7 +1161,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					height:   lh,
 					baseline: y + ascent + (lh-h)/2,
 					quote:    b.quote,
-					indent:   textStart,
+					indent:   lineStart,
 				}
 				lw := lineWidth(line)
 				if b.hasBG {
@@ -1073,16 +1171,16 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 						dl.bgX = colX + b.boxLeft + shift
 						dl.bgW = contentW + b.paddingRight
 					} else {
-						dl.bgX = textStart
+						dl.bgX = lineStart
 						dl.bgW = lw
 					}
 					if dl.bgW < 0 {
 						dl.bgW = 0
 					}
 				}
-				runX := textStart
+				runX := lineStart
 				if b.align == "center" || b.align == "right" {
-					space := limit - lw
+					space := lineLimit - lw
 					if space > 0 {
 						if b.align == "center" {
 							runX += space / 2
@@ -1098,9 +1196,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				for _, sp := range line {
 					if sp.pic != nil {
 						w, hh := sp.picW, sp.picH
-						if w > limit && w > 0 {
-							hh = hh * limit / w
-							w = limit
+						if w > lineLimit && w > 0 {
+							hh = hh * lineLimit / w
+							w = lineLimit
 						}
 						dl.runs = append(dl.runs, drawRun{x: runX, img: sp.pic, imgW: w, imgH: hh})
 						runX += w
@@ -1169,6 +1267,11 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	}
 	if havePrev {
 		y += prevPaddingBottom + prevBorderBottom + prevMarginBottom
+	}
+	// A float that outlives the blocks beside it still takes up room: the
+	// next section starts below it rather than over it.
+	if fb := floatBottom(); fb > y {
+		y = fb
 	}
 	// Emit the boxes gathered in this column, parent (first seen) first.
 	for _, id := range boxOrder {
@@ -1755,8 +1858,30 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 // intrinsicColumnWidth measures a column's max-content width: the widest joined
 // text, image or nested row, capped at limit. It is the flex base size of an
 // item with no explicit basis.
+// floatWidth is the width a float takes: the width it declares, or its widest
+// content, clamped to the space it floats in.
+func floatWidth(b renderBlock, limit, baseSize float64) float64 {
+	w := 0.0
+	if b.hasFloatW {
+		w = b.floatW + b.floatPct*limit
+	}
+	if w <= 0 {
+		w = intrinsicColumnWidth(b.floatBlocks, limit, baseSize)
+	}
+	if w > limit {
+		w = limit
+	}
+	if w < 0 {
+		w = 0
+	}
+	return w
+}
+
 func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 	w := 0.0
+	// A float sits beside the content rather than replacing it, so the
+	// column's max-content width is the content plus the floats on it.
+	left, right := 0.0, 0.0
 	for _, b := range col {
 		switch b.kind {
 		case blockImage:
@@ -1774,6 +1899,16 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 			if sub > w {
 				w = sub
 			}
+		case blockFloat:
+			// The float itself has no spans, so without this it measures as
+			// nothing and the item or cell it sits in collapses.
+			if tw := b.boxLeft + floatWidth(b, limit, baseSize); b.floatSide == "left" {
+				if tw > left {
+					left = tw
+				}
+			} else if tw > right {
+				right = tw
+			}
 		default:
 			// The item's border-box width: text plus left/right padding and
 			// borders. Missing the right padding made a padded flex item too
@@ -1783,6 +1918,7 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 			}
 		}
 	}
+	w += left + right
 	if w > limit {
 		w = limit
 	}
@@ -1849,6 +1985,13 @@ func joinSpanText(spans []renderSpan) string {
 // sequence of spans, so an inline replaced box (an icon) can sit between text
 // runs on the same line.
 func wrapSpans(spans []renderSpan, limit float64) [][]renderSpan {
+	return wrapSpansWidth(spans, func(int) float64 { return limit })
+}
+
+// wrapSpansWidth is wrapSpans with a width that can change from line to line,
+// which is how a paragraph wraps around a float and then fills the column
+// again once the float has passed.
+func wrapSpansWidth(spans []renderSpan, limitAt func(line int) float64) [][]renderSpan {
 	type item struct {
 		span renderSpan
 		w    float64
@@ -1889,12 +2032,14 @@ func wrapSpans(spans []renderSpan, limit float64) [][]renderSpan {
 		curW = 0
 	}
 	for i, it := range items {
+		limit := limitAt(len(lines))
 		spaceW := 0.0
 		if i > 0 {
 			if st, ok := spaceStyles[i-1]; ok {
 				spaceW = textWidth(st, " ")
 				if curW > 0 && curW+spaceW+it.w > limit {
 					flush()
+					limit = limitAt(len(lines))
 					spaceW = 0
 				}
 			}

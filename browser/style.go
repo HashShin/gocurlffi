@@ -1153,6 +1153,10 @@ type computedStyle struct {
 	// grid is grid-template-columns, the only part of grid layout the renderer
 	// implements: grid-row-* is left to source order.
 	grid gridTemplate
+	// floatSide is "left" or "right" for a floated element, which leaves the
+	// normal flow: it is placed against that edge of its container, and the
+	// content after it flows beside it.
+	floatSide string
 	// gridColumn is the item's grid-column. The container's line names
 	// resolve it to a track and a span, which the item itself cannot do: it
 	// does not know the template it will be placed in.
@@ -1669,6 +1673,9 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	if v, ok := d["float"]; ok {
 		lv := strings.ToLower(strings.TrimSpace(v))
 		floated = lv == "left" || lv == "right"
+		if floated {
+			cs.floatSide = lv
+		}
 	}
 	outOfFlow := false
 	if v, ok := d["position"]; ok {

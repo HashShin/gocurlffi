@@ -1368,6 +1368,95 @@ func TestGridUnresolvableTrackKeepsContentReadable(t *testing.T) {
 	}
 }
 
+// A floated box leaves the flow: it sits against one edge of its container and
+// the text after it wraps beside it, then fills the column again once the
+// float's bottom passes. The expected geometry is Chromium's
+// getBoundingClientRect and per-line range rects for the same page at 400px.
+func TestFloatWrapsTextBesideIt(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace; width: 400px }
+		.f { float: right; width: 100px; height: 60px; background: #ccc }
+		.g { float: left; width: 50px; height: 40px; background: #ddd }
+	</style></head><body>
+		<div class="f"></div><div class="g"></div>
+		<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr</p>
+	</body></html>`, 400)
+	want := []struct{ x, y, w, h float64 }{
+		{300, 0, 100, 60}, // the right float
+		{0, 0, 50, 40},    // the left float
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 ||
+			diff(got.w, w.w) > 0.5 || diff(got.h, w.h) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g h=%g, want x=%g y=%g w=%g h=%g",
+				i, got.x, got.y, got.w, got.h, w.x, w.y, w.w, w.h)
+		}
+	}
+	if len(doc.lines) != 4 {
+		t.Fatalf("got %d lines, want 4: %+v", len(doc.lines), doc.lines)
+	}
+	// The first two lines clear the left float and stop at the right one, the
+	// third clears the left float only, and the last is beside neither.
+	for _, c := range []struct {
+		line int
+		y    float64
+		x    float64
+		end  float64
+	}{
+		{0, 0, 50, 290},
+		{1, 20, 50, 290},
+		{2, 40, 0, 240},
+		{3, 60, 0, 140},
+	} {
+		l := doc.lines[c.line]
+		if diff(l.y, c.y) > 0.5 {
+			t.Errorf("line %d is at y=%g, want %g", c.line, l.y, c.y)
+			continue
+		}
+		if diff(l.runs[0].x, c.x) > 0.5 {
+			t.Errorf("line %d starts at x=%g, want %g", c.line, l.runs[0].x, c.x)
+		}
+		end := 0.0
+		for _, r := range l.runs {
+			if w := r.x + textWidth(r.style, r.text); w > end {
+				end = w
+			}
+		}
+		if diff(end, c.end) > 0.5 {
+			t.Errorf("line %d ends at x=%g, want %g", c.line, end, c.end)
+		}
+	}
+}
+
+// A float inside a flex item has to contribute its own width to the row: the
+// float itself has no spans, so measuring it as an empty block gave the item
+// no width at all and the float collapsed to nothing.
+func TestFloatInsideFlexItemKeepsItsWidth(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.row { display: flex; width: 400px }
+		.f { float: right; width: 120px; height: 40px; background: #ccc }
+		.t { background: #ddd }
+	</style></head><body>
+		<div class="row"><div><div class="f"></div><span class="t">text</span></div></div>
+	</body></html>`, 400)
+	found := false
+	for _, b := range doc.boxes {
+		if diff(b.w, 120) < 0.5 && diff(b.h, 40) < 0.5 && b.x > 30 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the float is not a 120x40 box pushed right by the text beside it: %+v", doc.boxes)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

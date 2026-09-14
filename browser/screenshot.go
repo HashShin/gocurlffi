@@ -498,6 +498,9 @@ type collector struct {
 	// margin. The column's width is only known at layout time (a flex item
 	// column differs from the page), so the inset is what is recorded.
 	rightInset float64
+	// floatRoot is the element currently being collected as a float, which
+	// must not be floated a second time by its own collection.
+	floatRoot *html.Node
 	// blockInset is the inset that applies to the blocks the element being
 	// walked produces: the inset of the containing block they sit in, which is
 	// their parent's content box, not their own.
@@ -869,6 +872,34 @@ func (c *collector) walkElement(el *html.Node) {
 		c.rightInset = saved.rightInset
 		c.blockInset = savedBlockInset
 	}()
+
+	// A floated element leaves the flow: its own subtree is collected as a
+	// unit, laid out at the width it asks for, and placed against one edge of
+	// the column. The blocks after it flow beside it. Wikipedia's infobox is
+	// the case this exists for.
+	// floatRoot is the element whose own subtree is being collected for a
+	// float, so that collecting it does not start a nested float of itself.
+	if side := cs.floatSide; side != "" && isBlockDisplay(cs.display) && el != c.floatRoot {
+		c.flush()
+		savedRoot := c.floatRoot
+		c.floatRoot = el
+		blocks := c.collectNode(el)
+		c.floatRoot = savedRoot
+		if len(blocks) > 0 {
+			fb := renderBlock{
+				kind:        blockFloat,
+				floatSide:   side,
+				floatBlocks: blocks,
+				quote:       c.quote,
+				floatW:      cs.widthPx,
+				floatPct:    cs.widthPct,
+				hasFloatW:   cs.hasWidth,
+			}
+			c.stampRight(&fb)
+			c.blocks = append(c.blocks, fb)
+		}
+		return
+	}
 
 	switch tag {
 	case "br":
