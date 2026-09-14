@@ -1299,6 +1299,11 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 	// any other block: a "max-width: 300px; margin: 0 auto" row is centered and
 	// its items share 300px, not the whole column.
 	c.assignSizing(len(c.blocks)-1, cs)
+	// A row is a box like any other block, so its own background, border and
+	// shadow are drawn: a colored page header is a flex row.
+	if cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow {
+		c.assignBox(len(c.blocks)-1, cs)
+	}
 	return true
 }
 

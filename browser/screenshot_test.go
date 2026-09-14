@@ -681,6 +681,38 @@ func TestFlexShrinkSharesOverflow(t *testing.T) {
 	}
 }
 
+// A declared height holds for a flex row as well as for a block. A page header
+// is usually a flex row with a fixed height, and everything below it starts
+// after that height. The expected y is also Chromium's for the same page.
+func TestFlexRowKeepsDeclaredHeight(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		.nav { display: flex; height: 56px; background: #eee }
+		.item { width: 40px; height: 20px; background: #ccc }
+	</style></head><body>
+		<div class="nav"><div class="item"></div></div>
+		<p id="after">after</p>
+	</body></html>`, 400)
+	if len(doc.lines) != 1 {
+		t.Fatalf("got %d lines, want just the paragraph: %+v", len(doc.lines), doc.lines)
+	}
+	if y := doc.lines[0].y; diff(y, 56) > 0.5 {
+		t.Errorf("the paragraph is at y=%g, want 56 below the header", y)
+	}
+	if len(doc.boxes) != 2 {
+		t.Fatalf("got %d boxes, want the row and its item: %+v", len(doc.boxes), doc.boxes)
+	}
+	row := false
+	for _, box := range doc.boxes {
+		if diff(box.w, 400) < 0.5 && diff(box.h, 56) < 0.5 {
+			row = true
+		}
+	}
+	if !row {
+		t.Errorf("no 400x56 row box: %+v", doc.boxes)
+	}
+}
+
 // A list that is a flex container lays its items out in a row, not down the
 // page. go.dev's header menu is <ul style="display:flex">, and rendering it as
 // a list stacks the entries and pushes the whole page down.

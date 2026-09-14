@@ -643,15 +643,15 @@ type renderBlock struct {
 	grow         []float64
 	// shrink is each flex item's flex-shrink: how much of a row's overflow it
 	// absorbs, so "flex: none" items keep their width.
-	shrink []float64
-	basisPx      []float64
-	basisPct     []float64
-	hasBasis     []bool
-	gap          float64
-	rowGap       float64
-	wrap         bool
-	justify      string
-	alignItems   string
+	shrink     []float64
+	basisPx    []float64
+	basisPct   []float64
+	hasBasis   []bool
+	gap        float64
+	rowGap     float64
+	wrap       bool
+	justify    string
+	alignItems string
 
 	// A uniform border around the block, and a minimum height. Both are used
 	// for box-like blocks such as form controls and panels; borderLeft is the
@@ -972,6 +972,8 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			boxWidthOuter = contentW - inner - contentRight + leftEdge + contentRight
 		}
+		blockTop := y
+		lineStart := len(out)
 		switch b.kind {
 		case blockImage:
 			w := contentW
@@ -1021,8 +1023,6 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			out = append(out, ls...)
 			y += h
 		default:
-			blockTop := y
-			lineStart := len(out)
 			textStart := colX + b.textX + shift
 			limit := contentW - inner - contentRight
 			if limit < 40 {
@@ -1122,34 +1122,35 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				})
 				y += lh
 			}
-			// A minimum height reserves space for a control or panel that has
-			// no text yet, such as an empty textarea.
-			if b.minHeight > 0 && y-blockTop < b.minHeight {
-				gapH := b.minHeight - (y - blockTop)
-				if b.hasBG {
-					out = append(out, drawLine{
-						y: y, height: gapH, hasBG: true, bg: b.bg,
-						bgX: colX + b.boxLeft + shift, bgW: contentW + b.paddingRight,
-					})
-				}
-				y += gapH
+		}
+		// A declared height reserves space below the content, and a max-height
+		// clips it. Both apply to any block: a header is a flex row with a
+		// height, and a control with no text yet is sized by its min-height.
+		if b.minHeight > 0 && y-blockTop < b.minHeight {
+			gapH := b.minHeight - (y - blockTop)
+			if b.hasBG {
+				out = append(out, drawLine{
+					y: y, height: gapH, hasBG: true, bg: b.bg,
+					bgX: colX + b.boxLeft + shift, bgW: contentW + b.paddingRight,
+				})
 			}
-			// max-height clips the box, like overflow on a scroll container.
-			if b.maxHeight > 0 && y-blockTop > b.maxHeight {
-				bottom := blockTop + b.maxHeight
-				kept := out[:lineStart]
-				for _, dl := range out[lineStart:] {
-					if dl.y >= bottom {
-						continue
-					}
-					if dl.y+dl.height > bottom {
-						dl.height = bottom - dl.y
-					}
-					kept = append(kept, dl)
+			y += gapH
+		}
+		// max-height clips the box, like overflow on a scroll container.
+		if b.maxHeight > 0 && y-blockTop > b.maxHeight {
+			bottom := blockTop + b.maxHeight
+			kept := out[:lineStart]
+			for _, dl := range out[lineStart:] {
+				if dl.y >= bottom {
+					continue
 				}
-				out = kept
-				y = bottom
+				if dl.y+dl.height > bottom {
+					dl.height = bottom - dl.y
+				}
+				kept = append(kept, dl)
 			}
+			out = kept
+			y = bottom
 		}
 		if len(b.abs) > 0 {
 			originX := boxX + b.borderW + (b.textX - b.boxLeft)
