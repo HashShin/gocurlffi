@@ -59,6 +59,12 @@ type fontFace struct {
 // used to evaluate @media; if it is 0, width-dependent queries are treated as
 // matching. Imports are returned for the caller to fetch first.
 func parseCSSStylesheet(src string, mediaWidth float64, order *int) (rules []cssRule, imports []string, stats cssStats) {
+	// Comments go first, before anything looks at the text. An apostrophe in
+	// one - "the browser's default" - otherwise reads as the start of a string
+	// that never ends, and every rule after that comment is lost; and a
+	// comment inside a rule body otherwise joins the declaration that follows
+	// it, which drops that declaration.
+	src = stripCSSComments(src)
 	p := &cssParser{src: src, order: order, mediaWidth: mediaWidth}
 	p.parseRules(&rules, &imports, false)
 	stats.rules = len(rules)
@@ -159,6 +165,50 @@ func (p *cssParser) readUntil(stops string) string {
 		p.pos++
 	}
 	return p.src[start:p.pos]
+}
+
+// stripCSSComments replaces every /* ... */ comment with a space, leaving
+// strings alone: a comment marker inside one is text. Positions shift, which
+// is why nothing downstream of the parse keeps source offsets.
+func stripCSSComments(src string) string {
+	if !strings.Contains(src, "/*") {
+		return src
+	}
+	var b strings.Builder
+	b.Grow(len(src))
+	var quote byte
+	for i := 0; i < len(src); {
+		c := src[i]
+		switch {
+		case quote != 0:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(src) {
+				b.WriteByte(src[i+1])
+				i += 2
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			i++
+		case c == '"' || c == '\'':
+			quote = c
+			b.WriteByte(c)
+			i++
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				b.WriteByte(' ')
+				return b.String()
+			}
+			i += 2 + end + 2
+			b.WriteByte(' ')
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
 }
 
 // skipBlock consumes a balanced { ... } block.
