@@ -971,6 +971,10 @@ func (c *collector) walkElement(el *html.Node) {
 		return
 	}
 
+	if block && cs.display == "table" && c.collectTable(el, cs) {
+		return
+	}
+
 	if block && (isFlexRowContainer(cs) || isGridContainer(cs)) &&
 		c.collectFlexRow(el, cs, isGridContainer(cs)) {
 		return
@@ -1099,6 +1103,105 @@ func isFlexRowContainer(cs *computedStyle) bool {
 func isGridContainer(cs *computedStyle) bool {
 	return (cs.display == "grid" || cs.display == "inline-grid") &&
 		(len(cs.grid.tracks) > 0 || cs.grid.autoFill)
+}
+
+// collectTable builds a table block from an element's rows and cells. Rows are
+// gathered through the section elements (tbody/thead/tfoot); the cells of a row
+// become a tableRow held as a list of block columns, so the layout can put them
+// side by side in shared columns.
+func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
+	c.flush()
+	spacing := 0.0
+	if v := attrOf(el, "cellspacing"); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 {
+			spacing = f
+		}
+	}
+	b := renderBlock{
+		kind:          blockFlex,
+		flexRow:       true,
+		table:         true,
+		boxLeft:       c.content,
+		textX:         c.content,
+		quote:         c.quote,
+		gap:           spacing,
+		rowGap:        spacing,
+		justify:       cs.justifyContent,
+		alignItems:    cs.alignItems,
+		leading:       cs.marginTop + cs.paddingTop,
+		trailing:      cs.marginBottom + cs.paddingBottom,
+		marginTop:     cs.marginTop,
+		marginBottom:  cs.marginBottom,
+		paddingTop:    cs.paddingTop,
+		paddingBottom: cs.paddingBottom,
+	}
+	// A table with a declared width fills it, distributing the extra space
+	// across its columns; one without shrinks to its content.
+	if cs.hasWidth && (cs.widthPx > 0 || cs.widthPct > 0) {
+		w := cs.widthPx
+		if cs.widthPct > 0 {
+			w += cs.widthPct / 100 * c.contW
+		}
+		if w > 0 {
+			b.tableStretch = true
+		}
+	}
+	if c.hasBG {
+		b.bg, b.hasBG, b.bgFull = c.bg, true, true
+	}
+	var walkRows func(n *html.Node)
+	walkRows = func(n *html.Node) {
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			if ch.Type != html.ElementNode {
+				continue
+			}
+			ccs := c.engine.compute(ch)
+			if ccs == nil || ccs.display == "none" {
+				continue
+			}
+			switch ccs.display {
+			case "table-row-group", "table-row":
+				if strings.EqualFold(ch.Data, "tr") {
+					var row tableRow
+					for cell := ch.FirstChild; cell != nil; cell = cell.NextSibling {
+						if cell.Type != html.ElementNode {
+							continue
+						}
+						ct := strings.ToLower(cell.Data)
+						if ct != "td" && ct != "th" {
+							continue
+						}
+						span := 1
+						if v := attrOf(cell, "colspan"); v != "" {
+							if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+								span = n
+							}
+						}
+						// An empty cell still occupies its columns, which is
+						// how a colspan spacer keeps later cells aligned.
+						row.cells = append(row.cells, c.collectNode(cell))
+						row.spans = append(row.spans, span)
+					}
+					if len(row.cells) > 0 {
+						b.rows = append(b.rows, row)
+					}
+					continue
+				}
+				walkRows(ch)
+			}
+		}
+	}
+	walkRows(el)
+	if len(b.rows) == 0 {
+		return false
+	}
+	c.stampRight(&b)
+	c.blocks = append(c.blocks, b)
+	// The table's own declared width has to reach the layout: it is the width
+	// the columns are distributed over.
+	c.assignSizing(len(c.blocks)-1, cs)
+	c.content = b.boxLeft
+	return true
 }
 
 // collectFlexRow builds a flex row block from an element's children and appends

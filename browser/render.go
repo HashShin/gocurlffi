@@ -629,17 +629,23 @@ type renderBlock struct {
 	grid     bool
 	gridTmpl gridTemplate
 	// gridSpans is the column tracks each child spans in a grid.
-	gridSpans  []int
-	children   [][]renderBlock
-	grow       []float64
-	basisPx    []float64
-	basisPct   []float64
-	hasBasis   []bool
-	gap        float64
-	rowGap     float64
-	wrap       bool
-	justify    string
-	alignItems string
+	gridSpans []int
+	// A table lays its rows out as cells in shared columns.
+	table bool
+	rows  []tableRow
+	// tableStretch is set when the table declared a width, so the columns grow
+	// to fill the containing block instead of shrinking to their content.
+	tableStretch bool
+	children     [][]renderBlock
+	grow         []float64
+	basisPx      []float64
+	basisPct     []float64
+	hasBasis     []bool
+	gap          float64
+	rowGap       float64
+	wrap         bool
+	justify      string
+	alignItems   string
 
 	// A uniform border around the block, and a minimum height. Both are used
 	// for box-like blocks such as form controls and panels; borderLeft is the
@@ -993,6 +999,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			})
 			y += 12
 		case blockFlex:
+			if b.table {
+				ls, h := layoutTable(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
+				out = append(out, ls...)
+				y += h
+				continue
+			}
 			if b.grid {
 				ls, h := layoutGrid(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
 				out = append(out, ls...)
@@ -1262,6 +1274,161 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		total += h
 	}
 	// The container's own background spans the whole row.
+	if b.hasBG {
+		lines = append([]drawLine{{
+			y: y, height: total, hasBG: true, bg: b.bg, bgX: contentX, bgW: avail,
+		}}, lines...)
+	}
+	return lines, total
+}
+
+// tableRow is one table row: its cells, each a column of blocks, and the
+// number of table columns each cell spans.
+type tableRow struct {
+	cells [][]renderBlock
+	spans []int
+}
+
+// layoutTable lays a table's rows out as cells in shared columns. Column
+// widths come from the widest cell in each column (max-content), scaled to the
+// table's used width: the declared width, or the content width when narrower.
+// Each row is as tall as its tallest cell.
+func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+	if len(b.rows) == 0 {
+		return nil, 0
+	}
+	contentX := colX + b.boxLeft
+	avail := colW - b.boxLeft
+	if avail < 10 {
+		avail = 10
+	}
+	gap := b.gap
+	spanAt := func(row tableRow, ci int) int {
+		if ci < len(row.spans) && row.spans[ci] > 1 {
+			return row.spans[ci]
+		}
+		return 1
+	}
+	// cols is the widest row's column count.
+	cols := 0
+	for _, row := range b.rows {
+		used := 0
+		for ci := range row.cells {
+			used += spanAt(row, ci)
+		}
+		if used > cols {
+			cols = used
+		}
+	}
+	if cols == 0 {
+		return nil, 0
+	}
+	widths := make([]float64, cols)
+	for _, row := range b.rows {
+		ci := 0
+		for k, cell := range row.cells {
+			sp := spanAt(row, k)
+			if ci+sp > cols {
+				sp = cols - ci
+			}
+			if sp < 1 {
+				break
+			}
+			w := intrinsicColumnWidth(cell, avail, baseSize)
+			if sp == 1 {
+				if w > widths[ci] {
+					widths[ci] = w
+				}
+			} else {
+				per := w / float64(sp)
+				for j := 0; j < sp; j++ {
+					if per > widths[ci+j] {
+						widths[ci+j] = per
+					}
+				}
+			}
+			ci += sp
+		}
+	}
+	sum := 0.0
+	for _, w := range widths {
+		sum += w
+	}
+	target := sum
+	if b.tableStretch {
+		target = avail - gap*float64(cols-1)
+	} else if sum > avail {
+		target = avail - gap*float64(cols-1)
+	}
+	if sum > 0 && target > 0 && math.Abs(target-sum) > 0.5 {
+		scale := target / sum
+		for j := range widths {
+			widths[j] *= scale
+			if widths[j] < 0 {
+				widths[j] = 0
+			}
+		}
+	}
+
+	var lines []drawLine
+	total := 0.0
+	for ri, row := range b.rows {
+		if ri > 0 {
+			total += gap
+		}
+		// x of each column.
+		xs := make([]float64, cols)
+		x := contentX
+		for j := 0; j < cols; j++ {
+			xs[j] = x
+			x += widths[j] + gap
+		}
+		var childLines [][]drawLine
+		childH := []float64{}
+		maxH := 0.0
+		ci := 0
+		for k, cell := range row.cells {
+			sp := spanAt(row, k)
+			if ci+sp > cols {
+				sp = cols - ci
+			}
+			if sp < 1 {
+				break
+			}
+			cx := xs[ci]
+			cw := gap * float64(sp-1)
+			for j := 0; j < sp; j++ {
+				cw += widths[ci+j]
+			}
+			for j := range cell {
+				cell[j].hasSizeOwner = false
+			}
+			cl, endY := layoutColumn(cell, cx, cw, y+total, baseSize, boxes)
+			childLines = append(childLines, cl)
+			h := endY - (y + total)
+			childH = append(childH, h)
+			if h > maxH {
+				maxH = h
+			}
+			ci += sp
+		}
+		for k := range childLines {
+			dy := 0.0
+			switch b.alignItems {
+			case "center":
+				dy = (maxH - childH[k]) / 2
+			case "end":
+				dy = maxH - childH[k]
+			}
+			if dy != 0 {
+				for j := range childLines[k] {
+					childLines[k][j].y += dy
+				}
+			}
+			lines = append(lines, childLines[k]...)
+		}
+		total += maxH
+	}
 	if b.hasBG {
 		lines = append([]drawLine{{
 			y: y, height: total, hasBG: true, bg: b.bg, bgX: contentX, bgW: avail,

@@ -1187,7 +1187,7 @@ func TestWrappedTextStopsAtTheContainingBlocksPadding(t *testing.T) {
 // out. The expected geometry is Chromium's getBoundingClientRect for the same
 // page at a 400px viewport.
 func TestGridPlacesChildrenInTracks(t *testing.T) {
-	doc := layoutDoc(t, `<html><head><style>
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
 		* { margin: 0; padding: 0 }
 		body { font: 12px/1.6 monospace }
 		.g { display: grid; grid-template-columns: repeat(3, 100px); gap: 10px }
@@ -1212,6 +1212,41 @@ func TestGridPlacesChildrenInTracks(t *testing.T) {
 	}
 	if len(doc.boxes) != len(want) {
 		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 || diff(got.w, w.w) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g, want x=%g y=%g w=%g",
+				i, got.x, got.y, got.w, w.x, w.y, w.w)
+		}
+	}
+}
+
+// A table lays its rows out as cells in shared columns: the column widths come
+// from the widest cell in each column, scaled to the table's declared width.
+// The expected geometry is Chromium's getBoundingClientRect for the same page
+// at a 400px viewport.
+func TestTableSharesColumnsBetweenRows(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 12px/1.6 monospace }
+		td { background: #ddd }
+		table { width: 300px }
+	</style></head><body>
+		<table cellspacing="0">
+			<tr><td>one</td><td>two two</td></tr>
+			<tr><td>three three</td><td>four</td></tr>
+			<tr><td colspan="2">spans both</td></tr>
+		</table>
+	</body></html>`, 400)
+	if len(doc.boxes) != 5 {
+		t.Fatalf("got %d boxes, want 5: %+v", len(doc.boxes), doc.boxes)
+	}
+	// Cells of both rows share the same two columns.
+	want := []struct{ x, y, w float64 }{
+		{0, 0, 183.3}, {183.3, 0, 116.7},
+		{0, 19.2, 183.3}, {183.3, 19.2, 116.7},
+		{0, 38.4, 300}, // the colspan cell spans the whole table
 	}
 	for i, w := range want {
 		got := doc.boxes[i]
