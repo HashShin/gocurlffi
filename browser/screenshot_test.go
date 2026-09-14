@@ -57,6 +57,61 @@ func screenshotOf(t *testing.T, html string, opts ScreenshotOptions) image.Image
 	return decodePNG(t, data)
 }
 
+func TestNestedPercentageWidth(t *testing.T) {
+	// A percentage width resolves against the parent's content box, not the
+	// page. The red child is measured against parents of known width.
+	cases := []struct {
+		name string
+		html string
+		want int
+	}{
+		{
+			name: "half of a 200px parent",
+			html: `<div style="width:200px;background:#00ff00;height:20px">
+				<div style="width:50%;background:#ff0000;height:20px"></div></div>`,
+			want: 100,
+		},
+		{
+			name: "percentage of a percentage",
+			html: `<div style="width:200px;background:#00ff00;height:20px">
+				<div style="width:50%;height:20px">
+					<div style="width:50%;background:#ff0000;height:20px"></div></div></div>`,
+			want: 50,
+		},
+		{
+			name: "border-box parent subtracts its padding",
+			html: `<div style=" box-sizing:border-box;width:200px;padding:0 20px;background:#00ff00;height:20px">
+				<div style="width:50%;background:#ff0000;height:20px"></div></div>`,
+			want: 80,
+		},
+		{
+			name: "content-box padding is outside the width",
+			html: `<div style="width:200px;padding:0 20px;background:#00ff00;height:20px">
+				<div style="width:50%;background:#ff0000;height:20px"></div></div>`,
+			want: 100,
+		},
+		{
+			name: "max-width clamps the containing width",
+			html: `<div style="max-width:160px;background:#00ff00;height:20px">
+				<div style="width:50%;background:#ff0000;height:20px"></div></div>`,
+			want: 80,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img := screenshotOf(t, `<html><body style="margin:0">`+tc.html+`</body></html>`,
+				ScreenshotOptions{Width: 400, NoImages: true})
+			minX, _, maxX, _, ok := redBounds(img)
+			if !ok {
+				t.Fatal("the child block was not drawn")
+			}
+			if w := maxX - minX; w < tc.want-5 || w > tc.want+5 {
+				t.Errorf("child block width %d, want %d", w, tc.want)
+			}
+		})
+	}
+}
+
 func TestScreenshotBasic(t *testing.T) {
 	img := screenshotOf(t, `<html><body><h1>Title</h1><p>Some body text that should be drawn.</p></body></html>`,
 		ScreenshotOptions{Width: 800})

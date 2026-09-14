@@ -110,7 +110,9 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 	}
 	eng := p.styleEngineFor(float64(width))
 	root := &absFrame{}
-	c := &collector{page: p, engine: eng, absOwner: root}
+	// Seed the containing-block content width with the page column, so a
+	// percentage width at the top of the document resolves against it.
+	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width) - 24, hasContW: true}
 	c.walkChildren(p.doc)
 	c.flush()
 	if len(root.children) > 0 {
@@ -475,6 +477,12 @@ type collector struct {
 	sizeMaxPx, sizeMaxPct       float64
 	hasSizeMax                  bool
 	sizeAutoLeft, sizeAutoRight bool
+
+	// contW is the content box width of the current containing block, when it
+	// is known from an ancestor's explicit width. A percentage width resolves
+	// against it instead of the page width.
+	contW    float64
+	hasContW bool
 }
 
 // finishBlock applies an element's box edges, sizing context and box to the
@@ -686,9 +694,12 @@ func (c *collector) walkElement(el *html.Node) {
 		sizeMaxPx, sizeMaxPct       float64
 		hasSizeMax                  bool
 		sizeAutoLeft, sizeAutoRight bool
+		contW                       float64
+		hasContW                    bool
 	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
-		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight}
+		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
+		c.contW, c.hasContW}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -723,10 +734,67 @@ func (c *collector) walkElement(el *html.Node) {
 		boxLeft := c.content + cs.marginLeft
 		c.content = boxLeft + cs.paddingLeft
 		if cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto {
+			// A percentage width resolves against the containing block's content
+			// width, which an ancestor pins either with an explicit width or a
+			// max-width that clamps its auto width. Without one it stays a
+			// percentage and the layout resolves it against the column.
+			parentW, haveParent := c.contW, c.hasContW
+			edge := cs.paddingLeft + cs.paddingRight + 2*cs.borderW
 			c.sizeLeft = c.content
-			c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = cs.widthPx, cs.widthPct, cs.hasWidth
-			c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = cs.maxWidthPx, cs.maxWidthPct, cs.hasMaxWidth
+			wPx, wPct := cs.widthPx, cs.widthPct
+			resolved := true
+			if wPct != 0 {
+				if haveParent {
+					wPx += wPct * parentW
+					wPct = 0
+				} else {
+					resolved = false
+				}
+			}
+			c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = wPx, wPct, cs.hasWidth
+			mPx, mPct := cs.maxWidthPx, cs.maxWidthPct
+			resolvedMax := true
+			if mPct != 0 {
+				if haveParent {
+					mPx += mPct * parentW
+					mPct = 0
+				} else {
+					resolvedMax = false
+				}
+			}
+			c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = mPx, mPct, cs.hasMaxWidth
 			c.sizeAutoLeft, c.sizeAutoRight = cs.marginLeftAuto, cs.marginRightAuto
+
+			// The content width descendants resolve percentages against: the
+			// element's used width, or the containing block's when it has no
+			// explicit width. A block's auto width fills its containing block.
+			usedW, hasUsed := parentW, haveParent
+			// usedBorderBox records whether usedW still includes the padding and
+			// border, which content-box widths do not.
+			usedBorderBox := true
+			switch {
+			case cs.hasWidth && resolved:
+				usedW, hasUsed, usedBorderBox = wPx, true, cs.boxSizingBorderBox
+			case cs.hasWidth:
+				hasUsed = false
+			}
+			if cs.hasMaxWidth && resolvedMax && mPx >= 0 {
+				if !hasUsed || mPx < usedW {
+					usedW, hasUsed, usedBorderBox = mPx, true, cs.boxSizingBorderBox
+				}
+			}
+			if hasUsed {
+				cw := usedW
+				if usedBorderBox {
+					cw -= edge
+				}
+				if cw < 0 {
+					cw = 0
+				}
+				c.contW, c.hasContW = cw, true
+			} else {
+				c.contW, c.hasContW = 0, false
+			}
 		}
 	}
 	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
@@ -739,6 +807,7 @@ func (c *collector) walkElement(el *html.Node) {
 		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = saved.sizeWidthPx, saved.sizeWidthPct, saved.hasSizeWidth
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = saved.sizeMaxPx, saved.sizeMaxPct, saved.hasSizeMax
 		c.sizeAutoLeft, c.sizeAutoRight = saved.sizeAutoLeft, saved.sizeAutoRight
+		c.contW, c.hasContW = saved.contW, saved.hasContW
 	}()
 
 	switch tag {
