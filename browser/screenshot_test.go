@@ -1496,6 +1496,43 @@ func TestTransformTranslatesPositionedElements(t *testing.T) {
 	}
 }
 
+// Five "width: 20%" columns fit one line in a flex-wrap row, and the 100%
+// row that follows wraps below them. With box-sizing: border-box the declared
+// width is the whole border box: counting its padding a second time made the
+// last column wrap onto its own line and stacked brave.com's whole footer down
+// the page. The expected geometry is Chromium's getBoundingClientRect for the
+// same page at 500px.
+func TestFlexWrapKeepsPercentageColumnsOnOneLine(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { font: 12px/16px monospace }
+		.row { display: flex; flex-wrap: wrap; width: 500px }
+		.col { width: 20%; height: 10px; padding-right: 20px; background: #ccc }
+		.bottom { width: 100%; height: 5px; background: #eee }
+	</style></head><body>
+		<div class="row">
+			<div class="col"></div><div class="col"></div><div class="col"></div>
+			<div class="col"></div><div class="col"></div><div class="bottom"></div>
+		</div>
+	</body></html>`, 500)
+	want := []struct{ x, y, w, h float64 }{
+		{0, 0, 100, 10}, {100, 0, 100, 10}, {200, 0, 100, 10},
+		{300, 0, 100, 10}, {400, 0, 100, 10},
+		{0, 10, 500, 5}, // the 100% row wraps below the columns
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 ||
+			diff(got.w, w.w) > 0.5 || diff(got.h, w.h) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g h=%g, want x=%g y=%g w=%g h=%g",
+				i, got.x, got.y, got.w, got.h, w.x, w.y, w.w, w.h)
+		}
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

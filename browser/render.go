@@ -980,6 +980,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			edge = (b.textX - b.boxLeft) + b.paddingRight + 2*b.borderW
 			contentW = bb
+			// specified records that a declared width or max-width decided
+			// the box, rather than the box filling the column.
+			specified := false
 			specW := func(px, pct float64) float64 {
 				w := px + pct*bb
 				if b.borderBox {
@@ -993,11 +996,13 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			if b.hasBoxWidth {
 				if w := specW(b.boxWidthPx, b.boxWidthPct); w < contentW {
 					contentW = w
+					specified = true
 				}
 			}
 			if b.hasBoxMaxWidth {
 				if w := specW(b.boxMaxWidthPx, b.boxMaxWidthPct); w < contentW {
 					contentW = w
+					specified = true
 				}
 			}
 			extra = bb - (contentW + edge)
@@ -1012,14 +1017,21 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			inner = b.textX - b.boxLeft
 			boxX = colX + b.borderLeft + shift
-			// The border box: from the block's left edge to the used content
-			// edge plus the right padding and border.
+			// The border box: from the block's left edge to the content edge
+			// plus the right padding and border.
 			contentRight = b.paddingRight + b.borderW
 			leftEdge := b.textX - b.boxLeft
 			if b.boxID != 0 {
 				leftEdge = b.boxLeft - b.borderLeft
 			}
 			boxWidthOuter = contentW - inner - contentRight + leftEdge + contentRight
+			if specified {
+				// A declared width is the whole border box, not a line
+				// filling one, so the expression above does not apply.
+				// Drawing only the content of five "width: 20%" flex
+				// columns hid the gutter between them.
+				boxWidthOuter = contentW + edge
+			}
 		}
 		blockTop := y
 		lineStart := len(out)
@@ -1373,11 +1385,17 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		} else {
 			base[i] = intrinsicColumnWidth(col, avail, baseSize)
 		}
-		// A flex item takes up its outer size, margins included. The row
-		// distributes that, and the item's own layout reserves the margins
-		// again when it sizes its box.
+		// A flex item takes up its outer size. Its margins count, and with
+		// box-sizing: content-box so do its padding and border, which the
+		// declared width does not include. With border-box the declared width
+		// is already the border-box size, and adding the padding again is what
+		// pushes one column of a five-column footer onto its own line.
 		if len(col) > 0 {
-			base[i] += col[0].boxLeft + col[0].marginRight
+			head := col[0]
+			base[i] += head.marginRight
+			if !head.borderBox {
+				base[i] += head.boxLeft
+			}
 		}
 		if base[i] < 0 {
 			base[i] = 0
@@ -1736,7 +1754,10 @@ func flexRuns(base []float64, gap, avail float64, wrap bool) [][]int {
 		if len(cur) > 0 {
 			add += gap
 		}
-		if len(cur) > 0 && curW+add > avail {
+		// A half-pixel of slack keeps a row from wrapping over the rounding
+		// error of a percentage width: five "width: 20%" columns of 204.6
+		// sum to 1023.0000000000001 in a 1023px row.
+		if len(cur) > 0 && curW+add > avail+0.5 {
 			runs = append(runs, cur)
 			cur = nil
 			curW = 0
