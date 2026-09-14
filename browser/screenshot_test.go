@@ -1753,6 +1753,83 @@ func TestEmptyBoxTakesItsDeclaredWidth(t *testing.T) {
 	}
 }
 
+// pixelAt returns the colour of one pixel of a rendered page, and near reports
+// whether two colours agree within the tolerance antialiasing leaves.
+func pixelAt(img image.Image, x, y int) color.RGBA {
+	if !(image.Pt(x, y).In(img.Bounds())) {
+		return color.RGBA{}
+	}
+	r, g, b, a := img.At(x, y).RGBA()
+	return color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
+}
+
+func near(got, want color.RGBA) bool {
+	d := func(a, b uint8) int {
+		if a > b {
+			return int(a - b)
+		}
+		return int(b - a)
+	}
+	return d(got.R, want.R) < 24 && d(got.G, want.G) < 24 && d(got.B, want.B) < 24
+}
+
+// A grid's declared row sizes are its rows' heights, even when the cells hold
+// nothing, and an item stretches to its row unless it declares its own height.
+// The picture is compared for the same reason Chromium was: the fixture that
+// first showed this up was a grid of empty coloured cells, which renders as
+// nothing at all when every row collapses to zero.
+func TestGridRowSizesAndStretch(t *testing.T) {
+	img := screenshotOf(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { width: 200px }
+		.g { display: grid; grid-template-rows: 40px 60px; grid-template-columns: 100px 100px }
+		.a { background: #ff0000 }
+		.b { background: #00ff00 }
+		.c { background: #0000ff; height: 20px }
+		.d { background: #ffff00 }
+	</style></head><body>
+		<div class="g"><div class="a"></div><div class="b"></div><div class="c"></div><div class="d"></div></div>
+	</body></html>`, ScreenshotOptions{Width: 200, MaxHeight: 200})
+	// Row 0 is 40 tall, row 1 is 60; the 20px item keeps its height, so the
+	// pixel below it is the page, not the item.
+	for _, c := range []struct {
+		name string
+		x, y int
+		want color.RGBA
+	}{
+		{"row 0 left", 50, 20, color.RGBA{0xff, 0, 0, 0xff}},
+		{"row 0 right", 150, 20, color.RGBA{0, 0xff, 0, 0xff}},
+		{"row 1 short item", 50, 50, color.RGBA{0, 0, 0xff, 0xff}},
+		{"row 1 stretched item", 150, 75, color.RGBA{0xff, 0xff, 0, 0xff}},
+		{"below the short item", 50, 75, color.RGBA{0xff, 0xff, 0xff, 0xff}},
+	} {
+		got := pixelAt(img, c.x, c.y)
+		if !near(got, c.want) {
+			t.Errorf("%s at (%d,%d): got %v, want %v", c.name, c.x, c.y, got, c.want)
+		}
+	}
+}
+
+// A container that lays its children out in a box of its own paints its
+// background behind them. The children's boxes are collected during that call,
+// so the container's own box has to be put back in front of them: without it
+// brave's header row and every card covered its own contents.
+func TestContainerBackgroundPaintsBehindItsChildren(t *testing.T) {
+	img := screenshotOf(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.row { display: flex; width: 200px; background: #ffff00 }
+		.a { width: 40px; height: 20px; background: #ff0000 }
+	</style></head><body>
+		<div class="row"><div class="a"></div></div>
+	</body></html>`, ScreenshotOptions{Width: 200, MaxHeight: 100})
+	if got := pixelAt(img, 20, 10); !near(got, color.RGBA{0xff, 0, 0, 0xff}) {
+		t.Errorf("the child is covered by its row's background: pixel is %v, want red", got)
+	}
+	if got := pixelAt(img, 100, 10); !near(got, color.RGBA{0xff, 0xff, 0, 0xff}) {
+		t.Errorf("the row's own background is missing: pixel is %v, want yellow", got)
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

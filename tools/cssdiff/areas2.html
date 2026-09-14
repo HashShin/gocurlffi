@@ -1,0 +1,12 @@
+<!doctype html><html><head><style>
+* { margin: 0; padding: 0 }
+body { font: 16px/20px monospace }
+.g { display: grid; grid-template: min-content 1fr / 196px minmax(0,1fr); column-gap: 24px;
+     grid-template-areas: 'top top' 'side main'; width: 600px }
+.top { grid-area: top; background: #ccc; height: 20px }
+.side { grid-area: side; background: #ddd; height: 30px }
+.main { grid-area: main; background: #eee; height: 40px }
+.stretch { grid-area: side; background: #999 }
+</style></head><body>
+<div class="g"><div class="side"></div><div class="main"></div><div class="top"></div></div>
+</body></html>

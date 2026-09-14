@@ -552,6 +552,7 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 			b.borderBox = cs.boxSizingBorderBox
 			if cs.hasHeight && cs.heightPx > b.minHeight {
 				b.minHeight = cs.heightPx
+				b.hasDeclaredHeight = true
 			}
 			if cs.hasMaxHeight {
 				b.maxHeight = cs.maxHeightPx

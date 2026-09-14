@@ -1,0 +1,21 @@
+<!doctype html><html><head><style>
+* { margin: 0; padding: 0; box-sizing: border-box }
+body { font: 16px/20px monospace; width: 600px }
+/* grid areas: a full-width banner over a narrow side and the main column */
+.grid { display: grid; grid-template: 40px 60px / 200px minmax(0, 1fr); column-gap: 10px;
+        grid-template-areas: 'top top' 'side main' }
+.top { grid-area: top; background: #ff0000 }
+.side { grid-area: side; background: #00ff00 }
+.main { grid-area: main; background: #0000ff }
+/* a padded flex row */
+.row { display: flex; padding: 10px; background: #ffff00 }
+.row .a { width: 30px; height: 20px; background: #ff00ff }
+.row .b { width: 30px; height: 20px; background: #00ffff }
+/* a float with text beside it */
+.float { float: left; width: 80px; height: 40px; background: #808080 }
+</style></head><body>
+<div class="grid"><div class="side"></div><div class="main"></div><div class="top"></div></div>
+<div class="row"><div class="a"></div><div class="b"></div></div>
+<div class="float"></div>
+<p>text wraps beside the float and continues past it here</p>
+</body></html>

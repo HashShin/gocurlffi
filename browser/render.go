@@ -364,6 +364,9 @@ func drawBorder(img *image.RGBA, x, y, w, h, t float64, c color.RGBA) {
 // (rounded when it has a radius) instead of once per line. Boxes are collected
 // during layout and painted parent-first.
 type drawBox struct {
+	// ref is the box's identity within one column layout, used to keep a
+	// container's box in front of the boxes of the children it laid out.
+	ref                      int
 	x, y, w, h               float64
 	bg                       color.RGBA
 	hasBG                    bool
@@ -674,6 +677,10 @@ type renderBlock struct {
 	hasBorder   bool
 	borderLeft  float64
 	minHeight   float64
+	// hasDeclaredHeight records that the element set its own height, which
+	// stops a grid item from stretching to its row: a "height: 30px" item
+	// stays 30px in a taller row.
+	hasDeclaredHeight bool
 	// boxID groups the blocks of one element so its background and border are
 	// drawn once as a (possibly rounded) rectangle. 0 means no box.
 	boxID     int
@@ -789,6 +796,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	}
 	accs := map[int]*boxAcc{}
 	var boxOrder []int
+	// boxInserts records where a container's own box must end up: at the
+	// position its children's boxes start in the output.
+	var boxInserts []struct {
+		ref int
+		at  int
+	}
 	y := startY
 	recordBox := func(b renderBlock, top, bottom, x, w float64) {
 		if b.boxID == 0 {
@@ -798,7 +811,8 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		if acc == nil {
 			acc = &boxAcc{
 				dx: drawBox{
-					x: x, w: w,
+					ref: b.boxID,
+					x:   x, w: w,
 					bg: b.boxBG, hasBG: b.boxHasBG,
 					borderW: b.borderW, borderC: b.borderColor, hasBorder: b.hasBorder,
 					shadowX: b.shadowX, shadowY: b.shadowY,
@@ -1046,6 +1060,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		blockTop := y
 		lineStart := len(out)
+		childBoxStart := len(*boxes)
 		switch b.kind {
 		case blockImage:
 			w := contentW
@@ -1319,6 +1334,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// the top padding and border, and down past the bottom ones.
 		recordBox(b, contentTop-b.paddingTop-b.borderW,
 			y+b.paddingBottom+b.borderW, boxX, boxWidthOuter)
+		if b.boxID != 0 && (b.flexRow || b.grid || b.table) && len(*boxes) > childBoxStart {
+			boxInserts = append(boxInserts, struct {
+				ref int
+				at  int
+			}{ref: b.boxID, at: childBoxStart})
+		}
 		if b.relDy != 0 {
 			y -= b.relDy
 		}
@@ -1356,6 +1377,25 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			dx.radius[i] = r
 		}
 		*boxes = append(*boxes, dx)
+	}
+	// A container that lays its children out in a box of its own (a flex row,
+	// a grid, a table) collects their boxes during that call, so its own box
+	// would be appended after them and paint over them. Put it back where its
+	// children start, which is where a browser paints it: behind them.
+	for _, ins := range boxInserts {
+		at, found := ins.at, -1
+		for i := at; i < len(*boxes); i++ {
+			if (*boxes)[i].ref == ins.ref {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			continue
+		}
+		dx := (*boxes)[found]
+		copy((*boxes)[at+1:], (*boxes)[at:found])
+		(*boxes)[at] = dx
 	}
 	// Out-of-flow content paints above the flow: its boxes after the flow's
 	// boxes, its lines after the flow's lines.
@@ -1795,6 +1835,40 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		if total > 0 {
 			total += rowGap
 		}
+		// A row's declared track size is its height even when its items hold
+		// little: "grid-template-rows: 40px 60px" is what makes a grid of
+		// empty cells stand 100px tall. A flexible row keeps its content
+		// height, since this layout gives a grid no height of its own to
+		// share out.
+		rowH := 0.0
+		if r < len(b.gridTmpl.rows) {
+			// Only a fixed row size is known here: a percentage resolves
+			// against the grid's own height, which this layout has not
+			// decided, and a flexible row shares out a height that does not
+			// exist either. Brave's rows are "100%", and reading that against
+			// the grid's width made every row as tall as the page is wide.
+			if rt := b.gridTmpl.rows[r]; rt.fr == 0 && rt.pct == 0 {
+				rowH = rt.px
+			}
+		}
+		// Measure the row's items first: the row is as tall as its tallest
+		// one, and then every item stretches to it, which is what the default
+		// "align-self: stretch" does and what makes a grid area's background
+		// cover the whole cell.
+		measured := make([]float64, len(row))
+		for k, ci := range row {
+			col := b.children[ci]
+			for j := range col {
+				col[j].hasSizeOwner = false
+			}
+			var scratch []drawBox
+			_, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, &scratch)
+			measured[k] = endY - (y + total)
+			if measured[k] > rowH {
+				rowH = measured[k]
+			}
+		}
+		stretch := b.alignItems == "" || b.alignItems == "stretch" || b.alignItems == "normal"
 		maxH := 0.0
 		childLines := make([][]drawLine, len(row))
 		childH := make([]float64, len(row))
@@ -1805,13 +1879,35 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 			for j := range col {
 				col[j].hasSizeOwner = false
 			}
+			// The stretch is set for this call and put back afterwards: the
+			// blocks belong to the collected tree, which a page is laid out
+			// from more than once.
+			// An empty item stretches to the row, which is what fills a cell
+			// with a background: a grid of coloured cells is drawn by these
+			// boxes, and "align-self: stretch" is why they cover the cell.
+			// An item with content keeps its content height, which is this
+			// layout's model everywhere else.
+			stretched := 0.0
+			if stretch && len(col) > 0 && measured[k] == 0 {
+				if last := &col[len(col)-1]; rowH > last.minHeight {
+					stretched = last.minHeight
+					last.minHeight = rowH
+				}
+			}
 			cl, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, boxes)
+			if stretched != 0 {
+				col[len(col)-1].minHeight = stretched
+			}
 			childLines[k] = cl
 			childH[k] = endY - (y + total)
 			if childH[k] > maxH {
 				maxH = childH[k]
 			}
 		}
+		if rowH > maxH {
+			maxH = rowH
+		}
+
 		for k := range childLines {
 			dy := 0.0
 			switch b.alignItems {

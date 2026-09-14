@@ -25,6 +25,8 @@ func main() {
 	width := flag.Int("width", 1200, "viewport width")
 	ua := flag.String("ua", "", "user agent override")
 	nojs := flag.Bool("nojs", false, "disable JavaScript, to see the no-JS layout a page falls back to")
+	out := flag.String("out", "", "write a PNG screenshot of the page here")
+	height := flag.Int("height", 0, "screenshot height in CSS px (0 = the full page)")
 	flag.Parse()
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
@@ -44,7 +46,8 @@ func main() {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancelTimeout()
 
-	var out string
+	var result string
+	var pngOut []byte
 	actions := []chromedp.Action{chromedp.Navigate(*url), chromedp.Sleep(3 * time.Second)}
 	if *nojs {
 		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -52,10 +55,29 @@ func main() {
 		}))
 		actions = append(actions, chromedp.Navigate(*url), chromedp.Sleep(2*time.Second))
 	}
-	actions = append(actions, chromedp.Evaluate(*js, &out))
+	if *out != "" {
+		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
+			if *height > 0 {
+				return emulation.SetDeviceMetricsOverride(int64(*width), int64(*height), 1, false).Do(ctx)
+			}
+			var h float64
+			if err := chromedp.Evaluate(`document.documentElement.scrollHeight`, &h).Do(ctx); err != nil {
+				return err
+			}
+			return emulation.SetDeviceMetricsOverride(int64(*width), int64(h), 1, false).Do(ctx)
+		}))
+		actions = append(actions, chromedp.FullScreenshot(&pngOut, 100))
+	}
+	actions = append(actions, chromedp.Evaluate(*js, &result))
 	if err := chromedp.Run(ctx, actions...); err != nil {
 		fmt.Fprintln(os.Stderr, "chromedp:", err)
 		os.Exit(1)
 	}
-	fmt.Println(out)
+	if *out != "" {
+		if err := os.WriteFile(*out, pngOut, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "write:", err)
+			os.Exit(1)
+		}
+	}
+	fmt.Println(result)
 }
