@@ -1533,6 +1533,60 @@ func TestFlexWrapKeepsPercentageColumnsOnOneLine(t *testing.T) {
 	}
 }
 
+// Text that is a direct child of a flex row has no element of its own to carry
+// the line height, so it inherits the row's. go.dev's footer is built from
+// "display: flex" links with "line-height: 2rem": 32px apart, not 17. The
+// expected y values are Chromium's for the same page.
+func TestFlexContainerLineHeightReachesItsText(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		a { display: flex; font-size: 14px; line-height: 32px; color: #000 }
+	</style></head><body>
+		<a href="#">Why Go</a><a href="#">Use Cases</a>
+	</body></html>`, 400)
+	want := []float64{0, 32}
+	if len(doc.lines) != len(want) {
+		t.Fatalf("got %d lines, want %d: %+v", len(doc.lines), len(want), doc.lines)
+	}
+	for i, y := range want {
+		if diff(doc.lines[i].y, y) > 0.5 || diff(doc.lines[i].height, 32) > 0.5 {
+			t.Errorf("line %d: y=%g h=%g, want y=%g h=32",
+				i, doc.lines[i].y, doc.lines[i].height, y)
+		}
+	}
+}
+
+// Floats stack along the side they are floated to, and one that does not fit
+// beside them drops below them. All of Wikipedia's footer links are left
+// floats, so placing each at the column's left edge hides all but the last.
+// The expected geometry is Chromium's getBoundingClientRect for the same page.
+func TestFloatsStackAlongTheirSide(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace; width: 400px }
+		.f { float: left; width: 100px; height: 30px; background: #ccc; margin: 0 5px 0 0 }
+		.g { float: left; width: 220px; height: 30px; background: #ddd }
+	</style></head><body>
+		<div class="f"></div><div class="f"></div><div class="f"></div><div class="g"></div>
+	</body></html>`, 400)
+	want := []struct{ x, y, w, h float64 }{
+		{0, 0, 100, 30}, {105, 0, 100, 30}, {210, 0, 100, 30},
+		{0, 30, 220, 30}, // 220 more does not fit beside the third
+	}
+	if len(doc.boxes) != len(want) {
+		t.Fatalf("got %d boxes, want %d: %+v", len(doc.boxes), len(want), doc.boxes)
+	}
+	for i, w := range want {
+		got := doc.boxes[i]
+		if diff(got.x, w.x) > 0.5 || diff(got.y, w.y) > 0.5 ||
+			diff(got.w, w.w) > 0.5 || diff(got.h, w.h) > 0.5 {
+			t.Errorf("box %d: got x=%g y=%g w=%g h=%g, want x=%g y=%g w=%g h=%g",
+				i, got.x, got.y, got.w, got.h, w.x, w.y, w.w, w.h)
+		}
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

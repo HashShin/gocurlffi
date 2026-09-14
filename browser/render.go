@@ -816,6 +816,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	type floatBox struct {
 		side         string
 		x, w, bottom float64
+		margin       float64
 	}
 	var floats []floatBox
 	floatBottom := func() float64 {
@@ -1088,18 +1089,50 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			// then placed against its side of the column. It does not move y:
 			// the blocks after it flow beside it.
 			fw := floatWidth(b, colW, baseSize)
+			// A float goes as far to its side as it can without overlapping
+			// the floats already open at that height: Wikipedia's footer is a
+			// row of left floats ("Privacy policy", "About Wikipedia", ...),
+			// and stacking them all at the same x hides all but the last.
+			fy := y
 			fx := colX
 			if b.floatSide == "right" {
 				fx = colX + colW - fw
 			}
-			fy := y
-			fl, fend := layoutColumn(b.floatBlocks, fx, fw, fy, baseSize, boxes)
+			// A float's margins are part of the space it takes up.
+			fMargin := 0.0
+			if len(b.floatBlocks) > 0 {
+				fMargin = b.floatBlocks[0].marginRight
+			}
+			for _, f := range floats {
+				if f.bottom <= fy || f.side != b.floatSide {
+					continue
+				}
+				if b.floatSide == "right" {
+					if f.x-fw-fMargin < fx {
+						fx = f.x - fw - fMargin
+					}
+				} else if f.x+f.w+f.margin > fx {
+					fx = f.x + f.w + f.margin
+				}
+			}
+			if fx < colX || fx+fw > colX+colW {
+				// No room beside them: this float drops below the ones in its
+				// way, as the float placement rules say.
+				fy = floatBottom()
+				fx = colX
+				if b.floatSide == "right" {
+					fx = colX + colW - fw
+				}
+			}
+			// The float's own layout reserves its margin, so it is measured
+			// over the border box plus that margin.
+			fl, fend := layoutColumn(b.floatBlocks, fx, fw+fMargin, fy, baseSize, boxes)
 			out = append(out, fl...)
 			fh := fend - fy
 			if fh < 0 {
 				fh = 0
 			}
-			floats = append(floats, floatBox{side: b.floatSide, x: fx, w: fw, bottom: fy + fh})
+			floats = append(floats, floatBox{side: b.floatSide, x: fx, w: fw, bottom: fy + fh, margin: fMargin})
 			continue
 		default:
 			textStart := colX + b.textX + shift

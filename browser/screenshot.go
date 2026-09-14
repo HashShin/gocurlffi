@@ -498,6 +498,9 @@ type collector struct {
 	// margin. The column's width is only known at layout time (a flex item
 	// column differs from the page), so the inset is what is recorded.
 	rightInset float64
+	// lineH is the computed line-height of the element being walked, which
+	// text collected straight into a flex row or grid still inherits.
+	lineH float64
 	// floatRoot is the element currently being collected as a float, which
 	// must not be floated a second time by its own collection.
 	floatRoot *html.Node
@@ -673,6 +676,12 @@ func (c *collector) ensure(cs *computedStyle) *renderBlock {
 		if cs != nil {
 			b.align = cs.textAlign
 			b.lineH = cs.lineHeight
+		} else {
+			// A text node: its line height is the one it inherited from the
+			// element it sits in. go.dev's footer links are "display: flex"
+			// anchors with "line-height: 2rem", and without this the links
+			// stack 17px apart instead of 32.
+			b.lineH = c.lineH
 		}
 		if c.hasBG {
 			b.bg = c.bg
@@ -725,6 +734,7 @@ func (c *collector) walkElement(el *html.Node) {
 		content                     float64
 		quote                       int
 		pre                         bool
+		lineH                       float64
 		bg                          color.RGBA
 		hasBG                       bool
 		sizeLeft                    float64
@@ -741,7 +751,7 @@ func (c *collector) walkElement(el *html.Node) {
 		sizePadLeft                 float64
 		sizePadRight                float64
 		sizeMarginRight             float64
-	}{c.style, c.content, c.quote, c.pre, c.bg, c.hasBG,
+	}{c.style, c.content, c.quote, c.pre, c.lineH, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
 		c.contW, c.hasContW, c.rightInset,
@@ -765,6 +775,9 @@ func (c *collector) walkElement(el *html.Node) {
 		textTransform: cs.textTransform,
 		letterSpacing: cs.letterSpacing,
 	}
+	// Text that is a direct child of a flex row or grid has no element of its
+	// own to carry the line height, so it is kept here for ensure.
+	c.lineH = cs.lineHeight
 	block := isBlockDisplay(cs.display)
 	// The blocks this element produces live in its containing block, so they
 	// carry the inset of the parent's content box, not this element's own.
@@ -865,6 +878,7 @@ func (c *collector) walkElement(el *html.Node) {
 
 	defer func() {
 		c.style, c.content, c.quote, c.pre = saved.style, saved.content, saved.quote, saved.pre
+		c.lineH = saved.lineH
 		c.bg, c.hasBG = saved.bg, saved.hasBG
 		c.sizeLeft = saved.sizeLeft
 		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = saved.sizeWidthPx, saved.sizeWidthPct, saved.hasSizeWidth
