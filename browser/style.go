@@ -1156,7 +1156,7 @@ type computedStyle struct {
 	// gridColumn is the item's grid-column. The container's line names
 	// resolve it to a track and a span, which the item itself cannot do: it
 	// does not know the template it will be placed in.
-	gridColumn gridPlacement
+	gridColumn     gridPlacement
 	justifyContent string
 	alignItems     string
 	// borderW/borderColor describe a uniform box border, the only kind drawn.
