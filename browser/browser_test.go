@@ -179,3 +179,51 @@ func TestWaitForSelector(t *testing.T) {
 		t.Fatalf("expected #ready after timers")
 	}
 }
+
+// The browser a page scripts see must be the browser the server was told
+// about. A page that reports a mobile user agent while the request went out as
+// desktop Chrome serves one variant of itself and then renders the other:
+// Wikipedia picks its skin from the request's User-Agent, so a mismatched
+// navigator.userAgent has the page believe it is a mobile browser while the
+// markup around it is the desktop skin.
+func TestPageUserAgentMatchesTheImpersonationTarget(t *testing.T) {
+	b := New(Options{Impersonate: "chrome"})
+	t.Cleanup(b.Close)
+	want := b.sess.UserAgent()
+	if want == "" {
+		t.Fatal("the chrome preset has no user agent")
+	}
+	p := b.NewPage("https://example.test/")
+	if err := p.SetContent(`<!doctype html><html><body><script>1</script></body></html>`, "https://example.test/"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Eval(`navigator.userAgent`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != want {
+		t.Errorf("navigator.userAgent = %q, want the session's %q", got.String(), want)
+	}
+	plat, err := p.Eval(`navigator.platform`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plat.String() != platformForUserAgent(want) {
+		t.Errorf("navigator.platform = %q, want %q", plat.String(), platformForUserAgent(want))
+	}
+
+	// An explicit override still wins over the preset.
+	b2 := New(Options{Impersonate: "chrome", UserAgent: "test/1.0"})
+	t.Cleanup(b2.Close)
+	p2 := b2.NewPage("https://example.test/")
+	if err := p2.SetContent(`<!doctype html><html><body><script>1</script></body></html>`, "https://example.test/"); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := p2.Eval(`navigator.userAgent`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.String() != "test/1.0" {
+		t.Errorf("navigator.userAgent = %q, want the override", got2.String())
+	}
+}

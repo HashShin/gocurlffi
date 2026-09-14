@@ -1426,6 +1426,21 @@ func defaultComputedStyle() computedStyle {
 	}
 }
 
+// isDetailsSummary reports whether n is the summary a closed <details> keeps
+// visible: the first <summary> child of the element.
+func isDetailsSummary(n *html.Node) bool {
+	if !strings.EqualFold(n.Data, "summary") {
+		return false
+	}
+	for ch := n.Parent.FirstChild; ch != nil; ch = ch.NextSibling {
+		if ch.Type != html.ElementNode {
+			continue
+		}
+		return ch == n
+	}
+	return false
+}
+
 // setWeight records a computed font weight and the renderer's bold flag.
 func (cs *computedStyle) setWeight(w int) {
 	cs.weight = w
@@ -2162,6 +2177,16 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 		"summary", "ul", "ol", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
 		"search", "legend", "optgroup":
 		cs.display = "block"
+	}
+
+	// A closed <details> shows only its summary: a browser applies
+	// "details:not([open]) > *:not(summary) { display: none }". Brave's FAQ
+	// page is a list of details, and drawing every answer made that section
+	// twice as tall as the page it lives on.
+	if n.Parent != nil && n.Parent.Type == html.ElementNode && n.Parent.Data == "details" {
+		if _, open := getAttr(n.Parent, "open"); !open && !isDetailsSummary(n) {
+			cs.display = "none"
+		}
 	}
 
 	// The hidden attribute is a user-agent rule, so an author display

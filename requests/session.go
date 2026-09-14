@@ -54,6 +54,28 @@ func resolveVerify(cfg config) bool {
 	return true
 }
 
+// UserAgent reports the User-Agent this session sends: the impersonated
+// browser's, when a preset is selected, and the curl default otherwise. A
+// caller that also exposes a user agent to page scripts uses this so that what
+// the server is told and what navigator.userAgent reports are the same
+// browser, rather than one desktop Chrome to the server and another to the
+// page.
+func (s *Session) UserAgent() string {
+	if s.cfg.impersonate != "" && !isCurlImpersonation(s.cfg.impersonate) {
+		if p, err := impersonate.Get(s.cfg.impersonate); err == nil {
+			for _, h := range p.HTTPHeaders {
+				if strings.EqualFold(h.Name, "User-Agent") {
+					return h.Value
+				}
+			}
+		}
+	}
+	if isCurlImpersonation(s.cfg.impersonate) {
+		return curlDefaultUserAgent
+	}
+	return ""
+}
+
 // Close releases idle connections held by the session.
 func (s *Session) Close() {
 	s.mu.Lock()

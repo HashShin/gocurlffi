@@ -1645,6 +1645,42 @@ func TestGridAreaNameIsCaseSensitive(t *testing.T) {
 	}
 }
 
+// A closed <details> shows only its summary, and its height is the summary's.
+// Brave's FAQ page is a list of details, and drawing every answer made that
+// section twice as tall as the page around it. Chromium reports 20px for the
+// closed one and 40px for the open one on this page.
+func TestClosedDetailsHidesItsContent(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+	</style></head><body>
+		<details><summary>Q1</summary><p>A1 hidden</p></details>
+		<details open><summary>Q2</summary><p>A2 shown</p></details>
+		<div>after</div>
+	</body></html>`, 400)
+	want := []struct {
+		y    float64
+		text string
+	}{
+		{0, "Q1"},
+		{20, "Q2"},
+		{40, "A2 shown"},
+		{60, "after"},
+	}
+	if len(doc.lines) != len(want) {
+		t.Fatalf("got %d lines, want %d: %+v", len(doc.lines), len(want), doc.lines)
+	}
+	for i, w := range want {
+		var text string
+		for _, r := range doc.lines[i].runs {
+			text += r.text
+		}
+		if diff(doc.lines[i].y, w.y) > 0.5 || text != w.text {
+			t.Errorf("line %d: y=%g %q, want y=%g %q", i, doc.lines[i].y, text, w.y, w.text)
+		}
+	}
+}
+
 // A table lays its rows out as cells in shared columns: the column widths come
 // from the widest cell in each column, scaled to the table's declared width.
 // The expected geometry is Chromium's getBoundingClientRect for the same page

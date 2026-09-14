@@ -15,8 +15,8 @@ import (
 	"gocurlffi/requests"
 )
 
-// defaultUserAgent mirrors the Android Chrome profile used by the "custom"
-// impersonation target, so navigator.userAgent and the HTTP UA agree.
+// defaultUserAgent is the fallback when no impersonation preset supplies one.
+// It mirrors the Android Chrome profile of the "custom" target.
 const defaultUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
 // ConsoleEntry is a captured console.* message.
@@ -109,8 +109,33 @@ func newPage(b *Browser, url string) *Page {
 	}
 	if b.opts.UserAgent != "" {
 		p.userAgent = b.opts.UserAgent
+	} else if ua := b.sess.UserAgent(); ua != "" {
+		// The page must report the browser the server was told about: with
+		// the "chrome" preset that is a desktop Chrome, and a page that sees
+		// a mobile UA while the server served it desktop markup renders the
+		// wrong variant of itself.
+		p.userAgent = ua
 	}
+	p.platform = platformForUserAgent(p.userAgent)
 	return p
+}
+
+// platformForUserAgent maps a user agent to the navigator.platform it
+// advertises, so the two do not contradict each other.
+func platformForUserAgent(ua string) string {
+	switch {
+	case strings.Contains(ua, "Android"):
+		return "Linux armv8l"
+	case strings.Contains(ua, "iPhone"), strings.Contains(ua, "iPad"):
+		return "iPhone"
+	case strings.Contains(ua, "Macintosh"):
+		return "MacIntel"
+	case strings.Contains(ua, "Windows"):
+		return "Win32"
+	case strings.Contains(ua, "Linux"):
+		return "Linux x86_64"
+	}
+	return "Linux armv8l"
 }
 
 // session returns the browser's HTTP session.
