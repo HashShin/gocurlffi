@@ -40,14 +40,14 @@ type ScreenshotOptions struct {
 // The page's CSS is applied first: <style> blocks and <link rel=stylesheet>
 // sheets are fetched, parsed and cascaded (specificity, !important, source
 // order, inheritance, simple media queries), including the user-agent defaults.
-// The renderer then flows the document at the requested width and draws
-// headings, paragraphs, lists, preformatted blocks, blockquotes, rules and
-// styled runs, with flat block background colours and text alignment.
+// The renderer then flows the document at the requested width: block flow with
+// margins, padding and borders, flex rows, grid columns, tables, absolute
+// positioning, images and backgrounds, and draws the text runs that result.
 //
-// It is still a document renderer, not a web renderer: there is no CSS box
-// model, no images, no borders or shadows, and no positioning or floats.
-// Layout, stylesheet loading, font parsing and rasterization all happen inside
-// this call, so loading pages is unaffected.
+// It is still a document renderer, not a web renderer: there are no floats, no
+// multi-column layout, and no transforms or animations. Layout, stylesheet
+// loading, font parsing and rasterization all happen inside this call, so
+// loading pages is unaffected.
 func (p *Page) Screenshot(opts ScreenshotOptions) ([]byte, error) {
 	if p.doc == nil {
 		return nil, errors.New("browser: page has no document")
