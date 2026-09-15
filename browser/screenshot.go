@@ -954,8 +954,15 @@ func (c *collector) walkElement(el *html.Node) {
 		c.blocks = append(c.blocks, rb)
 		return
 	case "img", "svg":
+		// A block-level image or svg is a box on a line of its own: a logo
+		// written "display:block" must not share a line with the text after
+		// it, which would also let that text sit over the picture.
+		if block {
+			c.flush()
+			defer c.flush()
+		}
 		if tag == "svg" {
-			w, h := svgSize(el, cs)
+			w, h := svgSize(el, cs, c.contW, c.hasContW)
 			if w > 0 && h > 0 {
 				if pic := c.page.rasterSVG(el, w, h, c.style.color); pic != nil {
 					c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{pic: pic, picW: w, picH: h})
@@ -965,7 +972,7 @@ func (c *collector) walkElement(el *html.Node) {
 			return
 		}
 		if pic := c.page.image(resolveURL(c.page.baseURL(), imageSource(el))); pic != nil {
-			if w, h := inlineImageSize(cs, pic); w > 0 && h > 0 {
+			if w, h := inlineImageSize(cs, pic, c.contW, c.hasContW); w > 0 && h > 0 {
 				c.ensure(cs).spans = append(c.ensure(cs).spans, renderSpan{pic: pic, picW: w, picH: h})
 				return
 			}

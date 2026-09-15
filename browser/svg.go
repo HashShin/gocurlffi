@@ -84,35 +84,52 @@ func hex2(b uint8) string {
 
 // inlineImageSize returns the drawn size of an <img>: its natural size, scaled
 // to a CSS width or height when the page sets one.
-func inlineImageSize(cs *computedStyle, pic *pageImage) (float64, float64) {
+func inlineImageSize(cs *computedStyle, pic *pageImage, contW float64, hasContW bool) (float64, float64) {
 	nw, nh := float64(pic.size.X), float64(pic.size.Y)
 	if nw <= 0 || nh <= 0 {
 		return 0, 0
 	}
-	w, h := nw, nh
-	if cs.hasWidth && cs.widthPx > 0 {
-		w = cs.widthPx
-		h = nh * w / nw
-	}
+	w := declaredWidth(cs, contW, hasContW)
+	var h float64
 	if cs.hasHeight && cs.heightPx > 0 {
-		hh := cs.heightPx
-		if !cs.hasWidth || cs.widthPx <= 0 {
-			w = nw * hh / nh
-		}
-		h = hh
+		h = cs.heightPx
+	}
+	switch {
+	case w > 0 && h > 0:
+	case w > 0:
+		h = nh * w / nw
+	case h > 0:
+		w = nw * h / nh
+	default:
+		w, h = nw, nh
 	}
 	return w, h
+}
+
+// declaredWidth resolves an element's CSS width to pixels, including the
+// percentage that only the layout can resolve: "w-full" is the usual way to
+// size a logo or a diagram, and a percentage that never resolves leaves the
+// box with no width at all. It returns 0 when no usable width is declared.
+func declaredWidth(cs *computedStyle, contW float64, hasContW bool) float64 {
+	if !cs.hasWidth {
+		return 0
+	}
+	if cs.widthPx > 0 {
+		return cs.widthPx
+	}
+	if cs.widthPct > 0 && hasContW {
+		return cs.widthPct * contW
+	}
+	return 0
 }
 
 // svgSize resolves the CSS pixel size of an inline <svg>: the width/height
 // attributes, the CSS width/height, or the viewBox aspect. A viewBox with no
 // size is treated as the icon's design size.
-func svgSize(el *html.Node, cs *computedStyle) (float64, float64) {
+func svgSize(el *html.Node, cs *computedStyle, contW float64, hasContW bool) (float64, float64) {
 	vbW, vbH := svgViewBox(el)
 	var w, h float64
-	if cs.hasWidth && cs.widthPx > 0 {
-		w = cs.widthPx
-	}
+	w = declaredWidth(cs, contW, hasContW)
 	if cs.hasHeight && cs.heightPx > 0 {
 		h = cs.heightPx
 	}
