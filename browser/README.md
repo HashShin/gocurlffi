@@ -711,6 +711,9 @@ it is enough.
   `make ref` (or `scripts/fetch-lightpanda.sh`) to fetch it; the script also
   writes a `go.mod` stub there, because the Zig project ships a few generated Go
   files under `src/data/` that `go test ./...` would otherwise try to compile.
+  `docs/lightpanda-parity.md` records what is still missing from it, so the
+  checkout is not needed to plan the remaining work and can be deleted at any
+  time without losing the list.
 - Scripts run in the same goroutine as `Open`. A runaway script is bounded by
   `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
   bounded by `Options.LoadTimeout` (default 30s). After `DOMContentLoaded` and
