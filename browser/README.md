@@ -59,10 +59,10 @@ p.WaitForSelector(".loaded", 5*time.Second)
 CLI:
 
 ```sh
-make gobrowser
-./bin/gobrowser get https://react.dev/ -f markdown -i chrome131
-./bin/gobrowser get https://quotes.toscrape.com/js/ --eval 'document.title'
-./bin/gobrowser get https://example.com/ -f text --status
+make build
+./bin/gocurlffi get --render https://react.dev/ -f markdown -i chrome131
+./bin/gocurlffi get --render https://quotes.toscrape.com/js/ --eval 'document.title'
+./bin/gocurlffi get --render https://example.com/ -f text --status
 ```
 
 ## What works
@@ -82,7 +82,7 @@ make gobrowser
   each one with its size and rule count, or the reason it was not applied:
 
   ```sh
-  ./bin/gobrowser get https://brave.com/ --sheets
+  ./bin/gocurlffi get --render https://brave.com/ --sheets
   applied      https://brave.com/static-assets/css/main.min.25ad059cc...css  2332 rules, 415249 bytes
   applied      https://brave.com/static-assets/css/fonts-latin.min.e...css     2 rules, 16677 bytes
   applied      inline <style>                                                  1 rules, 69 bytes
@@ -212,9 +212,9 @@ make gobrowser
   named and namespace forms), re-exports, side-effect imports, an import map
   for bare specifiers, and dynamic `import()`, all loaded and evaluated in
   dependency order.
-- A Chrome DevTools Protocol server (`gobrowser serve`) and WebDriver BiDi on
+- A Chrome DevTools Protocol server (`gocurlffi serve`) and WebDriver BiDi on
   the same port, so Puppeteer, Playwright and chromedp can drive it.
-- An MCP (Model Context Protocol) tool server (`gobrowser mcp`) over stdio or
+- An MCP (Model Context Protocol) tool server (`gocurlffi mcp`) over stdio or
   HTTP, exposing navigate, get_content, evaluate, screenshot, click, type and
   structured_data to an AI agent.
 - Structured data: `Page.StructuredData()` returns every JSON-LD object the
@@ -236,18 +236,52 @@ make gobrowser
   (keyPath, autoIncrement), `put`/`add`/`get`/`getAll`/`delete`/`clear`/`count`,
   simple indexes, `openCursor`, and transactions whose requests resolve on a
   later turn.
+- Bodies and streams: `Blob`, `File`, `FileReader`, `FormData`, `Headers`,
+  `Request`, `Response`, `ReadableStream`, `WritableStream` and
+  `TransformStream` are real implementations over byte slices, not just names.
+  `new Blob(['hi']).size` is 2, `Array.from(new FormData(...))` iterates,
+  `new FormData(form)` collects a form's successful controls, a `FormData`
+  holding a file is sent as multipart and one without is urlencoded, and
+  `fetch(...).body.getReader()` drains the response.
+- `MutationObserver` actually fires: childList, attributes (with
+  `attributeOldValue`), characterData and `subtree` are recorded at every DOM
+  mutation point, batched, and delivered at the microtask checkpoint -- after a
+  script, a timer callback, an event or an eval. `disconnect` and `takeRecords`
+  behave, so a framework that mounts into a mutation callback works.
+- `IntersectionObserver` and `ResizeObserver` report each observed target once
+  at the next checkpoint, with rectangles read from the real layout. Because
+  there is no viewport to scroll, an observed target is reported as
+  intersecting; that is what reveals lazy-loaded content.
+- Shadow DOM: `attachShadow` returns a real `ShadowRoot` (with `innerHTML`,
+  `querySelector`, `appendChild`, `getElementById`), `element.shadowRoot`
+  returns it for `open` roots and `null` for `closed`, and `getRootNode()`
+  answers the shadow root a node lives in. Declarative shadow DOM
+  (`<template shadowrootmode="open">`) is attached at parse time, so a
+  server-rendered component is visible even with `--no-js`. Extraction reads
+  through the shadow boundary -- `Text`, `Markdown`, `Links`, `HTML` and the Go
+  query helpers include shadow content, substituting a `<slot>` with the host's
+  light children so nothing is duplicated. The DOM's own
+  `document.querySelector` still stops at the boundary, as the spec requires.
+- `history.pushState`/`replaceState` rewrite the document URL in place, so
+  `location.pathname` and relative URL resolution follow an SPA route, and
+  `back`/`forward`/`go` walk the entries those calls created and fire
+  `popstate`. `location` reads through to the live URL rather than a copy taken
+  at load.
+- `structuredClone` is a real structured clone rather than a JSON round-trip:
+  `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and cycles all
+  survive, and a nested `Map` no longer comes back as a plain object.
 - The Service Worker surface is stubbed for feature detection
   (`register` resolves, `controller` is null); there is no persistent worker.
 
 ### MCP server
 
-`gobrowser mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
+`gocurlffi mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
 `--port`. Point an MCP client at it:
 
 ```json
 {
   "mcpServers": {
-    "gobrowser": { "command": "/path/to/gobrowser", "args": ["mcp"] }
+    "gocurlffi": { "command": "/path/to/gocurlffi", "args": ["mcp"] }
   }
 }
 ```
@@ -286,11 +320,11 @@ transport, and it is a good check that the two stay consistent.
 
 ## Speed against a real Chromium
 
-`scripts/bench_browser.sh` loads the same pages with `gobrowser` and with a
+`scripts/bench_browser.sh` loads the same pages with `gocurlffi` and with a
 Chromium CLI (`--headless=new --dump-dom`) and reports wall time and rendered
 bytes. Measured on Termux/arm64 against Chromium 149:
 
-| Page | Chromium | gobrowser | Chromium bytes | gobrowser bytes |
+| Page | Chromium | gocurlffi | Chromium bytes | gocurlffi bytes |
 | --- | --- | --- | --- | --- |
 | `about:blank` | ~0.95 s | - | 40 | - |
 | `quotes.toscrape.com/js/` | 3.7 / 2.6 s | **2.0 / 1.9 s** | 8 987 | 9 005 |
@@ -300,20 +334,20 @@ bytes. Measured on Termux/arm64 against Chromium 149:
 
 Reading it honestly:
 
-- gobrowser is faster on every page tested, and several times faster on heavy
+- gocurlffi is faster on every page tested, and several times faster on heavy
   pages, because there is no browser startup (~1 s before Chromium even starts
   loading) and no per-page process to launch.
 - On `react.dev` the two are level: that much JavaScript interpreted without a
   JIT costs about what Chromium spends starting up and compiling.
 - Chromium renders **more** bytes on heavy pages (roughly 2x on gocomics). It is
   a real browser: it runs more scripts to completion and normalizes the DOM. So
-  gobrowser being faster is partly "does less".
+  gocurlffi being faster is partly "does less".
 
 Caveats, so the numbers are not over-read:
 
 - Chromium needs a warmed `--user-data-dir` here; its first run with a cold
   profile hangs. The warmup is untimed, and timed runs hit a URL the profile has
-  not cached, which is the closest match to gobrowser's always-cold behaviour.
+  not cached, which is the closest match to gocurlffi's always-cold behaviour.
 - Chromium is bounded with `--virtual-time-budget` because `--dump-dom` never
   returns on pages that do not reach network idle. That budget is virtual, not
   wall-clock, so its time is a floor rather than a full time-to-interactive.
@@ -366,7 +400,7 @@ never collapses, as in a browser.
 
 `tools/cssdiff` compares this package's computed styles with a real Chromium,
 element by element, on the same page: Chromium answers over CDP, the Go browser
-answers through `gobrowser get --eval`, and the two are matched by DOM position.
+answers through `gocurlffi get --render --eval`, and the two are matched by DOM position.
 It is a separate module, so its one dependency (chromedp) never reaches the
 browser package.
 
@@ -394,7 +428,7 @@ png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
 ```
 
 ```sh
-./bin/gobrowser get https://quotes.toscrape.com/js/ --screenshot page.png --width 900
+./bin/gocurlffi get --render https://quotes.toscrape.com/js/ --screenshot page.png --width 900
 ```
 
 `--debug` reports what the styling actually did, which is the first thing to
@@ -523,7 +557,7 @@ of named areas, a padded flex row, a float and wrapping text. Rendering it in
 both engines and comparing the PNGs row by row is the acceptance test:
 
 ```sh
-./bin/gobrowser get http://127.0.0.1:8000/accept.html --screenshot ours.png --width 800
+./bin/gocurlffi get --render http://127.0.0.1:8000/accept.html --screenshot ours.png --width 800
 cd tools/cssdiff && go run ./probe -url http://127.0.0.1:8000/accept.html -width 800 -out chrome.png -js '0'
 ```
 
@@ -546,12 +580,12 @@ Two traps, both of which cost real time here:
 
 ## Driving it as a browser (CDP and WebDriver BiDi)
 
-`gobrowser serve` starts a Chrome DevTools Protocol server on `--host`/`--port`
+`gocurlffi serve` starts a Chrome DevTools Protocol server on `--host`/`--port`
 (default `127.0.0.1:9222`), so an existing automation client drives this browser
 the way it drives Chrome:
 
 ```sh
-./bin/gobrowser serve --port 9222
+./bin/gocurlffi serve --port 9222
 # then, from Puppeteer:
 #   puppeteer.connect({ browserWSEndpoint: "ws://127.0.0.1:9222" })
 ```
@@ -638,7 +672,10 @@ it is enough.
 ## Notes
 
 - `browser/browser/` is the reference Lightpanda checkout and is gitignored. It
-  is the source material for behaviour, not a build input.
+  is the source material for behaviour, not a build input. Run
+  `make ref` (or `scripts/fetch-lightpanda.sh`) to fetch it; the script also
+  writes a `go.mod` stub there, because the Zig project ships a few generated Go
+  files under `src/data/` that `go test ./...` would otherwise try to compile.
 - Scripts run in the same goroutine as `Open`. A runaway script is bounded by
   `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
   bounded by `Options.LoadTimeout` (default 30s). After `DOMContentLoaded` and
@@ -646,8 +683,10 @@ it is enough.
   for pending timers, so a timer-driven page can finish rendering.
 - Rendering is much slower than the plain HTTP client by design: it issues one
   request per script (a large site can be 30-40), executes them in a pure-Go
-  interpreter with no JIT, and re-serializes the DOM. Use `gocurlffi` when the
-  HTML is server-rendered and `gobrowser` only when scripts are required.
+  interpreter with no JIT, and re-serializes the DOM. Use `gocurlffi get` when
+  the HTML is server-rendered and `gocurlffi get --render` only when scripts are
+  required: they are the same binary, so the fast path is a flag away, but
+  linking the browser is what makes the binary about 37 MB instead of 18 MB.
 - All network traffic, including `fetch`, `XMLHttpRequest` and external
   scripts, goes through one shared session, so a browser-like flow works
   across hosts (see the note on the ClientHello fix in the repository README).
@@ -665,7 +704,7 @@ it is enough.
 ### CLI flags
 
 ```sh
-gobrowser get URL \
+gocurlffi get URL --render \
   -i chrome131          # impersonation target
   -f html|text|markdown|links
   -o FILE               # write output to FILE
@@ -696,11 +735,11 @@ gobrowser get URL \
   -f structured         # print the page's JSON-LD structured data
   -H 'K: V'             # extra header (repeatable)
 
-gobrowser mcp \
+gocurlffi mcp \
   --port 9223 \         # serve over HTTP (omit for stdio)
   -i chrome131          # impersonation target
 
-gobrowser serve \
+gocurlffi serve \
   --host 127.0.0.1 \    # CDP/BiDi bind host
   --port 9222 \         # bind port
   -i chrome131 \        # impersonation target

@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/dop251/goja"
@@ -38,18 +37,27 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 	input := call.Argument(0)
 	method := "GET"
 	rawURL := ""
-	headers := map[string]string{}
+	headers := newHeadersData()
 	var body []byte
 
-	switch v := input.(type) {
-	case *goja.Object:
-		if u := v.Get("url"); u != nil && !goja.IsUndefined(u) {
-			rawURL = u.String()
-		} else {
-			rawURL = v.String()
+	// A Request carries its own method, headers and body, so `fetch(req)` and
+	// `fetch(req.clone())` work the way a page expects.
+	if r := requestURL(input); r != "" {
+		rawURL = r
+		if m := requestMethod(input); m != "" {
+			method = m
 		}
-	default:
+		if h := requestHeaders(input); h != nil {
+			headers = h
+		}
+		if d, ok := marked[*jsResponseData](input.(*goja.Object), requestMark); ok {
+			body = d.body
+		}
+	} else {
 		rawURL = argString(input)
+		if o, ok := input.(*goja.Object); ok && o != nil {
+			rawURL = argString(o.Get("url"))
+		}
 	}
 
 	if init, ok := call.Argument(1).(*goja.Object); ok {
@@ -57,23 +65,40 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 			method = strings.ToUpper(m.String())
 		}
 		if h := init.Get("headers"); h != nil && !goja.IsUndefined(h) {
-			if ho, ok := h.(*goja.Object); ok {
-				for _, k := range ho.Keys() {
-					headers[k] = ho.Get(k).String()
-				}
-			}
+			headers = e.headersFromInit(h)
 		}
 		if b := init.Get("body"); b != nil && !goja.IsUndefined(b) && !goja.IsNull(b) {
-			body = []byte(b.String())
+			body, _ = e.bodyToBytes(b, headers)
 		}
 	}
 
 	rawURL = resolveURL(e.page.baseURL(), rawURL)
-	resp, err := e.doRequest(method, rawURL, headers, body)
+	resp, err := e.doRequest(method, rawURL, headers.pairs(), body)
 	if err != nil {
 		return e.rejectedPromise(err)
 	}
 	return e.resolvedPromise(e.vm.ToValue(e.fetchResponse(resp)))
+}
+
+// fetchResponse turns a transport response into a real Response, with Headers
+// and a ReadableStream body rather than the ad-hoc object it used to build.
+func (e *jsEnv) fetchResponse(resp *requests.Response) *goja.Object {
+	h := newHeadersData()
+	if resp.Headers != nil {
+		for _, item := range resp.Headers.MultiItems() {
+			h.append(item.Name, item.Value)
+		}
+	}
+	url := resp.URL
+	return e.newResponseObject(&jsResponseData{
+		status:     resp.StatusCode,
+		statusText: resp.Reason,
+		url:        url,
+		redirected: resp.RedirectCount > 0,
+		typ:        "basic",
+		headers:    h,
+		body:       resp.Content,
+	})
 }
 
 // doRequest issues a request through the impersonating session, applying CORS
@@ -95,63 +120,6 @@ func (e *jsEnv) doRequest(method, rawURL string, headers map[string]string, body
 		return resp, nil
 	}
 	return e.page.browser.request(method, rawURL, headers, body, "fetch")
-}
-
-func (e *jsEnv) fetchResponse(resp *requests.Response) *goja.Object {
-	o := e.vm.NewObject()
-	_ = o.Set("ok", resp.StatusCode >= 200 && resp.StatusCode < 300)
-	_ = o.Set("status", resp.StatusCode)
-	_ = o.Set("statusText", resp.Reason)
-	_ = o.Set("url", resp.URL)
-	_ = o.Set("redirected", resp.RedirectCount > 0)
-	_ = o.Set("type", "basic")
-
-	h := e.vm.NewObject()
-	_ = h.Set("get", func(call goja.FunctionCall) goja.Value {
-		name := argString(call.Argument(0))
-		if resp.Headers == nil {
-			return goja.Null()
-		}
-		if v := resp.Headers.Get(name); v != "" {
-			return e.vm.ToValue(v)
-		}
-		return goja.Null()
-	})
-	_ = h.Set("has", func(call goja.FunctionCall) goja.Value {
-		if resp.Headers == nil {
-			return e.vm.ToValue(false)
-		}
-		return e.vm.ToValue(resp.Headers.Has(argString(call.Argument(0))))
-	})
-	_ = h.Set("forEach", func(call goja.FunctionCall) goja.Value {
-		fn, ok := goja.AssertFunction(call.Argument(0))
-		if ok && resp.Headers != nil {
-			for _, item := range resp.Headers.MultiItems() {
-				_, _ = fn(goja.Undefined(), e.vm.ToValue(item.Value), e.vm.ToValue(item.Name))
-			}
-		}
-		return goja.Undefined()
-	})
-	_ = o.Set("headers", h)
-
-	content := resp.Content
-	_ = o.Set("text", func(goja.FunctionCall) goja.Value {
-		return e.resolvedPromise(e.vm.ToValue(string(content)))
-	})
-	_ = o.Set("json", func(goja.FunctionCall) goja.Value {
-		var parsed interface{}
-		if err := json.Unmarshal(content, &parsed); err != nil {
-			return e.rejectedPromise(err)
-		}
-		return e.resolvedPromise(e.vm.ToValue(parsed))
-	})
-	_ = o.Set("arrayBuffer", func(goja.FunctionCall) goja.Value {
-		return e.resolvedPromise(e.vm.ToValue(e.vm.NewArrayBuffer(content)))
-	})
-	_ = o.Set("clone", func(goja.FunctionCall) goja.Value {
-		return e.vm.ToValue(e.fetchResponse(resp))
-	})
-	return o
 }
 
 // --- XMLHttpRequest ---

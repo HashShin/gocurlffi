@@ -18,14 +18,14 @@ func (p *Page) TextOf(n *html.Node) string {
 	if n == nil {
 		return ""
 	}
-	return visibleText(n)
+	return p.renderedText(n)
 }
 
 // Links returns every anchor with a resolvable href, including those inside
 // child frames.
 func (p *Page) Links() []Link {
 	var out []Link
-	for _, a := range getElementsByTagName(p.doc, "a") {
+	for _, a := range p.allRendered(p.doc, "a") {
 		href := attrOf(a, "href")
 		if href == "" || strings.HasPrefix(href, "javascript:") {
 			continue
@@ -46,7 +46,11 @@ func Attr(n *html.Node, key string) string { return attrOf(n, key) }
 // lost the way a plain text extraction of the top document would lose it.
 func (p *Page) Markdown() string {
 	var b strings.Builder
-	renderMarkdown(&b, p.doc, p.baseURL())
+	root := p.doc
+	if len(p.shadows) > 0 {
+		root = p.flattenShadow(p.doc)
+	}
+	renderMarkdown(&b, root, p.baseURL())
 	for _, f := range p.frames {
 		s := strings.TrimSpace(f.Markdown())
 		if s == "" {

@@ -82,7 +82,7 @@ if ! command -v "$CHROMIUM_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-GOBROWSER_BIN="${GOBROWSER_BIN:-$ROOT_DIR/bin/gobrowser}"
+GOBROWSER_BIN="${GOBROWSER_BIN:-$ROOT_DIR/bin/gocurlffi}"
 if [ ! -x "$GOBROWSER_BIN" ]; then
   echo "building gobrowser..." >&2
   (cd "$ROOT_DIR" && go build -o bin/gobrowser ./cmd/gobrowser) || exit 1

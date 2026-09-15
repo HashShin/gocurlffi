@@ -1,7 +1,8 @@
-// Command gobrowser is a small headless-browser CLI built on the pure-Go
-// browser package. It fetches a page with real browser TLS/HTTP fingerprints,
-// runs its JavaScript, and prints the rendered result.
-package main
+package cli
+
+// The browser subcommands: get --render / open, serve and mcp. They are built
+// on the pure-Go browser package, which fetches with real browser TLS/HTTP
+// fingerprints, runs the page's JavaScript and prints the rendered result.
 
 import (
 	"context"
@@ -18,51 +19,17 @@ import (
 	"time"
 
 	"gocurlffi/browser"
-	"gocurlffi/impersonate"
 	"gocurlffi/server"
 )
 
-// version is the commit the binary was built from, set by the Makefile with
-// -ldflags. It is printed with --debug so that a stale build is visible: an
-// older binary that misses a cascade fix produces the same symptoms as a bug.
-var version = "dev"
-
-func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
-	}
-	cmd := os.Args[1]
-	args := os.Args[2:]
-
-	switch cmd {
-	case "get", "fetch", "open":
-		runGet(args)
-	case "serve":
-		runServe(args)
-	case "mcp":
-		runMCP(args)
-	case "list", "targets":
-		for _, t := range impersonate.Targets() {
-			fmt.Println(t)
-		}
-	case "-h", "--help", "help":
-		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
-		usage()
-		os.Exit(2)
-	}
-}
-
-func usage() {
-	fmt.Fprint(os.Stderr, `gobrowser - pure-Go headless browser
+func browserUsage() {
+	fmt.Fprint(os.Stderr, `browser flags (gocurlffi get --render, or gocurlffi open):
 
 usage:
-  gobrowser get <url> [flags]
-  gobrowser serve [--host 127.0.0.1] [--port 9222]
-  gobrowser mcp [--port 9223]
-  gobrowser list
+  gocurlffi get <url> --render [flags]
+  gocurlffi open <url> [flags]
+  gocurlffi serve [--host 127.0.0.1] [--port 9222]
+  gocurlffi mcp [--port 9223]
 
 flags:
   -i, --impersonate NAME   TLS/HTTP fingerprint target (chrome, chrome131, custom, ...)
@@ -101,7 +68,7 @@ flags:
 
 // runServe starts the CDP server so Puppeteer, Playwright or chromedp can drive
 // the browser over ws://host:port.
-func runServe(args []string) {
+func RunServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	var (
 		host         = fs.String("host", "127.0.0.1", "bind host")
@@ -134,7 +101,7 @@ func runServe(args []string) {
 	}
 	b := browser.New(opts)
 	defer b.Close()
-	server.SetVersion(version)
+	server.SetVersion(Version)
 	srv := server.New(server.Config{Browser: b})
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -146,7 +113,7 @@ func runServe(args []string) {
 }
 
 // runMCP starts the MCP tool server, over stdio by default or HTTP with --port.
-func runMCP(args []string) {
+func RunMCP(args []string) {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	var (
 		host         = fs.String("host", "127.0.0.1", "bind host for the HTTP transport")
@@ -173,7 +140,7 @@ func runMCP(args []string) {
 		Debug:       *debug,
 	})
 	defer b.Close()
-	server.SetVersion(version)
+	server.SetVersion(Version)
 	s := server.NewMCP(b)
 	if *port == 0 {
 		if err := s.ServeStdio(os.Stdin, os.Stdout); err != nil {
@@ -196,8 +163,8 @@ func runMCP(args []string) {
 	}
 }
 
-func runGet(args []string) {
-	fs := flag.NewFlagSet("get", flag.ExitOnError)
+func RunBrowserGet(args []string) {
+	fs := flag.NewFlagSet("get --render", flag.ExitOnError)
 	var (
 		impersonate  = fs.String("i", "", "impersonate target")
 		impersonateL = fs.String("impersonate", "", "impersonate target")
@@ -260,7 +227,7 @@ func runGet(args []string) {
 	}
 
 	if *debug {
-		fmt.Fprintf(os.Stderr, "gobrowser %s\n", version)
+		fmt.Fprintf(os.Stderr, "gocurlffi %s\n", Version)
 	}
 	runScripts := !*noJS
 	opts := browser.Options{

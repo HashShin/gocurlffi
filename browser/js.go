@@ -35,6 +35,12 @@ type jsEnv struct {
 	protosRef *protos
 
 	observers []*jsIntersectionObserver
+	// mutations are the page's MutationObservers; resizeObservers the pending
+	// ResizeObserver callbacks. Both are drained at the microtask checkpoint.
+	mutations       []*jsMutationObserver
+	resizeObservers []func()
+	// history is the page's session history, shared with the location object.
+	history *pageHistory
 
 	// canvases holds the 2D drawing state of <canvas> elements, per environment.
 	canvases map[*html.Node]*canvasState
@@ -487,6 +493,7 @@ func (e *jsEnv) setupGlobals() {
 
 	e.setupNetwork()
 	e.setupWeb()
+	e.installShadow()
 	// Every host function installed above still wears its Go symbol as a name,
 	// which Function.prototype.toString and .name both expose.
 	e.fixHostFunctionNames()
@@ -605,11 +612,15 @@ func (e *jsEnv) serviceWorkerObject() *goja.Object {
 
 func (e *jsEnv) locationObject() *goja.Object {
 	o := e.vm.NewObject()
-	set := func(name, val string) { _ = o.Set(name, val) }
-	href := e.page.URL
-	// href is an accessor rather than a plain property because assigning it
-	// navigates: `location.href = url` is one of the commonest ways a page
-	// redirects itself, and as a data property it silently did nothing.
+	// Every component is an accessor over the page's current URL, not a copy
+	// taken at construction: history.pushState rewrites the URL in place
+	// without loading anything, and location has to follow it or an SPA's
+	// router reads a stale path.
+	get := func(part func(locationParts) string) goja.Value {
+		return e.vm.ToValue(func(goja.FunctionCall) goja.Value {
+			return e.vm.ToValue(part(parseLocation(e.page.URL)))
+		})
+	}
 	_ = o.DefineAccessorProperty("href",
 		e.vm.ToValue(func(goja.FunctionCall) goja.Value { return e.vm.ToValue(e.page.URL) }),
 		e.vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -618,18 +629,21 @@ func (e *jsEnv) locationObject() *goja.Object {
 		}),
 		goja.FLAG_TRUE, goja.FLAG_FALSE)
 	// toString/valueOf must be callable so `location + ''` and friends work.
-	_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
-	_ = o.Set("valueOf", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
-	_ = o.Set("toJSON", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
-	u := parseLocation(href)
-	set("protocol", u.scheme)
-	set("host", u.host)
-	set("hostname", u.hostname)
-	set("port", u.port)
-	set("pathname", u.pathname)
-	set("search", u.search)
-	set("hash", u.hash)
-	set("origin", u.origin)
+	_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(e.page.URL) })
+	_ = o.Set("valueOf", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(e.page.URL) })
+	_ = o.Set("toJSON", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(e.page.URL) })
+	for name, part := range map[string]func(locationParts) string{
+		"protocol": func(u locationParts) string { return u.scheme },
+		"host":     func(u locationParts) string { return u.host },
+		"hostname": func(u locationParts) string { return u.hostname },
+		"port":     func(u locationParts) string { return u.port },
+		"pathname": func(u locationParts) string { return u.pathname },
+		"search":   func(u locationParts) string { return u.search },
+		"hash":     func(u locationParts) string { return u.hash },
+		"origin":   func(u locationParts) string { return u.origin },
+	} {
+		_ = o.DefineAccessorProperty(name, get(part), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
+	}
 	// Navigation methods. History entries are not modelled, so replace and
 	// assign behave the same; both defer the load until the running script
 	// phase is over (see Page.requestNavigation).
@@ -713,15 +727,89 @@ func (e *jsEnv) screenObject() *goja.Object {
 	return o
 }
 
+// historyObject models a session history just far enough that an SPA router
+// works: pushState/replaceState rewrite the URL without a load, and
+// back/forward/go move between the entries those calls created and fire
+// popstate, which is what a router listens for.
 func (e *jsEnv) historyObject() *goja.Object {
 	o := e.vm.NewObject()
+	h := &pageHistory{entries: []historyEntry{{url: e.page.URL, state: goja.Undefined()}}}
+	e.history = h
 	_ = o.Set("length", 1)
-	_ = o.Set("pushState", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("replaceState", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("back", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("forward", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("go", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+
+	apply := func(idx int) {
+		entry := h.entries[idx]
+		e.page.URL = entry.url
+		_ = o.Set("length", len(h.entries))
+		ev := e.newEvent("popstate")
+		_ = ev.Set("state", entry.state)
+		e.dispatchWindow("popstate", ev)
+	}
+	_ = o.Set("pushState", func(call goja.FunctionCall) goja.Value {
+		url := e.page.URL
+		if raw := argString(call.Argument(2)); raw != "" {
+			url = resolveURL(e.page.URL, raw)
+		}
+		// A new entry truncates anything ahead of the cursor.
+		h.entries = append(h.entries[:h.index+1], historyEntry{url: url, state: call.Argument(0)})
+		h.index = len(h.entries) - 1
+		e.page.URL = url
+		_ = o.Set("length", len(h.entries))
+		return goja.Undefined()
+	})
+	_ = o.Set("replaceState", func(call goja.FunctionCall) goja.Value {
+		url := h.entries[h.index].url
+		if raw := argString(call.Argument(2)); raw != "" {
+			url = resolveURL(e.page.URL, raw)
+		}
+		h.entries[h.index] = historyEntry{url: url, state: call.Argument(0)}
+		e.page.URL = url
+		return goja.Undefined()
+	})
+	move := func(delta int) {
+		idx := h.index + delta
+		if idx < 0 || idx >= len(h.entries) || idx == h.index {
+			return
+		}
+		h.index = idx
+		apply(idx)
+	}
+	_ = o.Set("back", func(goja.FunctionCall) goja.Value {
+		move(-1)
+		return goja.Undefined()
+	})
+	_ = o.Set("forward", func(goja.FunctionCall) goja.Value {
+		move(1)
+		return goja.Undefined()
+	})
+	_ = o.Set("go", func(call goja.FunctionCall) goja.Value {
+		n := int(call.Argument(0).ToInteger())
+		if n == 0 {
+			return goja.Undefined()
+		}
+		move(n)
+		return goja.Undefined()
+	})
+	_ = o.DefineAccessorProperty("state",
+		e.vm.ToValue(func(goja.FunctionCall) goja.Value {
+			if h.index < len(h.entries) {
+				return h.entries[h.index].state
+			}
+			return goja.Null()
+		}), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
 	return o
+}
+
+// historyEntry is one session-history slot.
+type historyEntry struct {
+	url   string
+	state goja.Value
+}
+
+// pageHistory is the per-page session history.
+type pageHistory struct {
+	entries []historyEntry
+	index   int
 }
 
 func (e *jsEnv) storageObject() *goja.Object {
@@ -874,6 +962,7 @@ func (e *jsEnv) runTimers(maxRounds int) {
 func (e *jsEnv) invokeTimer(t *jsTimer) {
 	defer func() { _ = recover() }()
 	_, _ = t.fn(goja.Undefined(), t.args...)
+	e.flushObservers()
 	if t.repeat > 0 {
 		t.due = time.Now().Add(t.repeat)
 	} else {
@@ -1034,6 +1123,7 @@ func (e *jsEnv) newEvent(typ string) *goja.Object {
 // compile and runtime error messages. A panic inside a native binding is
 // converted into an error so a broken page script cannot crash the process.
 func (e *jsEnv) runScript(src, filename string) (err error) {
+	defer e.flushObservers()
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic in %s: %v", filename, r)

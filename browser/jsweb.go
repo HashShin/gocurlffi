@@ -43,13 +43,13 @@ func (e *jsEnv) setupWeb() {
 		return e.newEventCtor(argString(call.Argument(0)), call.Argument(1))
 	})
 	_ = rt.Set("MutationObserver", func(call goja.ConstructorCall) *goja.Object {
-		return e.newObserver(call.Argument(0))
+		return e.newMutationObserver(call.Argument(0))
 	})
 	_ = rt.Set("IntersectionObserver", func(call goja.ConstructorCall) *goja.Object {
 		return e.newIntersectionObserver(call.Argument(0))
 	})
 	_ = rt.Set("ResizeObserver", func(call goja.ConstructorCall) *goja.Object {
-		return e.newObserver(call.Argument(0))
+		return e.newResizeObserver(call.Argument(0))
 	})
 	_ = rt.Set("performance", e.performanceObject())
 	_ = rt.Set("crypto", e.cryptoObject())
@@ -59,9 +59,7 @@ func (e *jsEnv) setupWeb() {
 		}
 		return goja.Undefined()
 	})
-	_ = rt.Set("structuredClone", func(call goja.FunctionCall) goja.Value {
-		return e.structuredClone(call.Argument(0))
-	})
+	e.installStructuredClone()
 	_ = rt.Set("DOMParser", func(call goja.ConstructorCall) *goja.Object {
 		return e.newDOMParser()
 	})
@@ -75,6 +73,7 @@ func (e *jsEnv) setupWeb() {
 	_ = rt.Set("customElements", e.customElementsObject())
 	_ = rt.Set("NodeFilter", e.newNodeFilter())
 	_ = rt.Set("XPathResult", e.newXPathResultCtor())
+	e.setupBodies()
 	e.installIndexedDB(rt)
 	e.installWebSocket(rt)
 	e.installWorker(rt)
@@ -499,17 +498,21 @@ func (e *jsEnv) newEventCtor(typ string, init goja.Value) *goja.Object {
 
 // --- observers ---
 
-// jsIntersectionObserver records observed targets and reports them once as
-// intersecting after load, which is what reveals lazy-loaded content in a
-// headless context (there is no viewport to scroll).
+// jsIntersectionObserver reports each observed target once, at the next
+// microtask checkpoint after observe() is called. There is no viewport to
+// scroll, so every target is reported as intersecting -- that is what reveals
+// lazy-loaded content in a headless browser -- but the rectangles are read from
+// the real layout rather than being zeroed.
 type jsIntersectionObserver struct {
 	cb      goja.Callable
 	obj     *goja.Object
 	targets []*html.Node
+	dirty   bool
 }
 
 func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
 	o := e.vm.NewObject()
+	e.tagObject(o, "IntersectionObserver")
 	obs := &jsIntersectionObserver{obj: o}
 	if fn, ok := goja.AssertFunction(cbValue); ok {
 		obs.cb = fn
@@ -519,6 +522,9 @@ func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
 	_ = o.Set("observe", func(call goja.FunctionCall) goja.Value {
 		if n := e.nodeArg(call.Argument(0)); n != nil {
 			obs.targets = append(obs.targets, n)
+			// Requesting the initial notification is the whole point: an
+			// observer registered after load used to wait forever.
+			obs.dirty = true
 		}
 		return goja.Undefined()
 	})
@@ -534,6 +540,7 @@ func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
 	})
 	_ = o.Set("disconnect", func(goja.FunctionCall) goja.Value {
 		obs.targets = nil
+		obs.dirty = false
 		return goja.Undefined()
 	})
 	_ = o.Set("takeRecords", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
@@ -543,26 +550,32 @@ func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
 	return o
 }
 
-// flushIntersection reports observed elements as intersecting, then clears
-// them so a repeated flush does not re-fire.
+// flushIntersection delivers the initial observation of every new target. The
+// targets are kept, so a later observe() re-fires but an already-reported
+// target does not.
 func (e *jsEnv) flushIntersection() {
 	for _, obs := range e.observers {
-		if obs.cb == nil || len(obs.targets) == 0 {
+		if obs.cb == nil || !obs.dirty || len(obs.targets) == 0 {
 			continue
 		}
-		targets := obs.targets
-		obs.targets = nil
+		obs.dirty = false
 		entries := e.vm.NewArray()
-		for i, t := range targets {
+		for i, t := range obs.targets {
+			rect := e.page.ElementRect(t)
 			entry := e.vm.NewObject()
+			e.tagObject(entry, "IntersectionObserverEntry")
 			_ = entry.Set("target", e.wrap(t))
 			_ = entry.Set("isIntersecting", true)
-			_ = entry.Set("intersectionRatio", 1)
+			ratio := 0.0
+			if rect.Width > 0 && rect.Height > 0 {
+				ratio = 1
+			}
+			_ = entry.Set("intersectionRatio", ratio)
 			_ = entry.Set("time", 0)
-			rect := e.zeroRect()
-			_ = entry.Set("boundingClientRect", rect)
-			_ = entry.Set("intersectionRect", rect)
-			_ = entry.Set("rootBounds", rect)
+			client := e.domRect(rect)
+			_ = entry.Set("boundingClientRect", client)
+			_ = entry.Set("intersectionRect", client)
+			_ = entry.Set("rootBounds", e.domRect(Rect{Width: e.page.viewportWidth(), Height: defaultLayoutHeight}))
 			_ = entries.Set(strconv.Itoa(i), entry)
 		}
 		func() {
@@ -572,25 +585,15 @@ func (e *jsEnv) flushIntersection() {
 	}
 }
 
-// zeroRect is a placeholder ClientRect, since there is no layout engine.
-func (e *jsEnv) zeroRect() *goja.Object {
-	r := e.vm.NewObject()
-	for _, k := range []string{"x", "y", "top", "left", "right", "bottom", "width", "height"} {
-		_ = r.Set(k, 0)
+// flushObservers is the microtask checkpoint: it delivers mutation batches,
+// newly observed intersections and resize notifications.
+func (e *jsEnv) flushObservers() {
+	if len(e.mutations) == 0 && len(e.observers) == 0 && len(e.resizeObservers) == 0 {
+		return
 	}
-	return r
-}
-
-func (e *jsEnv) newObserver(cb goja.Value) *goja.Object {
-	o := e.vm.NewObject()
-	_ = o.Set("observe", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("unobserve", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("disconnect", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("takeRecords", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
-	if cb != nil {
-		_ = o.Set("callback", cb)
-	}
-	return o
+	e.flushMutations()
+	e.flushIntersection()
+	e.flushResize()
 }
 
 // --- performance / crypto ---
@@ -678,23 +681,61 @@ func (e *jsEnv) cryptoObject() *goja.Object {
 	return o
 }
 
-func (e *jsEnv) structuredClone(v goja.Value) goja.Value {
-	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
-		return v
+// structuredClone performs a real structured clone. It used to be a JSON
+// round-trip, which silently dropped anything JSON cannot express: a Map came
+// back as a plain object with no .get, and a Date became a string. Cycles are
+// handled here too, since JSON.stringify throws on them.
+//
+// The clone is written in JavaScript rather than Go because the values that
+// matter -- Map, Set, Date, RegExp, typed arrays -- are the engine's own types,
+// and the spec's algorithm is expressed far more directly in terms of them.
+const structuredCloneSource = `(function(){
+  function clone(v, seen){
+    if (v === null || typeof v !== 'object') return v;
+    if (seen.has(v)) return seen.get(v);
+    var tag = Object.prototype.toString.call(v);
+    if (tag === '[object Date]') return new Date(v.getTime());
+    if (tag === '[object RegExp]') return new RegExp(v.source, v.flags);
+    if (tag === '[object ArrayBuffer]') return v.slice(0);
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v)) {
+      return new v.constructor(v);
+    }
+    if (tag === '[object Map]') {
+      var m = new Map(); seen.set(v, m);
+      v.forEach(function(val, key){ m.set(clone(key, seen), clone(val, seen)) });
+      return m;
+    }
+    if (tag === '[object Set]') {
+      var st = new Set(); seen.set(v, st);
+      v.forEach(function(val){ st.add(clone(val, seen)) });
+      return st;
+    }
+    if (tag === '[object Error]' || v instanceof Error) {
+      var err = new Error(v.message);
+      seen.set(v, err);
+      if (v.name) err.name = v.name;
+      if (v.stack) err.stack = v.stack;
+      return err;
+    }
+    if (tag === '[object Array]') {
+      var arr = []; seen.set(v, arr);
+      for (var i = 0; i < v.length; i++) arr[i] = clone(v[i], seen);
+      return arr;
+    }
+    var out = {}; seen.set(v, out);
+    Object.keys(v).forEach(function(k){ out[k] = clone(v[k], seen) });
+    return out;
+  }
+  globalThis.structuredClone = function structuredClone(value){
+    return clone(value, new Map());
+  };
+})()`
+
+// installStructuredClone defines structuredClone on the runtime.
+func (e *jsEnv) installStructuredClone() {
+	if _, err := e.vm.RunString(structuredCloneSource); err != nil {
+		e.page.debugf("structuredClone install failed: %v", err)
 	}
-	out, err := e.vm.RunString("(function(x){return JSON.parse(JSON.stringify(x));})")
-	if err != nil {
-		return v
-	}
-	fn, ok := goja.AssertFunction(out)
-	if !ok {
-		return v
-	}
-	res, err := fn(goja.Undefined(), v)
-	if err != nil {
-		return v
-	}
-	return res
 }
 
 // --- TreeWalker / NodeFilter ---

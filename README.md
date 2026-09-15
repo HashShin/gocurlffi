@@ -116,17 +116,20 @@ Verified: against that endpoint `-i custom` returns the same backend response
   and the request helpers.
 - `browser` - a pure-Go headless browser that runs page JavaScript, so sites
   that render client-side can be scraped too. See `browser/README.md`.
-- `cmd/gocurlffi` - the command line tool.
-- `cmd/gobrowser` - the headless browser CLI. `--sheets` lists the stylesheets
-  the page itself declares, whether each was applied, and its rule count.
+- `internal/cli` - the command line: one binary with both paths.
+- `cmd/gocurlffi` - the only executable. `get` is the fast HTTP client;
+  `get --render` (or `open`) is the headless browser, and `serve`/`mcp` share
+  the same file. `--sheets` lists the stylesheets the page itself declares,
+  whether each was applied, and its rule count.
 
 ## Repository layout
 
 ```
-cmd/gocurlffi/          CLI
-cmd/gobrowser/          headless browser CLI
+cmd/gocurlffi/          the only executable (thin wrapper over internal/cli)
+internal/cli/           both command paths: fetch (fast) and browser (JS)
 browser/                pure-Go headless browser (DOM, JS, fetch, extraction)
-  browser/              reference Lightpanda (Zig) checkout, gitignored
+  browser/              reference Lightpanda (Zig) checkout, gitignored;
+                        scripts/fetch-lightpanda.sh writes its go.mod stub
 requests/               requests-like API, transport, tests
   testdata/             recorded fingerprint baseline (curl_cffi reference)
 impersonate/            browser presets, aliases, TLS profile mapping
@@ -189,6 +192,14 @@ Options include: `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 
 After `make build` the binary is at `bin/gocurlffi` (run it directly, not with
 `go run`). To run straight from source use the package path `./cmd/gocurlffi`.
+
+There is one binary, not two. `gocurlffi get URL` uses the fast HTTP transport
+with browser TLS/JA3 impersonation and never constructs a JavaScript engine;
+`gocurlffi get URL --render` (or `gocurlffi open URL`) loads the same URL in the
+pure-Go browser and runs its scripts. The cost of merging them is size, not
+speed: the binary is about 37 MB because linking `browser` pulls in goja and the
+layout engine whether or not `--render` is used. The fast path makes no extra
+request and allocates nothing new.
 The scheme is optional and defaults to https.
 
 ```sh
@@ -220,7 +231,7 @@ Defaults to these sites: `marriott.com`, `ritzcarlton.com`, `foodnetwork.com`,
 `gocomics.com`, `bsky.app`, `mstdn.social`, `ubiqueros.com`.
 
 Pass `-B` to run the same matrix with the headless browser
-(`cmd/gobrowser`) instead of the plain HTTP client; cells then show
+(`--render`) instead of the plain HTTP client; cells then show
 `status/rendered-size`, which makes it obvious which sites need JavaScript.
 
 Observed results (marriott is the discriminating site):
@@ -268,7 +279,8 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   ported.
 - `requests` alone has no JavaScript engine. For client-rendered pages use the
   `browser` package, which runs scripts in pure Go (`goja`) over the same
-  impersonating transport, e.g. `gobrowser get https://quotes.toscrape.com/js/`.
+  impersonating transport, e.g.
+  `gocurlffi get https://quotes.toscrape.com/js/ --render`.
   Some gates are still server-side and not fingerprint- or JS-based. The
   clearest example is Google: `https://www.google.com/search?q=...` returns a
   "Turn on JavaScript to keep searching" page (~92 KB) to *every* client without

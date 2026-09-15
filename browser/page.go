@@ -83,6 +83,11 @@ type Page struct {
 	// deadline bounds the script-loading phase (see Options.LoadTimeout).
 	deadline time.Time
 
+	// shadows maps each shadow host to the tree attached to it (attachShadow,
+	// or a declarative <template shadowrootmode>). See shadow.go.
+	shadows          map[*html.Node]*shadowRoot
+	shadowsByContent map[*html.Node]*shadowRoot
+
 	// templateContent maps each <template> to the fragment holding its
 	// content, which is kept out of the document tree.
 	templateContent map[*html.Node]*html.Node
@@ -279,11 +284,19 @@ func (p *Page) load(rawURL string, headers map[string]string) error {
 	if perr != nil {
 		return perr
 	}
+	p.adoptDocument(doc)
+	return p.run()
+}
+
+// adoptDocument installs a freshly parsed document. Declarative shadow DOM is a
+// parsing feature rather than a script feature, so its roots are attached here
+// and a server-rendered component stays visible even with JavaScript disabled.
+// Both the network and the string loaders go through this, so they cannot drift.
+func (p *Page) adoptDocument(doc *html.Node) {
 	p.doc = doc
 	p.templateContent = extractTemplateContents(doc)
-	// A new document means the old stylesheets and rules are meaningless.
+	p.attachDeclarativeShadowRoots()
 	p.markStyleDirty()
-	return p.run()
 }
 
 // SetContent loads HTML from a string, running scripts unless disabled.
@@ -293,10 +306,7 @@ func (p *Page) SetContent(source, url string) error {
 	if err != nil {
 		return err
 	}
-	p.doc = doc
-	p.templateContent = extractTemplateContents(doc)
-	// A new document means the old stylesheets and rules are meaningless.
-	p.markStyleDirty()
+	p.adoptDocument(doc)
 	if err := p.run(); err != nil {
 		return err
 	}
@@ -380,7 +390,7 @@ func (p *Page) run() error {
 	p.readyState = "complete"
 	p.env.fireLoad()
 	p.debugf("flushing intersection observers")
-	p.env.flushIntersection()
+	p.env.flushObservers()
 	p.debugf("running timers (load)")
 	p.env.runTimers(1000)
 	p.debugf("page load complete")
@@ -745,13 +755,18 @@ func (p *Page) HTML() string {
 	if p.doc == nil {
 		return ""
 	}
-	return p.serialize(p.doc)
+	if len(p.shadows) == 0 {
+		return p.serialize(p.doc)
+	}
+	// With shadow trees present, serialize the rendered tree so the content a
+	// component produced is not replaced by its <slot> template.
+	return outerHTML(p.flattenShadow(p.doc))
 }
 
 // Text returns the visible text of the rendered DOM, skipping script and style
 // content, with child frame text appended so framed content is not lost.
 func (p *Page) Text() string {
-	out := visibleText(p.doc)
+	out := p.renderedText(p.doc)
 	for _, f := range p.frames {
 		t := strings.TrimSpace(f.Text())
 		if t == "" {
@@ -766,7 +781,16 @@ func (p *Page) Text() string {
 }
 
 // Query returns the first element matching a CSS selector.
-func (p *Page) Query(sel string) *html.Node { return querySelector(p.doc, sel) }
+// Query returns the first element matching a CSS selector. It reaches into
+// shadow roots, which the DOM's own document.querySelector does not: for a
+// scraper, content hidden behind a web component is content that must be
+// reachable.
+func (p *Page) Query(sel string) *html.Node {
+	if len(p.shadows) == 0 {
+		return querySelector(p.doc, sel)
+	}
+	return p.queryRendered(sel)
+}
 
 // UserAgent returns the User-Agent this page reports and sends.
 func (p *Page) UserAgent() string { return p.userAgent }
@@ -907,17 +931,36 @@ func (p *Page) QuerySelectorAllFrom(n *html.Node, sel string) []*html.Node {
 	return querySelectorAll(n, sel)
 }
 
-// QueryAll returns all elements matching a CSS selector.
-func (p *Page) QueryAll(sel string) []*html.Node { return querySelectorAll(p.doc, sel) }
+// QueryAll returns all elements matching a CSS selector, shadow roots included.
+func (p *Page) QueryAll(sel string) []*html.Node {
+	if len(p.shadows) == 0 {
+		return querySelectorAll(p.doc, sel)
+	}
+	return p.queryRenderedAll(sel)
+}
 
-// GetElementByID returns the element with the given id.
-func (p *Page) GetElementByID(idv string) *html.Node { return getElementById(p.doc, idv) }
+// GetElementByID returns the element with the given id, looking inside shadow
+// roots as well.
+func (p *Page) GetElementByID(idv string) *html.Node {
+	if n := getElementById(p.doc, idv); n != nil {
+		return n
+	}
+	for _, sr := range p.ShadowRoots() {
+		if n := getElementById(sr.content, idv); n != nil {
+			return n
+		}
+	}
+	return nil
+}
 
 // Eval runs additional JavaScript in the page context.
 func (p *Page) Eval(script string) (goja.Value, error) {
 	if p.env == nil {
 		return nil, nil
 	}
+	// An eval is a task boundary, so observers get their checkpoint here too:
+	// otherwise a mutation made from Eval would never be delivered.
+	defer p.env.flushObservers()
 	return p.env.vm.RunString(script)
 }
 

@@ -1,24 +1,26 @@
 # gocurlffi - Go port of curl_cffi
 
 BIN := bin/gocurlffi
-BIN_BROWSER := bin/gobrowser
 
-.PHONY: all build gobrowser preprocess gen fmt vet test test-browser test-live sites capture lint clean
+.PHONY: all build ref preprocess gen fmt vet test test-browser test-live sites capture lint clean
 
 all: build
 
-build:
-	go build -trimpath -o $(BIN) ./cmd/gocurlffi
-
-# Pure-Go headless browser CLI (see browser/README.md). The commit is embedded
-# so that --debug says which build produced a render: a stale binary that
-# predates a cascade fix looks exactly like a cascade bug.
+# The commit is embedded so that --debug says which build produced a render: a
+# stale binary that predates a cascade fix looks exactly like a cascade bug.
 VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X main.version=$(VERSION)
 
-# Pure-Go headless browser CLI (see browser/README.md).
-gobrowser:
-	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_BROWSER) ./cmd/gobrowser
+# One binary for both paths: "gocurlffi get" is the fast HTTP client with
+# TLS/JA3 impersonation, "gocurlffi get --render" (or "open") is the pure-Go
+# headless browser, and serve/mcp/list share the same file. See browser/README.md.
+build:
+	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gocurlffi
+
+# Fetch the Zig Lightpanda checkout kept as the parity reference, and mark it as
+# its own Go module so `go test ./...` does not compile it.
+ref:
+	bash scripts/fetch-lightpanda.sh
 
 # Regenerate impersonate/presets_gen.go from the vendored curl-impersonate
 # source. Pure Go, no Python.
@@ -35,9 +37,9 @@ vet:
 test:
 	go test ./...
 
-# Unit tests for the pure-Go browser (no network).
+# Unit tests for the pure-Go browser and the CLI (no network).
 test-browser:
-	go test ./browser/ -count=1
+	go test ./browser/ ./internal/cli/ -count=1
 
 # Live fingerprint check against the recorded curl_cffi baseline (network).
 test-live:

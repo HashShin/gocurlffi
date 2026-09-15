@@ -143,7 +143,10 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 	e.accessor(p, "textContent", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue(textContent(e.thisNode(call)))
 	}, func(call goja.FunctionCall) goja.Value {
-		setTextContent(e.thisNode(call), argString(call.Argument(0)))
+		n := e.thisNode(call)
+		old := childNodes(n)
+		setTextContent(n, argString(call.Argument(0)))
+		e.noteChildList(n, childNodes(n), old)
 		return goja.Undefined()
 	})
 	e.accessor(p, "isConnected", func(call goja.FunctionCall) goja.Value {
@@ -157,6 +160,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 			panic(e.vm.NewTypeError("appendChild: invalid node"))
 		}
 		appendChild(parent, child)
+		e.noteChildList(parent, []*html.Node{child}, nil)
 		return e.wrap(child)
 	})
 	e.method(p, "removeChild", func(call goja.FunctionCall) goja.Value {
@@ -164,7 +168,9 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		if child == nil {
 			panic(e.vm.NewTypeError("removeChild: invalid node"))
 		}
+		parent := child.Parent
 		removeChild(child)
+		e.noteChildList(parent, nil, []*html.Node{child})
 		return e.wrap(child)
 	})
 	e.method(p, "insertBefore", func(call goja.FunctionCall) goja.Value {
@@ -175,6 +181,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 			panic(e.vm.NewTypeError("insertBefore: invalid node"))
 		}
 		insertBefore(parent, child, ref)
+		e.noteChildList(parent, []*html.Node{child}, nil)
 		return e.wrap(child)
 	})
 	e.method(p, "replaceChild", func(call goja.FunctionCall) goja.Value {
@@ -185,6 +192,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 			panic(e.vm.NewTypeError("replaceChild: invalid node"))
 		}
 		replaceChild(parent, newN, oldN)
+		e.noteChildList(parent, []*html.Node{newN}, []*html.Node{oldN})
 		return e.wrap(oldN)
 	})
 	e.method(p, "hasChildNodes", func(call goja.FunctionCall) goja.Value {
@@ -293,7 +301,9 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 		if isTemplate(n) {
 			n = e.page.templateContentNode(n)
 		}
+		old := childNodes(n)
 		setInnerHTML(n, argString(call.Argument(0)))
+		e.noteChildList(n, childNodes(n), old)
 		return goja.Undefined()
 	})
 	e.accessor(p, "content", func(call goja.FunctionCall) goja.Value {
@@ -325,7 +335,10 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.accessor(p, "innerText", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue(textContent(e.thisNode(call)))
 	}, func(call goja.FunctionCall) goja.Value {
-		setTextContent(e.thisNode(call), argString(call.Argument(0)))
+		n := e.thisNode(call)
+		old := childNodes(n)
+		setTextContent(n, argString(call.Argument(0)))
+		e.noteChildList(n, childNodes(n), old)
 		return goja.Undefined()
 	})
 	e.accessor(p, "style", func(call goja.FunctionCall) goja.Value {
@@ -403,13 +416,13 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	})
 	e.method(p, "setAttribute", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
-			setAttr(n, strings.ToLower(argString(call.Argument(0))), argString(call.Argument(1)))
+			e.setAttrNoted(n, strings.ToLower(argString(call.Argument(0))), argString(call.Argument(1)))
 		}
 		return goja.Undefined()
 	})
 	e.method(p, "removeAttribute", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
-			removeAttr(n, strings.ToLower(argString(call.Argument(0))))
+			e.removeAttrNoted(n, strings.ToLower(argString(call.Argument(0))))
 		}
 		return goja.Undefined()
 	})
@@ -420,10 +433,10 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 		n := e.thisNode(call)
 		key := strings.ToLower(argString(call.Argument(0)))
 		if hasAttr(n, key) {
-			removeAttr(n, key)
+			e.removeAttrNoted(n, key)
 			return e.vm.ToValue(false)
 		}
-		setAttr(n, key, "")
+		e.setAttrNoted(n, key, "")
 		return e.vm.ToValue(true)
 	})
 	e.method(p, "getAttributeNames", func(call goja.FunctionCall) goja.Value {
@@ -438,7 +451,9 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	})
 	e.method(p, "remove", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
+			parent := n.Parent
 			removeChild(n)
+			e.noteChildList(parent, nil, []*html.Node{n})
 		}
 		return goja.Undefined()
 	})
@@ -458,20 +473,24 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 			for _, c := range nodes {
 				insertBefore(n.Parent, c, n)
 			}
+			e.noteChildList(n.Parent, nodes, nil)
 		case "afterbegin":
 			ref := n.FirstChild
 			for _, c := range nodes {
 				insertBefore(n, c, ref)
 			}
+			e.noteChildList(n, nodes, nil)
 		case "beforeend":
 			for _, c := range nodes {
 				appendChild(n, c)
 			}
+			e.noteChildList(n, nodes, nil)
 		case "afterend":
 			ref := n.NextSibling
 			for _, c := range nodes {
 				insertBefore(n.Parent, c, ref)
 			}
+			e.noteChildList(n.Parent, nodes, nil)
 		}
 		return goja.Undefined()
 	})
@@ -606,13 +625,13 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	})
 	e.method(p, "setAttributeNS", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
-			setAttr(n, strings.ToLower(argString(call.Argument(1))), argString(call.Argument(2)))
+			e.setAttrNoted(n, strings.ToLower(argString(call.Argument(1))), argString(call.Argument(2)))
 		}
 		return goja.Undefined()
 	})
 	e.method(p, "removeAttributeNS", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
-			removeAttr(n, strings.ToLower(argString(call.Argument(1))))
+			e.removeAttrNoted(n, strings.ToLower(argString(call.Argument(1))))
 		}
 		return goja.Undefined()
 	})
