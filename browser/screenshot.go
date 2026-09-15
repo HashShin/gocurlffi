@@ -169,6 +169,16 @@ func (p *Page) RenderOutline(opts ScreenshotOptions, limit int) ([]string, error
 		out = append(out, fmt.Sprintf("y=%-6.0f h=%-5.0f %-6s x=%-5.0f %s%s",
 			ln.y, ln.height, kind, ln.indent, truncateOutline(detail), bg))
 	}
+	// The boxes the layout drew, after the text: an element's own rectangle is
+	// what a page script would measure with getBoundingClientRect, and without
+	// it the only way to see where a container ended was to read its text.
+	for _, bx := range doc.boxes {
+		if len(out) > limit {
+			break
+		}
+		out = append(out, fmt.Sprintf("box x=%-6.0f y=%-6.0f w=%-6.0f h=%-6.0f id=%d",
+			bx.x, bx.y, bx.w, bx.h, bx.ref))
+	}
 	return out, nil
 }
 
