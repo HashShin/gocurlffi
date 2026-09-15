@@ -17,6 +17,7 @@ package browser
 
 import (
 	"net/url"
+	"sync"
 	"time"
 
 	"gocurlffi/requests"
@@ -72,6 +73,12 @@ type Options struct {
 	// and authenticated http:// proxies work.
 	Proxy string
 
+	// ObeyRobots makes the browser honour robots.txt: before any request it
+	// fetches and caches the origin's robots.txt and skips a disallowed URL,
+	// yielding a synthetic 403 that does not stop the load. Off by default,
+	// so the fast path pays nothing.
+	ObeyRobots bool
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }
@@ -83,6 +90,11 @@ func (o Options) scriptsEnabled() bool { return o.RunScripts == nil || *o.RunScr
 type Browser struct {
 	opts Options
 	sess *requests.Session
+
+	// robots caches one parsed robots.txt per origin, only consulted when
+	// Options.ObeyRobots is set.
+	robotsMu sync.Mutex
+	robots   map[string]*robotsRules
 }
 
 // New creates a Browser with the given options.
@@ -103,7 +115,11 @@ func New(opts Options) *Browser {
 	if opts.Proxy != "" {
 		sopts = append(sopts, requests.WithProxy(opts.Proxy))
 	}
-	return &Browser{opts: opts, sess: requests.NewSession(sopts...)}
+	return &Browser{
+		opts:   opts,
+		sess:   requests.NewSession(sopts...),
+		robots: map[string]*robotsRules{},
+	}
 }
 
 // Close releases the underlying HTTP session.
@@ -114,6 +130,14 @@ func (b *Browser) Options() Options { return b.opts }
 
 // request performs a GET through the impersonating transport.
 func (b *Browser) get(rawURL string, headers map[string]string) (*requests.Response, error) {
+	if b.opts.ObeyRobots && !b.robotsAllowed(rawURL) {
+		resp := requests.NewResponse()
+		resp.URL = rawURL
+		resp.StatusCode = 403
+		resp.Reason = "Forbidden by robots.txt"
+		resp.Ok = false
+		return resp, nil
+	}
 	opts := []requests.Option{}
 	hs := map[string]string{}
 	for k, v := range b.opts.Headers {
