@@ -329,6 +329,13 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("history", e.historyObject())
 	_ = rt.Set("localStorage", e.storageObject())
 	_ = rt.Set("sessionStorage", e.storageObject())
+	// window.chrome exists on Chrome and not on Safari, so install it only for
+	// a Chrome-like UA: a missing one there is an automation tell, and a
+	// present one elsewhere is a different tell. Intl is universal.
+	if uaVendor(e.page.userAgent) == "Google Inc." {
+		_ = rt.Set("chrome", e.chromeObject())
+	}
+	_ = rt.Set("Intl", e.intlObject())
 	e.setupConstructors()
 
 	_ = rt.Set("isSecureContext", true)
@@ -465,22 +472,36 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 	_ = o.Set("appName", "Netscape")
 	_ = o.Set("appVersion", ua)
 	_ = o.Set("platform", e.page.platform)
-	_ = o.Set("vendor", "")
+	_ = o.Set("vendor", uaVendor(ua))
 	_ = o.Set("language", "en-US")
 	_ = o.Set("languages", e.vm.ToValue([]string{"en-US", "en"}))
 	_ = o.Set("cookieEnabled", true)
 	_ = o.Set("onLine", true)
 	_ = o.Set("hardwareConcurrency", 4)
-	_ = o.Set("maxTouchPoints", 0)
+	_ = o.Set("deviceMemory", 8)
+	// An Android UA that reports no touch points contradicts itself.
+	mobile := strings.Contains(ua, "Mobile") || strings.Contains(ua, "Android")
+	if mobile {
+		_ = o.Set("maxTouchPoints", 5)
+	} else {
+		_ = o.Set("maxTouchPoints", 0)
+	}
 	_ = o.Set("webdriver", false)
-	uad := e.vm.NewObject()
-	_ = uad.Set("mobile", strings.Contains(ua, "Mobile"))
-	_ = uad.Set("platform", e.page.platform)
-	_ = uad.Set("brands", e.vm.NewArray())
-	_ = uad.Set("getHighEntropyValues", func(goja.FunctionCall) goja.Value {
-		return e.resolvedPromise(e.vm.NewObject())
-	})
-	_ = o.Set("userAgentData", uad)
+	_ = o.Set("plugins", e.pluginArray())
+	_ = o.Set("mimeTypes", e.mimeTypeArray())
+	// userAgentData is Chromium-only, so carrying it under a Firefox or Safari
+	// UA is as much a mismatch as a Chrome UA without it.
+	if uaVendor(ua) == "Google Inc." {
+		uad := e.vm.NewObject()
+		_ = uad.Set("mobile", mobile)
+		_ = uad.Set("platform", uaDataPlatform(ua))
+		brands, full := uaBrands(ua)
+		_ = uad.Set("brands", brands)
+		_ = uad.Set("getHighEntropyValues", func(call goja.FunctionCall) goja.Value {
+			return e.resolvedPromise(e.highEntropyValues(call.Argument(0), ua, brands, full, mobile))
+		})
+		_ = o.Set("userAgentData", uad)
+	}
 	_ = o.Set("serviceWorker", e.serviceWorkerObject())
 	// sendBeacon is a fire-and-forget POST. The bytes are really sent - a page
 	// that beacons a capability proof only passes its gate if the request

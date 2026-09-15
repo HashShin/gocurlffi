@@ -570,7 +570,45 @@ func (e *jsEnv) performanceObject() *goja.Object {
 	_ = o.Set("clearMarks", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	_ = o.Set("getEntries", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
 	_ = o.Set("getEntriesByName", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
-	_ = o.Set("getEntriesByType", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
+	_ = o.Set("getEntriesByType", func(call goja.FunctionCall) goja.Value {
+		if argString(call.Argument(0)) == "navigation" {
+			return e.vm.NewArray(e.navigationTimingEntry(start))
+		}
+		return e.vm.NewArray()
+	})
+	// Navigation Timing. Google's interstitial reads
+	// performance.timing.navigationStart and .responseStart, and fingerprinting
+	// scripts treat a missing performance.timing as "not a browser".
+	_ = o.Set("timing", e.navigationTimingEntry(start))
+	legacyNav := e.vm.NewObject()
+	_ = legacyNav.Set("type", 0)
+	_ = legacyNav.Set("redirectCount", 0)
+	_ = o.Set("navigation", legacyNav)
+	return o
+}
+
+// navigationTimingEntry is the Navigation Timing record for the current
+// document. Every event is stamped at load time, because by the time a script
+// can read it the document has finished loading.
+func (e *jsEnv) navigationTimingEntry(start time.Time) *goja.Object {
+	ms := float64(start.UnixMilli())
+	o := e.vm.NewObject()
+	for _, f := range []string{
+		"navigationStart", "unloadEventStart", "unloadEventEnd", "redirectStart",
+		"redirectEnd", "fetchStart", "domainLookupStart", "domainLookupEnd",
+		"connectStart", "connectEnd", "secureConnectionStart", "requestStart",
+		"responseStart", "responseEnd", "domLoading", "domInteractive",
+		"domContentLoadedEventStart", "domContentLoadedEventEnd", "domComplete",
+		"loadEventStart", "loadEventEnd",
+	} {
+		_ = o.Set(f, ms)
+	}
+	_ = o.Set("entryType", "navigation")
+	_ = o.Set("name", e.page.URL)
+	_ = o.Set("startTime", 0)
+	_ = o.Set("duration", float64(time.Since(start).Nanoseconds())/1e6)
+	_ = o.Set("type", "navigate")
+	_ = o.Set("redirectCount", 0)
 	return o
 }
 
