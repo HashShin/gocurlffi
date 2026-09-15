@@ -40,6 +40,8 @@ type jsEnv struct {
 	canvases map[*html.Node]*canvasState
 	// idb holds the in-memory IndexedDB databases, per environment.
 	idb map[string]*idbDatabase
+	// webSockets are the sockets a page opened.
+	webSockets []*pageWebSocket
 }
 
 type jsListener struct {
@@ -558,10 +560,17 @@ func (e *jsEnv) clearTimer(id string) {
 // page that schedules a long setTimeout does not stall the load.
 const defaultTimerBudget = 2 * time.Second
 
+// socketWait bounds how long the loader waits for a WebSocket message when the
+// timer queue is otherwise empty, so an idle open socket does not stall a load.
+const socketWait = 1 * time.Second
+
 // runTimers executes pending timers, waiting for ones that are due within the
 // budget, up to maxRounds callbacks.
 func (e *jsEnv) runTimers(maxRounds int) {
 	deadline := time.Now().Add(e.page.timerWait())
+	// A socket that is open but idle is only waited on briefly, so a page that
+	// holds a socket open does not spend the whole timer budget waiting.
+	var socketDeadline time.Time
 	for round := 0; round < maxRounds; round++ {
 		var due *jsTimer
 		for _, t := range e.timers {
@@ -573,6 +582,21 @@ func (e *jsEnv) runTimers(maxRounds int) {
 			}
 		}
 		if due == nil {
+			// With a socket open there may be a message, or a reply to one
+			// just sent, so keep draining until the budget is spent.
+			if e.drainWebSockets() {
+				socketDeadline = time.Time{}
+				continue
+			}
+			if e.hasOpenWebSocket() && time.Now().Before(deadline) {
+				if socketDeadline.IsZero() {
+					socketDeadline = time.Now().Add(socketWait)
+				}
+				if time.Now().Before(socketDeadline) {
+					time.Sleep(5 * time.Millisecond)
+					continue
+				}
+			}
 			return
 		}
 		if wait := time.Until(due.due); wait > 0 {
@@ -582,6 +606,7 @@ func (e *jsEnv) runTimers(maxRounds int) {
 			time.Sleep(wait)
 		}
 		e.invokeTimer(due)
+		e.drainWebSockets()
 	}
 }
 
