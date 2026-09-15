@@ -302,15 +302,22 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   - forcing the other handoff branch (Google's code is
     `ss_cgi || document.cookie.indexOf("SG_SS=") < 0 ? T(a) : U(S())`, where `T`
     puts the token in the query and `U` leaves it in the cookie) sends
-    `sg_ss=<token>&sei=<id>` in the URL instead, and is answered the same way.
+    `sg_ss=<token>&sei=<id>` in the URL instead, and is answered the same way;
+  - a *bogus* `SG_SS` cookie, and a bogus `sei` parameter, are both ignored -
+    each still returns the ordinary interstitial. So the CAPTCHA is not a
+    response to "a token was presented". A token the server cannot parse is
+    dropped; the token this browser mints is parsed and then escalated, which
+    means it is structurally sound and it is the environment verdict it carries
+    that fails.
 
-  So it is the token, it is rejected over both transports, and the request is well
+  So it is the token, it is refused over both transports, and the request is well
   formed: the VM reports success and raises no error, and the jar hands the cookie
-  back byte for byte. What Google's server disagrees with is inside an encrypted
-  ~800 byte blob this repository has no reference for. Query flags (`gbv=1`,
-  `udm=14`), every impersonation target, a warmed cookie jar, and corrected
-  binary/base64, text-encoding and cookie layers all make no difference. Use one
-  of the alternatives above when the HTML is all that is wanted.
+  back byte for byte. What Google's server disagrees with is the environment that
+  verdict describes, inside an encrypted ~800 byte blob this repository has no
+  reference for. Query flags (`gbv=1`, `udm=14`), every impersonation target, a
+  warmed cookie jar, and corrected binary/base64, text-encoding and cookie layers
+  all make no difference. Use one of the alternatives above when the HTML is all
+  that is wanted.
 - `browser` has no CSS box model (no borders, shadows, floats, positioning,
   gradients or images), no WebSockets and no PDF output. It cascades the page's
   CSS - selectors, specificity, `!important`, inheritance, `@import`, `@media`,
