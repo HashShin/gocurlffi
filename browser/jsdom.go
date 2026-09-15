@@ -240,6 +240,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 // --- Element prototype ---
 
 func (e *jsEnv) defineElementProto(p *goja.Object) {
+	e.installCanvas(p)
 	e.accessor(p, "id", func(call goja.FunctionCall) goja.Value {
 		return e.vm.ToValue(id(e.thisNode(call)))
 	}, func(call goja.FunctionCall) goja.Value {

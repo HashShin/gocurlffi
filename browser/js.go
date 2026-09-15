@@ -35,6 +35,9 @@ type jsEnv struct {
 	protosRef *protos
 
 	observers []*jsIntersectionObserver
+
+	// canvases holds the 2D drawing state of <canvas> elements, per environment.
+	canvases map[*html.Node]*canvasState
 }
 
 type jsListener struct {
