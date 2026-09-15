@@ -868,9 +868,6 @@ func (c *collector) walkElement(el *html.Node) {
 			c.ownHeightPx, c.hasOwnHeight = cs.heightPx, true
 		case cs.heightPct > 0 && c.hasContH:
 			c.ownHeightPx, c.hasOwnHeight = cs.heightPct*c.contH, true
-			if debugPct && c.ownHeightPx > 40 {
-				fmt.Printf("PCTRES tag=%s class=%.30s pct=%.2f parent=%.0f resolved=%.0f\n", tag, attrOf(el, "class"), cs.heightPct, c.contH, c.ownHeightPx)
-			}
 		}
 	}
 	if block {
