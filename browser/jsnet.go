@@ -78,14 +78,7 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 
 // doRequest issues a request through the impersonating session.
 func (e *jsEnv) doRequest(method, rawURL string, headers map[string]string, body []byte) (*requests.Response, error) {
-	opts := []requests.Option{}
-	if len(headers) > 0 {
-		opts = append(opts, requests.WithHeaders(headers))
-	}
-	if len(body) > 0 {
-		opts = append(opts, requests.WithContent(body))
-	}
-	return e.page.browser.session().Request(method, rawURL, opts...)
+	return e.page.browser.request(method, rawURL, headers, body, "fetch")
 }
 
 func (e *jsEnv) fetchResponse(resp *requests.Response) *goja.Object {

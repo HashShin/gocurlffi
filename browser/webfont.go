@@ -99,7 +99,7 @@ func (p *Page) loadFontFile(url string) *webFont {
 	if p.fontFailed[url] {
 		return nil
 	}
-	resp, err := p.browser.get(url, nil)
+	resp, err := p.browser.fetch(url, nil, "font")
 	if err != nil {
 		p.failFont(url, "fetch: "+err.Error())
 		return nil

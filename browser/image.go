@@ -191,7 +191,7 @@ func (p *Page) fetchImage(src string) *pageImage {
 	if p.browser == nil || !strings.HasPrefix(src, "http") {
 		return nil
 	}
-	resp, err := p.browser.get(src, nil)
+	resp, err := p.browser.fetch(src, nil, "image")
 	if err != nil || resp == nil || resp.StatusCode >= 400 {
 		return nil
 	}

@@ -342,7 +342,7 @@ func (p *Page) runExternalScript(el *html.Node, src string) {
 	}
 	p.loadedScripts[abs] = true
 	p.debugf("external script: %s", abs)
-	resp, err := p.browser.get(abs, map[string]string{"Accept": "*/*"})
+	resp, err := p.browser.fetch(abs, map[string]string{"Accept": "*/*"}, "script")
 	if err != nil {
 		p.log("error", "failed to load script "+abs+": "+err.Error())
 		return

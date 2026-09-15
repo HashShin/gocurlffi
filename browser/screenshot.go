@@ -334,7 +334,7 @@ func (p *Page) loadSheet(s *pageStyleSheet) bool {
 		s.source, s.loaded = cached, true
 		return true
 	}
-	resp, err := p.browser.get(s.href, nil)
+	resp, err := p.browser.fetch(s.href, nil, "stylesheet")
 	if err != nil {
 		s.failed, s.err = true, err.Error()
 		p.debugf("stylesheet FAILED: %s: %v", s.href, err)
@@ -379,7 +379,7 @@ func (p *Page) cssTexts() []string {
 		_, imports, _ := parseCSSStylesheet(src, 0, &order)
 		for _, imp := range imports {
 			abs := resolveURL(p.baseURL(), imp)
-			resp, err := p.browser.get(abs, nil)
+			resp, err := p.browser.fetch(abs, nil, "stylesheet")
 			if err != nil {
 				p.debugf("@import FAILED: %s: %v", abs, err)
 				continue

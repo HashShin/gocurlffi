@@ -79,6 +79,12 @@ type Options struct {
 	// so the fast path pays nothing.
 	ObeyRobots bool
 
+	// Intercept, when set, is offered every request before it is sent (document,
+	// scripts, stylesheets, images, fonts, fetch and XHR). Returning nil lets
+	// the request continue; returning Block drops it; returning Fulfill answers
+	// it from the hook. The hook runs synchronously on the request path.
+	Intercept func(*Request) *Response
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }
@@ -128,9 +134,33 @@ func (b *Browser) Close() { b.sess.Close() }
 // Options returns a copy of the browser options.
 func (b *Browser) Options() Options { return b.opts }
 
-// request performs a GET through the impersonating transport.
+// get performs a document GET through the impersonating transport.
 func (b *Browser) get(rawURL string, headers map[string]string) (*requests.Response, error) {
-	if b.opts.ObeyRobots && !b.robotsAllowed(rawURL) {
+	return b.fetch(rawURL, headers, "document")
+}
+
+// fetch performs a GET for a named resource type, offering it to the intercept
+// hook first.
+func (b *Browser) fetch(rawURL string, headers map[string]string, rtype string) (*requests.Response, error) {
+	hs := map[string]string{}
+	for k, v := range b.opts.Headers {
+		hs[k] = v
+	}
+	for k, v := range headers {
+		hs[k] = v
+	}
+	return b.request("GET", rawURL, hs, nil, rtype)
+}
+
+// request is the single path every network access goes through: page
+// subresources, fetch and XHR. It offers the request to the intercept hook, and
+// applies robots.txt to crawler-visible loads (not page-initiated fetch).
+func (b *Browser) request(method, rawURL string, headers map[string]string, body []byte, rtype string) (*requests.Response, error) {
+	if r := b.intercept(method, rawURL, headers, rtype); r != nil {
+		return r.toRequests(rawURL), nil
+	}
+	crawlerVisible := rtype != "fetch" && rtype != "xhr"
+	if b.opts.ObeyRobots && crawlerVisible && method == "GET" && !b.robotsAllowed(rawURL) {
 		resp := requests.NewResponse()
 		resp.URL = rawURL
 		resp.StatusCode = 403
@@ -139,17 +169,13 @@ func (b *Browser) get(rawURL string, headers map[string]string) (*requests.Respo
 		return resp, nil
 	}
 	opts := []requests.Option{}
-	hs := map[string]string{}
-	for k, v := range b.opts.Headers {
-		hs[k] = v
+	if len(headers) > 0 {
+		opts = append(opts, requests.WithHeaders(headers))
 	}
-	for k, v := range headers {
-		hs[k] = v
+	if len(body) > 0 {
+		opts = append(opts, requests.WithContent(body))
 	}
-	if len(hs) > 0 {
-		opts = append(opts, requests.WithHeaders(hs))
-	}
-	return b.sess.Get(rawURL, opts...)
+	return b.sess.Request(method, rawURL, opts...)
 }
 
 // resolveURL resolves a possibly-relative reference against a base URL.
