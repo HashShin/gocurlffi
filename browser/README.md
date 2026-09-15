@@ -214,6 +214,20 @@ make gobrowser
   able to override it.
 - PDF output: `Page.PDF` renders the page and embeds the image in a one-page
   PDF, the same class of output the screenshot produces.
+- Canvas: `getContext('2d')` implements the drawing calls pages use (fills,
+  strokes, text, paths, `drawImage`, `clearRect`) over an `image.RGBA`, and
+  `toDataURL` returns a PNG. Charts and generated images come out drawable.
+- `WebSocket`: a real client over the same pure-Go library the CDP server uses.
+  Incoming messages are delivered as `message` events while the page's task
+  queue is drained, so a handler sees a reply sent in `onopen`.
+- Web Workers: `new Worker(url)` runs the script in its own goja runtime on its
+  own goroutine, with `postMessage` both ways and `importScripts`.
+- IndexedDB: an in-memory `indexedDB` with `open` and an upgrade, object stores
+  (keyPath, autoIncrement), `put`/`add`/`get`/`getAll`/`delete`/`clear`/`count`,
+  simple indexes, `openCursor`, and transactions whose requests resolve on a
+  later turn.
+- The Service Worker surface is stubbed for feature detection
+  (`register` resolves, `controller` is null); there is no persistent worker.
 
 ### MCP server
 
@@ -585,7 +599,8 @@ external agent to drive), and the gaps below remain. Specifically absent:
   function the frame defined on its own window.
 - There is no native agent mode (an LLM driving the browser in-process); the
   MCP server lets an external agent drive it instead.
-- No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
+- No WebAssembly (no engine). Service Workers are feature-detection only: there
+  is no persistent, background worker.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element
   (visible) rather than in `content`. Use `template.content` to build content.

@@ -366,6 +366,36 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 		return e.resolvedPromise(e.vm.NewObject())
 	})
 	_ = o.Set("userAgentData", uad)
+	_ = o.Set("serviceWorker", e.serviceWorkerObject())
+	return o
+}
+
+// serviceWorkerObject is the feature-detection surface of the Service Worker
+// API. There is no persistent worker (no origin storage, no background
+// lifetime), so register returns a registration-shaped object and getRegistrations
+// is empty; a page that guards on 'serviceWorker' in navigator keeps working.
+func (e *jsEnv) serviceWorkerObject() *goja.Object {
+	o := e.vm.NewObject()
+	_ = o.Set("controller", goja.Null())
+	_ = o.Set("ready", e.resolvedPromise(e.vm.NewObject()))
+	_ = o.Set("register", func(call goja.FunctionCall) goja.Value {
+		reg := e.vm.NewObject()
+		_ = reg.Set("scope", e.page.baseURL())
+		_ = reg.Set("active", goja.Null())
+		_ = reg.Set("installing", goja.Null())
+		_ = reg.Set("waiting", goja.Null())
+		_ = reg.Set("unregister", func(goja.FunctionCall) goja.Value {
+			return e.resolvedPromise(e.vm.ToValue(false))
+		})
+		return e.resolvedPromise(reg)
+	})
+	_ = o.Set("getRegistration", func(goja.FunctionCall) goja.Value {
+		return e.resolvedPromise(goja.Undefined())
+	})
+	_ = o.Set("getRegistrations", func(goja.FunctionCall) goja.Value {
+		return e.resolvedPromise(e.vm.NewArray())
+	})
+	_ = o.Set("addEventListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	return o
 }
 
