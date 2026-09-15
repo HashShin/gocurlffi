@@ -764,6 +764,21 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 	e.method(p, "createNodeIterator", func(call goja.FunctionCall) goja.Value {
 		return e.newTreeWalker(call.Argument(0), call.Argument(1), call.Argument(2))
 	})
+	// document.evaluate(expression, contextNode, resolver, type, result):
+	// the XPath entry point pages and CDP clients use.
+	e.method(p, "evaluate", func(call goja.FunctionCall) goja.Value {
+		expr := argString(call.Argument(0))
+		ctx := e.nodeArg(call.Argument(1))
+		if ctx == nil {
+			ctx = e.docOf(call)
+		}
+		wantType := int(call.Argument(3).ToInteger())
+		res, err := evalXPath(ctx, expr)
+		if err != nil {
+			panic(e.vm.NewGoError(fmt.Errorf("XPath: %w", err)))
+		}
+		return e.xpathResultObject(res, wantType)
+	})
 	e.method(p, "elementsFromPoint", func(goja.FunctionCall) goja.Value { return e.vm.NewArray() })
 
 	e.accessor(p, "currentScript", func(call goja.FunctionCall) goja.Value {
@@ -869,6 +884,84 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		_ = o.Set("forEach", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 		return o
 	}, nil)
+}
+
+// XPathResult type constants, as the DOM defines them. document.evaluate takes
+// one as its fourth argument and the result reports its resultType.
+const (
+	xpathAnyType                   = 0
+	xpathNumberType                = 1
+	xpathStringType                = 2
+	xpathBooleanType               = 3
+	xpathUnorderedNodeIteratorType = 4
+	xpathOrderedNodeIteratorType   = 5
+	xpathUnorderedNodeSnapshotType = 6
+	xpathOrderedNodeSnapshotType   = 7
+	xpathAnyUnorderedNodeType      = 8
+	xpathFirstOrderedNodeType      = 9
+)
+
+// newXPathResultCtor exposes the XPathResult constructor with its constants,
+// which is how a page names a result type.
+func (e *jsEnv) newXPathResultCtor() *goja.Object {
+	o := e.vm.NewObject()
+	for name, v := range map[string]int{
+		"ANY_TYPE": xpathAnyType, "NUMBER_TYPE": xpathNumberType,
+		"STRING_TYPE": xpathStringType, "BOOLEAN_TYPE": xpathBooleanType,
+		"UNORDERED_NODE_ITERATOR_TYPE": xpathUnorderedNodeIteratorType,
+		"ORDERED_NODE_ITERATOR_TYPE":   xpathOrderedNodeIteratorType,
+		"UNORDERED_NODE_SNAPSHOT_TYPE": xpathUnorderedNodeSnapshotType,
+		"ORDERED_NODE_SNAPSHOT_TYPE":   xpathOrderedNodeSnapshotType,
+		"ANY_UNORDERED_NODE_TYPE":      xpathAnyUnorderedNodeType,
+		"FIRST_ORDERED_NODE_TYPE":      xpathFirstOrderedNodeType,
+	} {
+		_ = o.Set(name, v)
+	}
+	return o
+}
+
+// xpathResultObject builds the XPathResult document.evaluate returns, coercing
+// the raw result to the requested type.
+func (e *jsEnv) xpathResultObject(res XPathResult, wantType int) *goja.Object {
+	nodes := res.Nodes
+	number, str, boolean := res.Number, res.String, res.Boolean
+	if res.Kind == "nodes" {
+		str = ""
+		if len(nodes) > 0 {
+			str = textContent(nodes[0])
+		}
+		number, _ = strconv.ParseFloat(strings.TrimSpace(str), 64)
+		boolean = len(nodes) > 0
+	}
+	o := e.vm.NewObject()
+	_ = o.Set("resultType", wantType)
+	_ = o.Set("numberValue", number)
+	_ = o.Set("stringValue", str)
+	_ = o.Set("booleanValue", boolean)
+	_ = o.Set("snapshotLength", len(nodes))
+	_ = o.Set("invalidIteratorState", false)
+	if len(nodes) > 0 {
+		_ = o.Set("singleNodeValue", e.wrap(nodes[0]))
+	} else {
+		_ = o.Set("singleNodeValue", goja.Null())
+	}
+	idx := 0
+	_ = o.Set("iterateNext", func(goja.FunctionCall) goja.Value {
+		if idx >= len(nodes) {
+			return goja.Null()
+		}
+		n := nodes[idx]
+		idx++
+		return e.wrap(n)
+	})
+	_ = o.Set("snapshotItem", func(call goja.FunctionCall) goja.Value {
+		i := int(call.Argument(0).ToInteger())
+		if i < 0 || i >= len(nodes) {
+			return goja.Null()
+		}
+		return e.wrap(nodes[i])
+	})
+	return o
 }
 
 // newDocumentFragment creates a document fragment node with the fragment
