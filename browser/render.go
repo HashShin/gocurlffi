@@ -1486,7 +1486,13 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		if b.hasBasis[i] {
 			base[i] = b.basisPct[i]*avail + b.basisPx[i]
 		} else {
-			base[i] = intrinsicColumnWidth(col, avail, baseSize)
+			// A flex item's base size is its max-content width, which the
+			// container's width does not cap: an item wider than the row
+			// overflows or shrinks, it does not re-wrap. Capping it at the
+			// row's width made rust-lang.org's nav measure its own item list
+			// at the row's width, so the list wrapped its last item onto a
+			// second line.
+			base[i] = intrinsicColumnWidth(col, flexBaseLimit, baseSize)
 		}
 		// A flex item takes up its outer size. Its margins count, and with
 		// box-sizing: content-box so do its padding and border, which the
@@ -2129,6 +2135,10 @@ func floatWidth(b renderBlock, limit, baseSize float64) float64 {
 	}
 	return w
 }
+
+// flexBaseLimit is the limit a flex item's max-content measurement is taken
+// with: no limit, as far as the arithmetic is concerned.
+const flexBaseLimit = 1e9
 
 func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 	w := 0.0
