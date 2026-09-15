@@ -540,6 +540,14 @@ func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 func (c *collector) assignSizing(start int, cs *computedStyle) {
 	for i := start; i < len(c.blocks); i++ {
 		b := &c.blocks[i]
+		// A declared height sizes the element's own box, so it reaches the
+		// block the element starts with even when that block brought a
+		// sizing context of its own: a panel written "grid h-112" holds one
+		// child, and the panel's height belongs to the panel.
+		if cs != nil && i == start && cs.hasHeight && cs.heightPx > b.minHeight {
+			b.minHeight = cs.heightPx
+			b.hasDeclaredHeight = true
+		}
 		if b.hasSizing {
 			continue
 		}
