@@ -66,6 +66,12 @@ type Options struct {
 	// Insecure skips TLS verification when true.
 	Insecure bool
 
+	// Proxy routes every request (document, scripts, fetch, XHR) through the
+	// given proxy URL, for example "http://127.0.0.1:8080". Empty means a
+	// direct connection. It is passed straight to the transport, so socks5://
+	// and authenticated http:// proxies work.
+	Proxy string
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }
@@ -93,6 +99,9 @@ func New(opts Options) *Browser {
 	}
 	if opts.MaxRedirects > 0 {
 		sopts = append(sopts, requests.WithMaxRedirects(opts.MaxRedirects))
+	}
+	if opts.Proxy != "" {
+		sopts = append(sopts, requests.WithProxy(opts.Proxy))
 	}
 	return &Browser{opts: opts, sess: requests.NewSession(sopts...)}
 }
