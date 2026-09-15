@@ -289,17 +289,28 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
 
   Google answers that request with `429` and a CAPTCHA reading "our systems have
   detected unusual traffic from your computer network ... the block will expire
-  shortly after those requests stop". The wording points at the network, but the
-  measurement says otherwise: two `/search` requests in one session with
-  JavaScript disabled - so no token is ever minted - both return the ordinary
-  interstitial, minutes before and after the token path is blocked. The IP is not
-  being rate-limited for `/search`; presenting the token is what draws the
-  CAPTCHA. The token is therefore being rejected, and what Google's server
-  disagrees with is not visible from here: the request is well formed and the VM
-  reports success. Query flags (`gbv=1`, `udm=14`), every impersonation target, a
-  warmed cookie jar and a corrected binary/base64 and cookie layer all make no
-  difference. Use one of the alternatives above when the HTML is all that is
-  wanted.
+  shortly after those requests stop". The wording points at the network, and it
+  is wrong. Three controls, each varying one thing:
+
+  - two `/search` requests in one session with JavaScript disabled, so no token
+    is ever minted, both return the ordinary interstitial - repeatedly, either
+    side of the token path being blocked. The IP is not rate-limited;
+  - the challenge run with JavaScript on but with `SG_SS` cleared from the jar
+    before the follow-up request - same session, same cookie set, same burst of
+    subresources and beacons - returns the ordinary interstitial. The burst is
+    not the trigger either;
+  - forcing the other handoff branch (Google's code is
+    `ss_cgi || document.cookie.indexOf("SG_SS=") < 0 ? T(a) : U(S())`, where `T`
+    puts the token in the query and `U` leaves it in the cookie) sends
+    `sg_ss=<token>&sei=<id>` in the URL instead, and is answered the same way.
+
+  So it is the token, it is rejected over both transports, and the request is well
+  formed: the VM reports success and raises no error, and the jar hands the cookie
+  back byte for byte. What Google's server disagrees with is inside an encrypted
+  ~800 byte blob this repository has no reference for. Query flags (`gbv=1`,
+  `udm=14`), every impersonation target, a warmed cookie jar, and corrected
+  binary/base64, text-encoding and cookie layers all make no difference. Use one
+  of the alternatives above when the HTML is all that is wanted.
 - `browser` has no CSS box model (no borders, shadows, floats, positioning,
   gradients or images), no WebSockets and no PDF output. It cascades the page's
   CSS - selectors, specificity, `!important`, inheritance, `@import`, `@media`,
