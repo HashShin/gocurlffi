@@ -517,7 +517,11 @@ type collector struct {
 // blocks it produced, creating an empty block when a boxed element has no
 // content of its own (a sized, empty div).
 func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
-	if boxed && len(c.blocks) == start {
+	// A declared height makes a box even with nothing in it: a spacer is
+	// written "<div style=height:448px></div>", and a panel that paints
+	// nothing of its own still holds the next section down the page.
+	sized := boxed || cs.hasHeight || cs.minHeight > 0
+	if sized && len(c.blocks) == start {
 		b := renderBlock{
 			kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
 		}
@@ -552,6 +556,13 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 			b.borderBox = cs.boxSizingBorderBox
 			if cs.hasHeight && cs.heightPx > b.minHeight {
 				b.minHeight = cs.heightPx
+				b.hasDeclaredHeight = true
+			}
+			// A declared min-height holds a box open the same way, and is
+			// how a page writes a section that must be at least a screen
+			// tall.
+			if cs.minHeight > b.minHeight {
+				b.minHeight = cs.minHeight
 				b.hasDeclaredHeight = true
 			}
 			if cs.hasMaxHeight {
