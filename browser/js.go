@@ -38,6 +38,8 @@ type jsEnv struct {
 
 	// canvases holds the 2D drawing state of <canvas> elements, per environment.
 	canvases map[*html.Node]*canvasState
+	// idb holds the in-memory IndexedDB databases, per environment.
+	idb map[string]*idbDatabase
 }
 
 type jsListener struct {
@@ -518,6 +520,27 @@ func (e *jsEnv) addTimer(call goja.FunctionCall, repeat bool) goja.Value {
 	e.timers = append(e.timers, t)
 	return e.vm.ToValue(id)
 }
+
+// scheduleDelay runs fn on a later timer turn. It is how a host API defers a
+// callback the way a browser's task queue does, and scheduleDelay with a small
+// delay orders one callback after another within the same turn.
+func (e *jsEnv) scheduleDelay(d time.Duration, fn func()) {
+	v := e.vm.ToValue(func(goja.FunctionCall) goja.Value {
+		defer func() { _ = recover() }()
+		fn()
+		return goja.Undefined()
+	})
+	c, ok := goja.AssertFunction(v)
+	if !ok {
+		return
+	}
+	if d < 0 {
+		d = 0
+	}
+	e.timers = append(e.timers, &jsTimer{due: time.Now().Add(d), fn: c})
+}
+
+func (e *jsEnv) schedule(fn func()) { e.scheduleDelay(0, fn) }
 
 func (e *jsEnv) clearTimer(id string) {
 	n, err := strconv.ParseInt(id, 10, 64)

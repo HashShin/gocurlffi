@@ -75,6 +75,7 @@ func (e *jsEnv) setupWeb() {
 	_ = rt.Set("customElements", e.customElementsObject())
 	_ = rt.Set("NodeFilter", e.newNodeFilter())
 	_ = rt.Set("XPathResult", e.newXPathResultCtor())
+	e.installIndexedDB(rt)
 }
 
 // newDOMParser implements new DOMParser().parseFromString(html, type).
