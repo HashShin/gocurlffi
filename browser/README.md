@@ -436,6 +436,19 @@ engines have to be asked the same question.
 - Chromium answers through `tools/cssdiff/probe -js EXPRESSION`, which runs
   the expression in the page and prints the result.
 
+For a page-level check, `tools/cssdiff/accept.html` is a fixture with a grid
+of named areas, a padded flex row, a float and wrapping text. Rendering it in
+both engines and comparing the PNGs row by row is the acceptance test:
+
+```sh
+./bin/gobrowser get http://127.0.0.1:8000/accept.html --screenshot ours.png --width 800
+cd tools/cssdiff && go run ./probe -url http://127.0.0.1:8000/accept.html -width 800 -out chrome.png -js '0'
+```
+
+As of this session the two agree pixel for pixel down to the paragraph beside
+the float; the only differing rows are the free text, where the embedded face
+is about 10% narrower than Chromium's DejaVu for lowercase (see "What works").
+
 Two traps, both of which cost real time here:
 
 - A live page's total height drifts. `bootstrap.com` moves about 180 pixels
