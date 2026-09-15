@@ -579,6 +579,13 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 			b.minHeight = cs.heightPx
 			b.hasDeclaredHeight = true
 		}
+		// The declared height is the box's own, and the box ends with the
+		// element's last block: the layout needs both to let content taller
+		// than the box overflow it.
+		if cs != nil && i == start && cs.hasHeight && cs.heightPx > 0 {
+			b.boxHeight = cs.heightPx
+			b.boxLast = len(c.blocks) - start - 1
+		}
 		if b.hasSizing {
 			continue
 		}

@@ -681,6 +681,12 @@ type renderBlock struct {
 	// stops a grid item from stretching to its row: a "height: 30px" item
 	// stays 30px in a taller row.
 	hasDeclaredHeight bool
+	// boxHeight is an element's declared height, carried by the first block it
+	// produced, and boxLast is how many blocks follow it in that element. The
+	// layout clamps the cursor to the box's bottom once the element's blocks
+	// are done, which is what lets content taller than the box overflow it.
+	boxHeight float64
+	boxLast   int
 	// boxID groups the blocks of one element so its background and border are
 	// drawn once as a (possibly rounded) rectangle. 0 means no box.
 	boxID     int
@@ -869,9 +875,35 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		return left, right
 	}
-	for _, b := range blocks {
+	// A declared height ends at the element's last block: the cursor is set
+	// back to the box's bottom there, so content taller than the box overflows
+	// instead of pushing the page down. Ranges nest, so the clamps are a stack.
+	type boxClamp struct {
+		end    int
+		bottom float64
+	}
+	var clamps []boxClamp
+	applyClamps := func(bi int) {
+		for len(clamps) > 0 && clamps[0].end < bi {
+			if y > clamps[0].bottom {
+				y = clamps[0].bottom
+			}
+			clamps = clamps[1:]
+		}
+	}
+	for bi, b := range blocks {
+		applyClamps(bi)
 		// Vertical margins of adjacent blocks collapse to the larger one;
 		// padding and border always add.
+		if b.boxHeight > 0 {
+			// The box starts at the element's top margin edge, and a declared
+			// height is its content height unless box-sizing says otherwise.
+			bottom := y + b.marginTop + b.boxHeight
+			if !b.borderBox {
+				bottom += b.paddingTop + b.paddingBottom + 2*b.borderW
+			}
+			clamps = append(clamps, boxClamp{end: bi + b.boxLast, bottom: bottom})
+		}
 		gap := b.marginTop + b.borderW + b.paddingTop
 		if havePrev {
 			gap = prevPaddingBottom + prevBorderBottom +
