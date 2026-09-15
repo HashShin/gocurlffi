@@ -390,22 +390,238 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 			})
 			continue
 		}
-		sel, err := cascadia.Compile(selText)
-		if err != nil {
+		// The selector compiler has no :is(), :where() or multi-argument
+		// :not(), and modern sheets are written with them: Tailwind's whole
+		// utility set leans on ":is(.escaped *)". Rewriting them into plain
+		// selectors recovers the rule.
+		spec := cssSpecificity(selText)
+		compiled := 0
+		for _, variant := range expandSelector(selText) {
+			sel, err := cascadia.Compile(variant)
+			if err != nil {
+				continue
+			}
+			*p.order++
+			*out = append(*out, cssRule{
+				sel: sel, spec: spec, order: *p.order,
+				decls: decls, text: selText,
+			})
+			compiled++
+		}
+		if compiled == 0 {
 			p.skipped++
 			if targetsPseudoElement(selText) {
 				p.pseudoSkipped++
 			} else if len(p.skipSample) < 12 {
 				p.skipSample = append(p.skipSample, selText)
 			}
+		}
+	}
+}
+
+// expandSelector rewrites a selector that uses :is(), :where() or a
+// multi-argument :not() into the plain selectors it stands for, so a compiler
+// without those functions can still use it. Every rewrite here is exact: an
+// argument is only inlined when doing so cannot move it to a different
+// compound. Anything else returns nil, and the caller treats the selector as
+// unsupported, as before.
+func expandSelector(sel string) []string {
+	// :not(a, b) matches what :not(a):not(b) matches, and the compiler knows
+	// the single-argument form.
+	if rewritten, ok := splitNotList(sel); ok {
+		var all []string
+		for _, s := range rewritten {
+			v := expandSelector(s)
+			if v == nil {
+				return nil
+			}
+			all = append(all, v...)
+		}
+		return all
+	}
+	i, nameLen := findIsWhere(sel)
+	if i < 0 {
+		return []string{sel}
+	}
+	prefix := sel[:i]
+	inner, rest, ok := cutParens(sel[i+nameLen:])
+	if !ok {
+		return nil
+	}
+	var all []string
+	for _, alt := range splitTopLevel(inner, ',') {
+		alt = strings.TrimSpace(alt)
+		if alt == "" {
 			continue
 		}
-		*p.order++
-		*out = append(*out, cssRule{
-			sel: sel, spec: cssSpecificity(selText), order: *p.order,
-			decls: decls, text: selText,
-		})
+		// A single compound selector inlines as text: ".foo:is(.bar)" is
+		// ".foo.bar". A complex one would have its first compound glued to
+		// what came before, which changes what it matches.
+		if hasCombinator(alt) && !endsWithUniversalDescendant(alt) {
+			return nil
+		}
+		// ":is(.x *)" is Tailwind's "every descendant" variant. Inlining it
+		// as ".x *" is exact when it stands at the start of the selector or
+		// after a descendant combinator, but a text join onto a compound
+		// would turn ".foo:is(.x *)" into ".foo.x *".
+		if endsWithUniversalDescendant(alt) &&
+			!(prefix == "" || strings.HasSuffix(prefix, " ")) {
+			return nil
+		}
+		v := expandSelector(prefix + alt + rest)
+		if v == nil {
+			return nil
+		}
+		all = append(all, v...)
 	}
+	if len(all) == 0 {
+		return nil
+	}
+	return all
+}
+
+// findIsWhere returns the offset of the first functional :is( or :where( and
+// the length of the function name it matched, or -1. Escaped colons, as in the
+// Tailwind class ".md\:flex", are not function names.
+func findIsWhere(sel string) (int, int) {
+	depth := 0
+	for i := 0; i < len(sel); i++ {
+		switch c := sel[i]; {
+		case c == '\\':
+			i++
+		case c == '[' || c == '(':
+			depth++
+		case c == ']' || c == ')':
+			depth--
+		case c == ':' && depth == 0:
+			for _, name := range []string{"is", "where"} {
+				open := ":" + name + "("
+				if strings.HasPrefix(sel[i:], open) {
+					return i, len(open) - 1
+				}
+			}
+		}
+	}
+	return -1, 0
+}
+
+// splitNotList rewrites ":not(a, b)" into ":not(a):not(b)". It reports false
+// when there is no multi-argument :not() to rewrite.
+func splitNotList(sel string) ([]string, bool) {
+	i, nameLen := findFunc(sel, "not")
+	if i < 0 {
+		return nil, false
+	}
+	open := i + nameLen
+	inner, rest, ok := cutParens(sel[open:])
+	if !ok {
+		return nil, false
+	}
+	args := splitTopLevel(inner, ',')
+	if len(args) < 2 {
+		return nil, false
+	}
+	prefix := sel[:i]
+	var out []string
+	for _, a := range args {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			return nil, false
+		}
+		out = append(out, prefix+":not("+a+")"+rest)
+	}
+	return out, true
+}
+
+// findFunc returns the offset of the first functional ":name(" and the offset
+// of its "(" relative to that colon, or -1.
+func findFunc(sel, name string) (int, int) {
+	depth := 0
+	for i := 0; i < len(sel); i++ {
+		switch c := sel[i]; {
+		case c == '\\':
+			i++
+		case c == '[' || c == '(':
+			depth++
+		case c == ']' || c == ')':
+			depth--
+		case c == ':' && depth == 0:
+			open := ":" + name + "("
+			if strings.HasPrefix(sel[i:], open) {
+				// The length stops at the opening parenthesis, which is
+				// where the caller reads the arguments from.
+				return i, len(open) - 1
+			}
+		}
+	}
+	return -1, 0
+}
+
+// cutParens returns the text inside the parentheses that start at s[0], and
+// the text after the matching close.
+func cutParens(s string) (inner, rest string, ok bool) {
+	if s == "" || s[0] != '(' {
+		return "", "", false
+	}
+	depth := 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\\':
+			i++
+		case '\'', '"':
+			quote = c
+		case '(', '[':
+			depth++
+		case ']':
+			depth--
+		case ')':
+			depth--
+			if depth == 0 {
+				return s[1:i], s[i+1:], true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// hasCombinator reports whether a selector's top level holds a combinator,
+// which means it is more than one compound.
+func hasCombinator(sel string) bool {
+	depth := 0
+	for i := 0; i < len(sel); i++ {
+		switch c := sel[i]; {
+		case c == '\\':
+			i++
+		case c == '[' || c == '(':
+			depth++
+		case c == ']' || c == ')':
+			depth--
+		case depth == 0 && (c == ' ' || c == '>' || c == '+' || c == '~'):
+			return true
+		}
+	}
+	return false
+}
+
+// endsWithUniversalDescendant reports whether a selector is a compound
+// followed by " *", the shape Tailwind's "every descendant" variant produces.
+func endsWithUniversalDescendant(sel string) bool {
+	if !strings.HasSuffix(sel, " *") {
+		return false
+	}
+	return !hasCombinator(strings.TrimSuffix(sel, " *"))
 }
 
 func parseCSSDeclarations(body string) []cssDecl {
