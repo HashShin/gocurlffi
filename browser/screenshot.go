@@ -864,10 +864,15 @@ func (c *collector) walkElement(el *html.Node) {
 	c.ownHeightPx, c.hasOwnHeight = 0, false
 	if cs.hasHeight {
 		switch {
+		case cs.heightPct > 0 && c.hasContH:
+			// A percentage, including a calc() that mixes one with a length:
+			// the length part can be negative, as in calc(100% - 40px).
+			c.ownHeightPx, c.hasOwnHeight = cs.heightPx+cs.heightPct*c.contH, true
 		case cs.heightPx > 0:
 			c.ownHeightPx, c.hasOwnHeight = cs.heightPx, true
-		case cs.heightPct > 0 && c.hasContH:
-			c.ownHeightPx, c.hasOwnHeight = cs.heightPct*c.contH, true
+		case cs.heightPct > 0:
+			// Nothing to resolve the percentage against: the box stays auto,
+			// as a browser leaves it.
 		}
 	}
 	if block {
