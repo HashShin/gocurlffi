@@ -1458,6 +1458,26 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 	}
 	contentX := colX + b.boxLeft
 	avail := colW - b.boxLeft
+	// A row that declares its own width is what its items resolve against,
+	// even when that is wider than the containing block: go.dev's testimonial
+	// carousel is a 10000px row of 1000px slides inside a 1000px wrapper that
+	// clips it, and measuring the row at the wrapper's width squeezed ten
+	// slides into a sixth of the space and wrapped their text.
+	if b.hasBoxWidth || b.hasBoxMaxWidth {
+		w := b.boxWidthPx + b.boxWidthPct*avail
+		if b.hasBoxMaxWidth {
+			mw := b.boxMaxWidthPx + b.boxMaxWidthPct*avail
+			if !b.hasBoxWidth || mw < w {
+				w = mw
+			}
+		}
+		if b.borderBox {
+			w -= b.sizePadLeft + b.sizePadRight
+		}
+		if w > 0 {
+			avail = w
+		}
+	}
 	if avail < 10 {
 		avail = 10
 	}
