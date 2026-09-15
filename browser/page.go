@@ -299,7 +299,11 @@ func (p *Page) run() error {
 		}
 		typ := strings.ToLower(strings.TrimSpace(strings.Split(attrOf(s, "type"), ";")[0]))
 		if typ == "module" {
-			p.log("warn", "skipping ES module script (not supported)")
+			if src := attrOf(s, "src"); src != "" {
+				p.runModuleScript(resolveURL(p.baseURL(), src), "", s)
+			} else {
+				p.runModuleScript("", textContent(s), s)
+			}
 			continue
 		}
 		if typ != "" && !strings.Contains(typ, "javascript") && !strings.Contains(typ, "ecmascript") {
