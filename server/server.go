@@ -156,6 +156,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.serveWS(w, r, t)
 	})
+	// WebDriver BiDi shares the port, at /session and /session/{id}.
+	mux.HandleFunc("/session", s.serveBiDi)
+	mux.HandleFunc("/session/", s.serveBiDi)
 	return mux
 }
 

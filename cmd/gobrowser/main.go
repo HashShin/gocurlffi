@@ -105,7 +105,12 @@ func runServe(args []string) {
 		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 	)
+	// --protocol is accepted for parity with the original. Both CDP (at
+	// /devtools/browser and /devtools/page) and WebDriver BiDi (at /session) are
+	// always served on the same port.
+	protocol := fs.String("protocol", "cdp", "protocol: cdp, webdriver, or both")
 	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
+	_ = protocol
 	if *impersonate == "" {
 		*impersonate = *impersonateL
 	}
