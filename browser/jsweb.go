@@ -28,7 +28,7 @@ func (e *jsEnv) setupWeb() {
 		return e.newTextEncoder()
 	})
 	_ = rt.Set("TextDecoder", func(call goja.ConstructorCall) *goja.Object {
-		return e.newTextDecoder()
+		return e.newTextDecoder(argString(call.Argument(0)))
 	})
 	_ = rt.Set("AbortController", func(call goja.ConstructorCall) *goja.Object {
 		return e.newAbortController()
@@ -363,13 +363,7 @@ func (e *jsEnv) newTextEncoder() *goja.Object {
 	o := e.vm.NewObject()
 	_ = o.Set("encoding", "utf-8")
 	_ = o.Set("encode", func(call goja.FunctionCall) goja.Value {
-		b := []byte(argString(call.Argument(0)))
-		out := e.vm.NewArray()
-		for i, c := range b {
-			_ = out.Set(strconv.Itoa(i), int(c))
-		}
-		_ = out.Set("length", len(b))
-		return out
+		return e.newUint8Array([]byte(argString(call.Argument(0))))
 	})
 	_ = o.Set("encodeInto", func(call goja.FunctionCall) goja.Value {
 		r := e.vm.NewObject()
@@ -380,39 +374,82 @@ func (e *jsEnv) newTextEncoder() *goja.Object {
 	return o
 }
 
-func (e *jsEnv) newTextDecoder() *goja.Object {
+// newUint8Array builds a real Uint8Array over a copy of b. An array-like
+// object is not a substitute: `instanceof Uint8Array`, `Object.prototype
+// .toString.call(...)`, `.buffer` and `ArrayBuffer.isView` are all things a
+// page can read, and every one of them answered "not a typed array".
+func (e *jsEnv) newUint8Array(b []byte) goja.Value {
+	// The constructor has to be invoked with new; goja rejects a plain call
+	// with "Constructor TypedArray requires 'new'".
+	if ctor := e.vm.Get("Uint8Array"); ctor != nil {
+		if o, err := e.vm.New(ctor, e.vm.ToValue(e.vm.NewArrayBuffer(b))); err == nil {
+			return o
+		}
+	}
+	out := e.vm.NewArray()
+	for i, c := range b {
+		_ = out.Set(strconv.Itoa(i), int(c))
+	}
+	_ = out.Set("length", len(b))
+	return out
+}
+
+// normalizeEncodingLabel maps a TextDecoder label to the encoding it names.
+// Unknown labels fall back to UTF-8, as the Encoding Standard requires.
+func normalizeEncodingLabel(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "latin1", "latin-1", "iso-8859-1", "iso8859-1", "l1",
+		"ascii", "us-ascii", "windows-1252", "cp1252", "x-cp1252":
+		return "windows-1252"
+	}
+	return "utf-8"
+}
+
+func (e *jsEnv) newTextDecoder(label string) *goja.Object {
+	enc := normalizeEncodingLabel(label)
 	o := e.vm.NewObject()
-	_ = o.Set("encoding", "utf-8")
+	_ = o.Set("encoding", enc)
 	_ = o.Set("fatal", false)
 	_ = o.Set("ignoreBOM", false)
 	_ = o.Set("decode", func(call goja.FunctionCall) goja.Value {
-		return e.vm.ToValue(toBytesString(call.Argument(0)))
+		b := toBytes(call.Argument(0))
+		if enc == "windows-1252" {
+			// A single-byte encoding: one code point per byte.
+			var sb strings.Builder
+			sb.Grow(len(b))
+			for _, c := range b {
+				sb.WriteRune(rune(c))
+			}
+			return e.vm.ToValue(sb.String())
+		}
+		return e.vm.ToValue(string(b))
 	})
 	return o
 }
 
-// toBytesString converts a JS buffer/array/string argument to a Go string.
-func toBytesString(v goja.Value) string {
+// toBytes converts a JS buffer, typed array, array-like or string argument to
+// the bytes it holds, without going through UTF-8.
+func toBytes(v goja.Value) []byte {
 	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
-		return ""
+		return nil
 	}
-	if s, ok := v.Export().(string); ok {
-		return s
-	}
-	if b, ok := v.Export().([]byte); ok {
-		return string(b)
+	switch x := v.Export().(type) {
+	case string:
+		return []byte(x)
+	case []byte:
+		return x
 	}
 	if o, ok := v.(*goja.Object); ok {
-		if lv := o.Get("length"); lv != nil {
+		if lv := o.Get("length"); lv != nil && !goja.IsUndefined(lv) {
 			n := int(lv.ToInteger())
 			buf := make([]byte, 0, n)
 			for i := 0; i < n; i++ {
 				buf = append(buf, byte(o.Get(strconv.Itoa(i)).ToInteger()))
 			}
-			return string(buf)
+			return buf
 		}
 	}
-	return v.String()
+	return []byte(v.String())
 }
 
 // --- AbortController / AbortSignal ---

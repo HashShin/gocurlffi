@@ -449,16 +449,38 @@ func (e *jsEnv) setupGlobals() {
 		return e.computedStyleObject(cs)
 	})
 
+	// btoa/atob operate on binary strings: each code unit is one byte, not a
+	// UTF-8 sequence. Encoding the Go string straight through would turn every
+	// code unit above 0x7F into two bytes, silently corrupting any base64 a
+	// page builds out of raw bytes - including the binary blobs inside a
+	// challenge token.
 	_ = rt.Set("atob", func(call goja.FunctionCall) goja.Value {
-		s := argString(call.Argument(0))
+		s := strings.TrimSpace(argString(call.Argument(0)))
 		b, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
-			b, _ = base64.RawStdEncoding.DecodeString(s)
+			b, err = base64.RawStdEncoding.DecodeString(s)
 		}
-		return e.vm.ToValue(string(b))
+		if err != nil {
+			panic(e.vm.NewTypeError("atob: the string to be decoded is not correctly encoded"))
+		}
+		// One byte per code unit, so the result is a binary string too.
+		var sb strings.Builder
+		sb.Grow(len(b))
+		for _, c := range b {
+			sb.WriteRune(rune(c))
+		}
+		return e.vm.ToValue(sb.String())
 	})
 	_ = rt.Set("btoa", func(call goja.FunctionCall) goja.Value {
-		return e.vm.ToValue(base64.StdEncoding.EncodeToString([]byte(argString(call.Argument(0)))))
+		s := argString(call.Argument(0))
+		out := make([]byte, 0, len(s))
+		for _, r := range s {
+			if r > 0xFF {
+				panic(e.vm.NewTypeError("btoa: the string to be encoded contains characters outside of the Latin1 range"))
+			}
+			out = append(out, byte(r))
+		}
+		return e.vm.ToValue(base64.StdEncoding.EncodeToString(out))
 	})
 
 	e.setupNetwork()
