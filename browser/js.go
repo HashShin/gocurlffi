@@ -493,6 +493,7 @@ func (e *jsEnv) setupGlobals() {
 	e.sanitizeFunctionToString()
 	e.installErrorStatics()
 	e.installInterfaceTags()
+	e.installAudioContexts()
 }
 
 func (e *jsEnv) navigatorObject() *goja.Object {
@@ -569,6 +570,7 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 		}()
 		return e.vm.ToValue(true)
 	})
+	e.installNavigatorExtras(o)
 	return o
 }
 
