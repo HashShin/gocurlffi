@@ -85,6 +85,13 @@ type Options struct {
 	// it from the hook. The hook runs synchronously on the request path.
 	Intercept func(*Request) *Response
 
+	// CORS, when set, enforces cross-origin rules on fetch and XHR: a
+	// cross-origin request carries an Origin header and a preflight when it is
+	// not simple, and a response without a matching Access-Control-Allow-Origin
+	// is rejected. Off by default, matching the original's experimental flag,
+	// and off means fetch behaves as before.
+	CORS bool
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }

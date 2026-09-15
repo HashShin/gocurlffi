@@ -76,8 +76,24 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 	return e.resolvedPromise(e.vm.ToValue(e.fetchResponse(resp)))
 }
 
-// doRequest issues a request through the impersonating session.
+// doRequest issues a request through the impersonating session, applying CORS
+// to script-issued requests when Options.CORS is set.
 func (e *jsEnv) doRequest(method, rawURL string, headers map[string]string, body []byte) (*requests.Response, error) {
+	origin := e.page.originString()
+	if origin != "" && e.page.browser.opts.CORS && !sameOrigin(origin, rawURL) {
+		hdrs, err := e.corsRequest(method, rawURL, headers, origin)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := e.page.browser.request(method, rawURL, hdrs, body, "fetch")
+		if err != nil {
+			return nil, err
+		}
+		if err := e.corsCheckResponse(resp, origin, rawURL); err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
 	return e.page.browser.request(method, rawURL, headers, body, "fetch")
 }
 
