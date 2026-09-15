@@ -52,6 +52,16 @@ type Page struct {
 	// addInitScript) gets to see the document first.
 	initScripts []string
 
+	// pendingNav is a navigation a script asked for (location.assign,
+	// location.replace, location.reload, or assigning location.href). It is
+	// followed once the current document's script phase has finished, because
+	// navigating from inside script execution would re-enter the loader while
+	// the document that asked is still running.
+	pendingNav string
+	// navDepth counts script-driven navigations in the current chain so a page
+	// that navigates on every load cannot spin forever.
+	navDepth int
+
 	resp    *requests.Response
 	console []ConsoleEntry
 
@@ -238,6 +248,9 @@ func (b *Browser) Open(rawURL string) (*Page, error) {
 	if err := p.load(rawURL, nil); err != nil {
 		return p, err
 	}
+	if err := p.followPendingNav(); err != nil {
+		return p, err
+	}
 	return p, nil
 }
 
@@ -281,7 +294,10 @@ func (p *Page) SetContent(source, url string) error {
 	p.templateContent = extractTemplateContents(doc)
 	// A new document means the old stylesheets and rules are meaningless.
 	p.markStyleDirty()
-	return p.run()
+	if err := p.run(); err != nil {
+		return err
+	}
+	return p.followPendingNav()
 }
 
 // run sets up the JS environment and executes the document lifecycle.
@@ -699,6 +715,43 @@ func (p *Page) InitScripts() []string {
 	return append([]string(nil), p.initScripts...)
 }
 
+// maxScriptNavigations bounds a chain of script-driven navigations. A document
+// that navigates on every load would otherwise reload without end.
+const maxScriptNavigations = 10
+
+// requestNavigation records a navigation asked for by a script. The URL is
+// resolved against the current document, and the navigation itself happens
+// after the running script phase finishes (see followPendingNav). A relative
+// URL and an empty string are handled the way a browser handles them: an empty
+// one is ignored rather than navigating to the current directory.
+func (p *Page) requestNavigation(rawURL string) {
+	if strings.TrimSpace(rawURL) == "" {
+		return
+	}
+	p.pendingNav = resolveURL(p.baseURL(), rawURL)
+}
+
+// followPendingNav performs any navigation a script requested, in order, and
+// reports the error from the last one. The chain is bounded by
+// maxScriptNavigations.
+func (p *Page) followPendingNav() error {
+	for p.pendingNav != "" {
+		target := p.pendingNav
+		p.pendingNav = ""
+		if p.navDepth >= maxScriptNavigations {
+			p.log("warn", "script navigation limit reached; staying on "+p.URL)
+			return nil
+		}
+		p.navDepth++
+		if err := p.load(target, nil); err != nil {
+			p.navDepth--
+			return err
+		}
+	}
+	p.navDepth = 0
+	return nil
+}
+
 // Runtime returns the page's JavaScript runtime, or nil when scripts are
 // disabled. It backs CDP's Runtime domain.
 func (p *Page) Runtime() *goja.Runtime {
@@ -809,4 +862,9 @@ func (p *Page) WaitForSelector(sel string, timeout time.Duration) *html.Node {
 func (b *Browser) NewPage(url string) *Page { return newPage(b, url) }
 
 // Load fetches a URL into an existing page and runs its scripts.
-func (p *Page) Load(rawURL string) error { return p.load(rawURL, nil) }
+func (p *Page) Load(rawURL string) error {
+	if err := p.load(rawURL, nil); err != nil {
+		return err
+	}
+	return p.followPendingNav()
+}

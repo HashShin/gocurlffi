@@ -277,6 +277,20 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   `warning:`. Server-rendered alternatives that do return linkable HTML:
   `https://www.bing.com/search?q=...`, `https://search.brave.com/search?q=...`,
   `https://lite.duckduckgo.com/lite/?q=...`.
+
+  How far the browser gets on that page, measured. The interstitial carries
+  Google's BotGuard program (pure JavaScript - `window.knitsail`, no
+  WebAssembly) and the browser runs it to completion: the challenge callback
+  fires rather than the `sg_b_e` error beacon, `SG_SS` is minted with a ~807
+  byte token, and the page then hands off with `location.replace(...)`. So the
+  client-side half works. It still does not return results, because Google
+  answers the follow-up request with `429` and a CAPTCHA page reading "our
+  systems have detected unusual traffic from your computer network". That is a
+  network-level judgement: the same code path succeeds from a residential or
+  mobile address, which is why driving a real browser from Termux works while
+  this does not. Query flags (`gbv=1`, `udm=14`), every impersonation target and
+  a warmed cookie jar all make no difference. Use one of the alternatives above
+  when the HTML is all that is wanted.
 - `browser` has no CSS box model (no borders, shadows, floats, positioning,
   gradients or images), no WebSockets and no PDF output. It cascades the page's
   CSS - selectors, specificity, `!important`, inheritance, `@import`, `@media`,

@@ -314,7 +314,16 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("parent", global)
 	_ = rt.Set("document", e.wrap(e.page.doc))
 	_ = rt.Set("navigator", e.navigatorObject())
-	_ = rt.Set("location", e.locationObject())
+	// Assigning window.location is a navigation too, so it is an accessor
+	// rather than a plain data property.
+	loc := e.locationObject()
+	_ = rt.GlobalObject().DefineAccessorProperty("location",
+		e.vm.ToValue(func(goja.FunctionCall) goja.Value { return loc }),
+		e.vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			e.page.requestNavigation(call.Argument(0).String())
+			return goja.Undefined()
+		}),
+		goja.FLAG_TRUE, goja.FLAG_FALSE)
 	_ = rt.Set("console", e.consoleObject())
 	_ = rt.Set("screen", e.screenObject())
 	_ = rt.Set("history", e.historyObject())
@@ -533,7 +542,16 @@ func (e *jsEnv) locationObject() *goja.Object {
 	o := e.vm.NewObject()
 	set := func(name, val string) { _ = o.Set(name, val) }
 	href := e.page.URL
-	set("href", href)
+	// href is an accessor rather than a plain property because assigning it
+	// navigates: `location.href = url` is one of the commonest ways a page
+	// redirects itself, and as a data property it silently did nothing.
+	_ = o.DefineAccessorProperty("href",
+		e.vm.ToValue(func(goja.FunctionCall) goja.Value { return e.vm.ToValue(e.page.URL) }),
+		e.vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			e.page.requestNavigation(call.Argument(0).String())
+			return goja.Undefined()
+		}),
+		goja.FLAG_TRUE, goja.FLAG_FALSE)
 	// toString/valueOf must be callable so `location + ''` and friends work.
 	_ = o.Set("toString", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
 	_ = o.Set("valueOf", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(href) })
@@ -547,9 +565,21 @@ func (e *jsEnv) locationObject() *goja.Object {
 	set("search", u.search)
 	set("hash", u.hash)
 	set("origin", u.origin)
-	_ = o.Set("assign", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("replace", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("reload", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	// Navigation methods. History entries are not modelled, so replace and
+	// assign behave the same; both defer the load until the running script
+	// phase is over (see Page.requestNavigation).
+	_ = o.Set("assign", func(call goja.FunctionCall) goja.Value {
+		e.page.requestNavigation(call.Argument(0).String())
+		return goja.Undefined()
+	})
+	_ = o.Set("replace", func(call goja.FunctionCall) goja.Value {
+		e.page.requestNavigation(call.Argument(0).String())
+		return goja.Undefined()
+	})
+	_ = o.Set("reload", func(goja.FunctionCall) goja.Value {
+		e.page.requestNavigation(e.page.URL)
+		return goja.Undefined()
+	})
 	return o
 }
 

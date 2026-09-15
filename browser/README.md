@@ -167,6 +167,16 @@ make gobrowser
 - `window`, `document` (including `document.currentScript`, which bundlers use
   to resolve chunk paths), `navigator`, `location`, `console`, `history`,
   `localStorage`, `matchMedia`, `atob`/`btoa`.
+- Script-driven navigation: `location.assign`, `location.replace`,
+  `location.reload`, assigning `location.href`, and assigning `window.location`
+  all load the new document and swap in a fresh JavaScript environment. A
+  relative URL is resolved against the current document. The load is deferred
+  until the running script phase has finished, so the statement after the call
+  still runs against the old document, and the chain is bounded so a page that
+  redirects on every load cannot spin. History entries are not modelled, so
+  `assign` and `replace` behave alike. This matters for handoff pages that
+  finish a JavaScript challenge and then send the browser on with
+  `location.replace(...)`.
 - Classic scripts that use top-level `await` are retried wrapped in an async
   function, since some bundlers ship them as classic scripts.
 - Recursion is capped like a browser engine (`Options.LoadTimeout` and a
