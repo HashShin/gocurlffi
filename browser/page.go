@@ -94,6 +94,18 @@ type Page struct {
 	fontFailed map[string]bool
 
 	loadedScripts map[string]bool
+
+	// geomOn asks the next layout to record one rectangle per element. The
+	// geometry accessors set it for the duration of a layout; screenshots and
+	// text extraction leave it off, so they never pay for it.
+	geomOn bool
+
+	// geomCache is the element geometry of the last layout, reused until the
+	// DOM or the viewport width changes.
+	geomCache *layoutGeom
+	// geomLayouts counts the layouts the geometry accessors performed, so a
+	// test can prove that repeated measurements reuse one layout.
+	geomLayouts int
 }
 
 // newPage creates an empty page bound to a browser.

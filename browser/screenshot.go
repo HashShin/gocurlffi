@@ -113,6 +113,11 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 	// Seed the containing-block content width with the page column, so a
 	// percentage width at the top of the document resolves against it.
 	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width), hasContW: true}
+	if p.geomOn {
+		c.geom = true
+		c.geomNodes = map[int]*html.Node{}
+		c.geomNode = map[*html.Node]int{}
+	}
 	c.walkChildren(p.doc)
 	c.flush()
 	if len(root.children) > 0 {
@@ -129,6 +134,14 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 	pageBG := renderPageBG
 	if bg, ok := p.documentBackground(eng); ok {
 		pageBG = bg
+	}
+	if p.geomOn {
+		p.geomCache = &layoutGeom{
+			stamp: domMutations.Load(),
+			width: width,
+			rects: doc.geom,
+			nodes: c.geomNode,
+		}
 	}
 	return doc, pageBG, nil
 }
@@ -495,6 +508,13 @@ type collector struct {
 
 	// boxSeq numbers the element boxes so each one is drawn once.
 	boxSeq int
+	// geom, when set, records one rectangle per block-level element even when
+	// it paints nothing, so getBoundingClientRect can answer for any element.
+	// It is off unless a caller asks for geometry, so screenshots pay nothing.
+	geom      bool
+	geomSeq   int
+	geomNodes map[int]*html.Node
+	geomNode  map[*html.Node]int
 	// absOwner collects position:absolute/fixed children of the nearest
 	// positioned ancestor.
 	absOwner *absFrame
@@ -639,6 +659,13 @@ type absFrame struct{ children []absChild }
 func (c *collector) nextBoxID() int {
 	c.boxSeq++
 	return c.boxSeq
+}
+
+// nextGeomID numbers an element for geometry recording, kept in its own
+// sequence so it never collides with a paint box id.
+func (c *collector) nextGeomID() int {
+	c.geomSeq++
+	return c.geomSeq
 }
 
 // assignBox marks the blocks an element produced as one box: the element's
@@ -805,6 +832,22 @@ func (c *collector) walkElement(el *html.Node) {
 	}
 	tag := strings.ToLower(el.Data)
 
+	// Geometry: every block-level element (and boxes that lay out children)
+	// gets an id, and every block it produces carries it, so the layout can
+	// report the element's rectangle even when it paints nothing.
+	var geomID, geomStart int
+	if c.geom {
+		geomStart = len(c.blocks)
+		defer func() {
+			if geomID == 0 {
+				return
+			}
+			for i := geomStart; i < len(c.blocks); i++ {
+				c.blocks[i].geomIDs = append(c.blocks[i].geomIDs, geomID)
+			}
+		}()
+	}
+
 	saved := struct {
 		style                       renderStyle
 		content                     float64
@@ -905,6 +948,11 @@ func (c *collector) walkElement(el *html.Node) {
 	boxed := (block || tag == "button") && (cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow)
 	if boxed {
 		c.hasBG = false
+	}
+	if c.geom && (block || tag == "button" || isFlexRowContainer(cs) || isGridContainer(cs) || cs.display == "table") {
+		geomID = c.nextGeomID()
+		c.geomNodes[geomID] = el
+		c.geomNode[el] = geomID
 	}
 	if block {
 		// Box edges: margin then padding, relative to the parent's content box.

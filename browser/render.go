@@ -571,6 +571,62 @@ type renderDoc struct {
 	baseSize float64
 	lines    []drawLine
 	boxes    []drawBox
+	// geom maps an element box id to the rectangle the layout gave it, present
+	// only when the layout ran with geometry recording on.
+	geom map[int]Rect
+}
+
+// geomSink accumulates one rectangle per element box while a column is laid
+// out. It is threaded through the recursive layout calls so a flex, grid or
+// table child contributes to the same rectangles as the flow.
+type geomSink struct {
+	accs  map[int]*geomAcc
+	order []int
+}
+
+type geomAcc struct {
+	x, top, right, bottom float64
+	started               bool
+}
+
+func newGeomSink() *geomSink {
+	return &geomSink{accs: map[int]*geomAcc{}}
+}
+
+func (g *geomSink) record(ids []int, x, top, right, bottom float64) {
+	for _, id := range ids {
+		acc := g.accs[id]
+		if acc == nil {
+			acc = &geomAcc{x: x, top: top, right: right, bottom: bottom, started: true}
+			g.accs[id] = acc
+			g.order = append(g.order, id)
+			continue
+		}
+		if x < acc.x {
+			acc.x = x
+		}
+		if top < acc.top {
+			acc.top = top
+		}
+		if right > acc.right {
+			acc.right = right
+		}
+		if bottom > acc.bottom {
+			acc.bottom = bottom
+		}
+	}
+}
+
+// rects returns the accumulated rectangles keyed by element box id.
+func (g *geomSink) rects() map[int]Rect {
+	if g == nil {
+		return nil
+	}
+	out := make(map[int]Rect, len(g.accs))
+	for id, acc := range g.accs {
+		out[id] = Rect{X: acc.x, Y: acc.top, Width: acc.right - acc.x, Height: acc.bottom - acc.top}
+	}
+	return out
 }
 
 type renderBlockKind int
@@ -694,6 +750,11 @@ type renderBlock struct {
 	boxHasBG  bool
 	radiusPx  [4]float64
 	radiusPct [4]float64
+	// geomIDs are the element boxes this block belongs to, innermost first,
+	// collected only when geometry is requested. Every enclosing element's id
+	// is present, so an element's rectangle spans its descendants, which is
+	// what getBoundingClientRect reports. Empty on the paint-only fast path.
+	geomIDs []int
 	// Block sizing: width, max-width and auto horizontal margins. When set, the
 	// block's used width is min(available, width, max-width) and auto margins
 	// center it, instead of always filling the column.
@@ -776,9 +837,11 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 		colW = 40
 	}
 	var boxes []drawBox
-	lines, endY := layoutColumn(blocks, 0, colW, 0, baseSize, &boxes)
+	g := newGeomSink()
+	lines, endY := layoutColumn(blocks, 0, colW, 0, baseSize, &boxes, g)
 	doc.lines = lines
 	doc.boxes = boxes
+	doc.geom = g.rects()
 	doc.height = int(endY + 0.5)
 	if doc.height < 1 {
 		doc.height = 1
@@ -789,7 +852,7 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 // layoutColumn flows a column of blocks starting at x=colX and wrapping text to
 // colW, returning the draw lines (absolute positions) and the y after the last
 // block. A block's own offsets (boxLeft, textX) are relative to the column.
-func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, boxes *[]drawBox, g *geomSink) ([]drawLine, float64) {
 	var out []drawLine
 	var absLines []drawLine
 	var absBoxes []drawBox
@@ -810,6 +873,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	}
 	y := startY
 	recordBox := func(b renderBlock, top, bottom, x, w float64) {
+		if g != nil && len(b.geomIDs) > 0 {
+			g.record(b.geomIDs, x, top, x+w, bottom)
+		}
 		if b.boxID == 0 {
 			return
 		}
@@ -1127,18 +1193,18 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			y += 12
 		case blockFlex:
 			if b.table {
-				ls, h := layoutTable(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
+				ls, h := layoutTable(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes, g)
 				out = append(out, ls...)
 				y += h
 				continue
 			}
 			if b.grid {
-				ls, h := layoutGrid(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
+				ls, h := layoutGrid(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes, g)
 				out = append(out, ls...)
 				y += h
 				continue
 			}
-			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes)
+			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes, g)
 			out = append(out, ls...)
 			y += h
 		case blockFloat:
@@ -1183,7 +1249,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			// The float's own layout reserves its margin, so it is measured
 			// over the border box plus that margin.
-			fl, fend := layoutColumn(b.floatBlocks, fx, fw+fMargin, fy, baseSize, boxes)
+			fl, fend := layoutColumn(b.floatBlocks, fx, fw+fMargin, fy, baseSize, boxes, g)
 			out = append(out, fl...)
 			fh := fend - fy
 			if fh < 0 {
@@ -1360,7 +1426,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		if len(b.abs) > 0 {
 			originX := boxX + b.borderW + (b.textX - b.boxLeft)
-			absLines = append(absLines, layoutAbsChildren(b.abs, originX, contentTop, contentW, y-contentTop, baseSize, &absBoxes)...)
+			absLines = append(absLines, layoutAbsChildren(b.abs, originX, contentTop, contentW, y-contentTop, baseSize, &absBoxes, g)...)
 		}
 		// The box is the border box: from the top of the content box up over
 		// the top padding and border, and down past the bottom ones.
@@ -1441,7 +1507,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 // left/top is placed from the origin; right/bottom anchor to the far edge; with
 // no inset it uses the origin, like a browser's static position for a box that
 // has left its flow.
-func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, boxes *[]drawBox) []drawLine {
+func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, boxes *[]drawBox, g *geomSink) []drawLine {
 	var out []drawLine
 	for _, child := range children {
 		w := intrinsicColumnWidth(child.blocks, cw, baseSize)
@@ -1474,7 +1540,7 @@ func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, bo
 			x += child.translateX + child.translateXPct*w
 			y += child.translateY
 		}
-		lines, _ := layoutColumn(child.blocks, x, w, y, baseSize, boxes)
+		lines, _ := layoutColumn(child.blocks, x, w, y, baseSize, boxes, g)
 		out = append(out, lines...)
 	}
 	return out
@@ -1483,7 +1549,7 @@ func layoutAbsChildren(children []absChild, ox, oy, cw, ch, baseSize float64, bo
 // layoutFlex lays a flex row out inside the column, returning its lines and
 // height. Only the main size is distributed: children keep their natural height
 // and align-items positions them vertically.
-func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox, g *geomSink) ([]drawLine, float64) {
 	n := len(b.children)
 	if n == 0 {
 		return nil, 0
@@ -1557,7 +1623,7 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 		if ri > 0 {
 			total += rowGap
 		}
-		ls, h := layoutFlexRun(b, run, base, contentX, avail, y+total, baseSize, boxes)
+		ls, h := layoutFlexRun(b, run, base, contentX, avail, y+total, baseSize, boxes, g)
 		lines = append(lines, ls...)
 		total += h
 	}
@@ -1581,7 +1647,7 @@ type tableRow struct {
 // widths come from the widest cell in each column (max-content), scaled to the
 // table's used width: the declared width, or the content width when narrower.
 // Each row is as tall as its tallest cell.
-func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox, g *geomSink) ([]drawLine, float64) {
 	if len(b.rows) == 0 {
 		return nil, 0
 	}
@@ -1691,7 +1757,7 @@ func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBo
 			for j := range cell {
 				cell[j].hasSizeOwner = false
 			}
-			cl, endY := layoutColumn(cell, cx, cw, y+total, baseSize, boxes)
+			cl, endY := layoutColumn(cell, cx, cw, y+total, baseSize, boxes, g)
 			childLines = append(childLines, cl)
 			h := endY - (y + total)
 			childH = append(childH, h)
@@ -1729,7 +1795,7 @@ func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBo
 // grid-template-columns. Auto placement is row-major: items fill the tracks
 // left to right and a new row starts when the remaining tracks cannot hold the
 // next item's span. Each row is as tall as its tallest item.
-func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox, g *geomSink) ([]drawLine, float64) {
 	n := len(b.children)
 	if n == 0 {
 		return nil, 0
@@ -1920,7 +1986,7 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 				col[j].hasSizeOwner = false
 			}
 			var scratch []drawBox
-			_, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, &scratch)
+			_, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, &scratch, g)
 			measured[k] = endY - (y + total)
 			if measured[k] > rowH {
 				rowH = measured[k]
@@ -1952,7 +2018,7 @@ func layoutGrid(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 					last.minHeight = rowH
 				}
 			}
-			cl, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, boxes)
+			cl, endY := layoutColumn(col, xs[k], ws[k], y+total, baseSize, boxes, g)
 			if stretched != 0 {
 				col[len(col)-1].minHeight = stretched
 			}
@@ -2030,7 +2096,7 @@ func flexRuns(base []float64, gap, avail float64, wrap bool) [][]int {
 }
 
 // layoutFlexRun distributes one row's widths and lays out its children.
-func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y, baseSize float64, boxes *[]drawBox) ([]drawLine, float64) {
+func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y, baseSize float64, boxes *[]drawBox, g *geomSink) ([]drawLine, float64) {
 	n := len(idx)
 	gap := b.gap
 	widths := make([]float64, n)
@@ -2126,7 +2192,7 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 				col[j].hasBoxWidth = false
 			}
 		}
-		cl, endY := layoutColumn(col, x, widths[i], y, baseSize, boxes)
+		cl, endY := layoutColumn(col, x, widths[i], y, baseSize, boxes, g)
 		childLines[i] = cl
 		childH[i] = endY - y
 		if childH[i] > maxH {

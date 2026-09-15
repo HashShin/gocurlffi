@@ -546,12 +546,54 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.method(p, "focus", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	e.method(p, "blur", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	e.method(p, "getBoundingClientRect", func(call goja.FunctionCall) goja.Value {
-		o := e.vm.NewObject()
-		for _, k := range []string{"x", "y", "top", "left", "right", "bottom", "width", "height"} {
-			_ = o.Set(k, 0)
-		}
-		return o
+		r := e.page.ElementRect(e.thisNode(call))
+		return e.domRect(r)
 	})
+	e.method(p, "getClientRects", func(call goja.FunctionCall) goja.Value {
+		r := e.page.ElementRect(e.thisNode(call))
+		arr := e.vm.NewArray()
+		n := 0
+		if r.Width > 0 || r.Height > 0 {
+			_ = arr.Set("0", e.domRect(r))
+			n = 1
+		}
+		_ = arr.Set("length", n)
+		_ = arr.Set("item", func(call goja.FunctionCall) goja.Value {
+			i := int(call.Argument(0).ToInteger())
+			if i == 0 && (r.Width > 0 || r.Height > 0) {
+				return e.domRect(r)
+			}
+			return goja.Null()
+		})
+		return arr
+	})
+	// offset* and client* answer from the same rectangle. offsetTop/Left are
+	// measured from the page origin because there is no offsetParent chain.
+	for _, a := range []struct {
+		name string
+		pick func(Rect) float64
+	}{
+		{"offsetWidth", func(r Rect) float64 { return r.Width }},
+		{"offsetHeight", func(r Rect) float64 { return r.Height }},
+		{"offsetTop", func(r Rect) float64 { return r.Y }},
+		{"offsetLeft", func(r Rect) float64 { return r.X }},
+		{"clientWidth", func(r Rect) float64 { return r.Width }},
+		{"clientHeight", func(r Rect) float64 { return r.Height }},
+		{"clientTop", func(Rect) float64 { return 0 }},
+		{"clientLeft", func(Rect) float64 { return 0 }},
+		{"scrollWidth", func(r Rect) float64 { return r.Width }},
+		{"scrollHeight", func(r Rect) float64 { return r.Height }},
+		{"scrollTop", func(Rect) float64 { return 0 }},
+		{"scrollLeft", func(Rect) float64 { return 0 }},
+	} {
+		pick := a.pick
+		e.accessor(p, a.name,
+			func(call goja.FunctionCall) goja.Value {
+				return e.vm.ToValue(int(pick(e.page.ElementRect(e.thisNode(call))) + 0.5))
+			},
+			func(goja.FunctionCall) goja.Value { return goja.Undefined() },
+		)
+	}
 	e.method(p, "getAttributeNS", func(call goja.FunctionCall) goja.Value {
 		v, ok := getAttr(e.thisNode(call), strings.ToLower(argString(call.Argument(1))))
 		if !ok {
@@ -754,7 +796,9 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		removeChild(n)
 		return e.wrap(n)
 	})
-	e.method(p, "elementFromPoint", func(goja.FunctionCall) goja.Value { return goja.Null() })
+	e.method(p, "elementFromPoint", func(call goja.FunctionCall) goja.Value {
+		return e.wrap(e.page.ElementFromPoint(call.Argument(0).ToFloat(), call.Argument(1).ToFloat()))
+	})
 	e.method(p, "open", func(call goja.FunctionCall) goja.Value { return e.wrap(e.docOf(call)) })
 	e.method(p, "close", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	e.method(p, "hasFocus", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
@@ -961,6 +1005,20 @@ func (e *jsEnv) xpathResultObject(res XPathResult, wantType int) *goja.Object {
 		}
 		return e.wrap(nodes[i])
 	})
+	return o
+}
+
+// domRect builds a DOMRect from a layout rectangle.
+func (e *jsEnv) domRect(r Rect) *goja.Object {
+	o := e.vm.NewObject()
+	_ = o.Set("x", r.X)
+	_ = o.Set("y", r.Y)
+	_ = o.Set("left", r.X)
+	_ = o.Set("top", r.Y)
+	_ = o.Set("width", r.Width)
+	_ = o.Set("height", r.Height)
+	_ = o.Set("right", r.Right())
+	_ = o.Set("bottom", r.Bottom())
 	return o
 }
 
