@@ -27,6 +27,7 @@ func runServe() {
 	newFS("serve")
 	addr := flagStr("addr", ":8080", "listen address")
 	display := flagStr("display", ":99", "Xvfb display")
+	browser := flagStr("browser", "", "browser binary (default: auto-detect)")
 	tabs := flagInt("tabs", 1, "browser tabs / concurrency (lower = less memory)")
 	interval := flagDur("interval", 2*time.Second, "min delay between requests")
 	timeout := flagDur("timeout", 20*time.Second, "per-page load timeout")
@@ -34,6 +35,7 @@ func runServe() {
 	parseFlags()
 
 	eng, err := gsearch.New(gsearch.Config{
+		Browser:     *browser,
 		Display:     *display,
 		Concurrency: *tabs,
 		Interval:    *interval,

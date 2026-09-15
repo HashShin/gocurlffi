@@ -68,6 +68,7 @@ func runSearch() {
 	retries := flagInt("retries", 3, "retries per query on CAPTCHA/timeout")
 	file := flagStr("file", "", "file of queries, one per line")
 	display := flagStr("display", ":99", "Xvfb display")
+	browser := flagStr("browser", "", "browser binary (default: auto-detect)")
 	asJSON := flagBool("json", false, "output JSON")
 	outFile := flagStr("out", "", "write JSON to a file (implies -json)")
 	parseFlags()
@@ -103,6 +104,7 @@ func runSearch() {
 	fmt.Printf("queries=%d concurrency=%d num=%d max=%d interval=%s\n", len(queries), *concurrency, *num, *max, *interval)
 
 	eng, err := gsearch.New(gsearch.Config{
+		Browser:     *browser,
 		Display:     *display,
 		Concurrency: *concurrency,
 		Interval:    *interval,

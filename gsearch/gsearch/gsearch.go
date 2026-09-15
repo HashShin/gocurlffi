@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,7 +25,45 @@ import (
 	"github.com/gobwas/ws/wsutil"
 )
 
-const chromium = "/data/data/com.termux/files/usr/bin/chromium-browser"
+// browserCandidates are the Chromium builds this tool drives, in order of
+// preference. The first that exists is used unless Config.Browser names one.
+// Termux is first so behaviour there is unchanged.
+var browserCandidates = []string{
+	"/data/data/com.termux/files/usr/bin/chromium-browser",
+	"/usr/bin/google-chrome-stable",
+	"/usr/bin/google-chrome",
+	"/usr/bin/chromium",
+	"/usr/bin/chromium-browser",
+	"/snap/bin/chromium",
+	"/opt/google/chrome/chrome",
+	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+}
+
+// browserNames are looked up on PATH when no candidate path exists.
+var browserNames = []string{"google-chrome-stable", "google-chrome", "chromium", "chromium-browser"}
+
+// findBrowser resolves the browser binary. An explicit path wins and must exist;
+// otherwise the first known location, then PATH. The hardcoded Termux path this
+// used to carry made the tool unusable anywhere else.
+func findBrowser(explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", fmt.Errorf("browser %q: %w", explicit, err)
+		}
+		return explicit, nil
+	}
+	for _, c := range browserCandidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	for _, name := range browserNames {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no chromium found; pass -browser /path/to/chrome")
+}
 
 // browserFlags keep the browser footprint small while still being
 // anti-detection friendly.
@@ -103,25 +142,44 @@ func displayInUse(display string) bool {
 
 // startBrowserWithRetry tries startBrowser a few times, killing any stray
 // Chromium between attempts, to ride out flaky browser startup.
-func startBrowserWithRetry(display string) (*Browser, error) {
+func startBrowserWithRetry(browserPath, display string) (*Browser, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		b, err := startBrowser(display)
+		b, err := startBrowser(browserPath, display)
 		if err == nil {
 			return b, nil
 		}
 		lastErr = err
-		exec.Command("pkill", "-9", "-f", "lib/chromium/chrome").Run()
+		exec.Command("pkill", "-9", "-f", filepath.Base(browserPath)).Run()
 		time.Sleep(2 * time.Second)
 	}
 	return nil, lastErr
 }
 
-func startBrowser(display string) (*Browser, error) {
-	port := freePort()
-	args := append(browserFlags, fmt.Sprintf("--remote-debugging-port=%d", port))
+// profileDir is the browser profile gsearch keeps between runs. Chrome 136 and
+// later refuse to open the DevTools remote debugging port against the default
+// profile ("DevTools remote debugging requires a non-default data directory"),
+// so this is required, not an optimisation. Keeping it across runs also lets
+// consent and session cookies accumulate, which is what keeps a warmed profile
+// out of the interstitial.
+func profileDir() string {
+	if d := os.Getenv("GSEARCH_PROFILE"); d != "" {
+		return d
+	}
+	return filepath.Join(os.TempDir(), "gsearch-chrome-profile")
+}
 
-	cmd := exec.Command(chromium, args...)
+func startBrowser(browserPath, display string) (*Browser, error) {
+	port := freePort()
+	dir := profileDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create browser profile %s: %w", dir, err)
+	}
+	args := append(browserFlags,
+		fmt.Sprintf("--user-data-dir=%s", dir),
+		fmt.Sprintf("--remote-debugging-port=%d", port))
+
+	cmd := exec.Command(browserPath, args...)
 	cmd.Env = append(os.Environ(), "DISPLAY="+display)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
@@ -594,6 +652,7 @@ func (r *rateLimiter) wait() {
 
 // Config controls browser setup and per-search behaviour.
 type Config struct {
+	Browser     string        // browser binary; empty auto-detects
 	Display     string        // Xvfb display, e.g. ":99"
 	Concurrency int           // number of tabs in the pool
 	Interval    time.Duration // min delay between requests
@@ -626,6 +685,12 @@ func New(cfg Config) (*Engine, error) {
 		cfg.Retries = 1
 	}
 
+	browserPath, err := findBrowser(cfg.Browser)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Browser = browserPath
+
 	// Virtual display so Chromium runs non-headless (headless gets CAPTCHA'd).
 	// Reuse an already-running Xvfb on this display instead of starting a
 	// second one (which would fail because the socket is taken).
@@ -647,7 +712,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	// startBrowser can be flaky on slow/loaded devices; retry a couple of times.
-	browser, err := startBrowserWithRetry(cfg.Display)
+	browser, err := startBrowserWithRetry(cfg.Browser, cfg.Display)
 	if err != nil {
 		if xvfb != nil {
 			xvfb.Process.Kill()
@@ -706,7 +771,7 @@ func (e *Engine) recreateTab(i int) error {
 func (e *Engine) restartBrowser() error {
 	e.browser.stop()
 	time.Sleep(2 * time.Second)
-	b, err := startBrowserWithRetry(e.cfg.Display)
+	b, err := startBrowserWithRetry(e.cfg.Browser, e.cfg.Display)
 	if err != nil {
 		return err
 	}
