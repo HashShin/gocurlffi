@@ -1458,6 +1458,11 @@ type styleEngine struct {
 	baseSize float64
 	width    float64
 	quirks   bool
+	// remBase is the root element's computed font size, which is what a rem
+	// length means. A stylesheet that sets "html { font-size: 62.5% }" moves
+	// it from 16px to 10px, and resolving rem against 16 anyway renders every
+	// page that uses that idiom a third too large.
+	remBase float64
 }
 
 func newStyleEngine(rules []cssRule, width float64, quirks bool) *styleEngine {
@@ -1465,6 +1470,7 @@ func newStyleEngine(rules []cssRule, width float64, quirks bool) *styleEngine {
 		rules:    rules,
 		cache:    map[*html.Node]*computedStyle{},
 		baseSize: 16,
+		remBase:  16,
 		width:    width,
 		quirks:   quirks,
 	}
@@ -1499,6 +1505,11 @@ func (e *styleEngine) compute(n *html.Node) *computedStyle {
 		parent = e.compute(n.Parent)
 	}
 	cs := e.computeNode(n, parent)
+	if parent == nil && cs != nil && cs.fontSize > 0 {
+		// The root element's own rem lengths used the initial 16px, as a
+		// browser does; everything under it resolves against this.
+		e.remBase = cs.fontSize
+	}
 	e.cache[n] = cs
 	return cs
 }
@@ -1614,7 +1625,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 			continue
 		}
 		for _, d := range expandShorthands([]cssDecl{{prop: m.decl.prop, val: val, important: m.decl.important}}) {
-			declared[d.prop] = d.val
+			declared[d.prop] = resolveRem(d.val, e.remBase)
 		}
 	}
 	// Inherited values from the parent where the element declares nothing.
@@ -1626,6 +1637,70 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 
 	e.applyDecls(&cs, declared, parent)
 	return &cs
+}
+
+// resolveRem rewrites rem lengths into pixels, so every length parser below
+// sees a length it already understands. Quoted text is left alone: a "1rem"
+// inside content: is text, not a length.
+func resolveRem(val string, rem float64) string {
+	if rem <= 0 || rem == 16 || !strings.Contains(val, "rem") {
+		return val
+	}
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(val); {
+		c := val[i]
+		if quote != 0 {
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(val) {
+				b.WriteByte(val[i+1])
+				i += 2
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			i++
+			continue
+		}
+		if c == '"' || c == '\'' {
+			quote = c
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if (c >= '0' && c <= '9') || c == '.' || c == '-' {
+			j := i + 1
+			for j < len(val) && ((val[j] >= '0' && val[j] <= '9') || val[j] == '.') {
+				j++
+			}
+			if strings.HasPrefix(val[j:], "rem") && !isCSSIdentByte(byteAt(val, j+3)) {
+				if f, err := strconv.ParseFloat(val[i:j], 64); err == nil {
+					b.WriteString(strconv.FormatFloat(f*rem, 'f', -1, 64))
+					b.WriteString("px")
+					i = j + 3
+					continue
+				}
+			}
+			b.WriteString(val[i:j])
+			i = j
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+func byteAt(s string, i int) byte {
+	if i < len(s) {
+		return s[i]
+	}
+	return ' '
+}
+
+func isCSSIdentByte(c byte) bool {
+	return c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent *computedStyle) {
