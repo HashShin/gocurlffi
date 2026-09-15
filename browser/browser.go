@@ -141,6 +141,10 @@ func (b *Browser) Close() { b.sess.Close() }
 // Options returns a copy of the browser options.
 func (b *Browser) Options() Options { return b.opts }
 
+// UserAgent returns the default User-Agent the browser reports when no
+// impersonation preset overrides it.
+func UserAgent() string { return defaultUserAgent }
+
 // get performs a document GET through the impersonating transport.
 func (b *Browser) get(rawURL string, headers map[string]string) (*requests.Response, error) {
 	return b.fetch(rawURL, headers, "document")

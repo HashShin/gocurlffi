@@ -2,6 +2,7 @@ package browser
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,6 +26,11 @@ type ConsoleEntry struct {
 	Message string
 	Time    time.Time
 }
+
+var (
+	errNoScriptEnv  = errors.New("browser: page has no JavaScript environment")
+	errNotAFunction = errors.New("browser: value is not callable")
+)
 
 // Page is a single loaded document plus its JavaScript environment.
 type Page struct {
@@ -647,6 +653,84 @@ func (p *Page) Text() string {
 
 // Query returns the first element matching a CSS selector.
 func (p *Page) Query(sel string) *html.Node { return querySelector(p.doc, sel) }
+
+// UserAgent returns the User-Agent this page reports and sends.
+func (p *Page) UserAgent() string { return p.userAgent }
+
+// Runtime returns the page's JavaScript runtime, or nil when scripts are
+// disabled. It backs CDP's Runtime domain.
+func (p *Page) Runtime() *goja.Runtime {
+	if p.env == nil {
+		return nil
+	}
+	return p.env.vm
+}
+
+// NodeValue wraps a DOM node as a JavaScript value in the page's context, so a
+// CDP DOM.resolveNode can hand it to a client.
+func (p *Page) NodeValue(n *html.Node) goja.Value {
+	if p.env == nil || n == nil {
+		return goja.Null()
+	}
+	return p.env.wrap(n)
+}
+
+// OuterHTMLOf serializes a node, including the element itself.
+func (p *Page) OuterHTMLOf(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
+	return p.serialize(n)
+}
+
+// Title returns the document title, trimmed.
+func (p *Page) Title() string {
+	if t := p.Query("title"); t != nil {
+		return strings.TrimSpace(textContent(t))
+	}
+	return ""
+}
+
+// SetViewportWidth sets the width media queries and the layout resolve against,
+// which is what a CDP Emulation.setDeviceMetricsOverride changes.
+func (p *Page) SetViewportWidth(w float64) { p.setViewportWidth(w) }
+
+// CallOn calls a function declaration with `this` bound to obj and the given
+// arguments, in the page's JavaScript context. It is the primitive CDP's
+// Runtime.callFunctionOn builds on.
+func (p *Page) CallOn(decl string, this goja.Value, args []goja.Value) (goja.Value, error) {
+	if p.env == nil {
+		return goja.Undefined(), errNoScriptEnv
+	}
+	v, err := p.env.vm.RunString("(" + decl + ")")
+	if err != nil {
+		return goja.Undefined(), err
+	}
+	fn, ok := goja.AssertFunction(v)
+	if !ok {
+		return goja.Undefined(), errNotAFunction
+	}
+	if this == nil {
+		this = goja.Undefined()
+	}
+	return fn(this, args...)
+}
+
+// QuerySelectorFrom returns the first descendant of n matching sel.
+func (p *Page) QuerySelectorFrom(n *html.Node, sel string) *html.Node {
+	if n == nil {
+		return nil
+	}
+	return querySelector(n, sel)
+}
+
+// QuerySelectorAllFrom returns every descendant of n matching sel.
+func (p *Page) QuerySelectorAllFrom(n *html.Node, sel string) []*html.Node {
+	if n == nil {
+		return nil
+	}
+	return querySelectorAll(n, sel)
+}
 
 // QueryAll returns all elements matching a CSS selector.
 func (p *Page) QueryAll(sel string) []*html.Node { return querySelectorAll(p.doc, sel) }

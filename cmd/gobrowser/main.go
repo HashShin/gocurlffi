@@ -4,16 +4,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 
 	"gocurlffi/browser"
 	"gocurlffi/impersonate"
+	"gocurlffi/server"
 )
 
 // version is the commit the binary was built from, set by the Makefile with
@@ -32,6 +36,8 @@ func main() {
 	switch cmd {
 	case "get", "fetch", "open":
 		runGet(args)
+	case "serve":
+		runServe(args)
 	case "list", "targets":
 		for _, t := range impersonate.Targets() {
 			fmt.Println(t)
@@ -50,6 +56,7 @@ func usage() {
 
 usage:
   gobrowser get <url> [flags]
+  gobrowser serve [--host 127.0.0.1] [--port 9222]
   gobrowser list
 
 flags:
@@ -82,6 +89,45 @@ flags:
       --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
+}
+
+// runServe starts the CDP server so Puppeteer, Playwright or chromedp can drive
+// the browser over ws://host:port.
+func runServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	var (
+		host         = fs.String("host", "127.0.0.1", "bind host")
+		port         = fs.Int("port", 9222, "bind port")
+		impersonate  = fs.String("i", "", "impersonate target")
+		impersonateL = fs.String("impersonate", "", "impersonate target")
+		noJS         = fs.Bool("no-js", false, "disable JavaScript")
+		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
+		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
+		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
+	)
+	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
+	if *impersonate == "" {
+		*impersonate = *impersonateL
+	}
+	runScripts := !*noJS
+	opts := browser.Options{
+		Impersonate: *impersonate,
+		Proxy:       *proxy,
+		ObeyRobots:  *obeyRobots,
+		RunScripts:  &runScripts,
+		Debug:       *debug,
+	}
+	b := browser.New(opts)
+	defer b.Close()
+	server.SetVersion(version)
+	srv := server.New(server.Config{Browser: b})
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	fmt.Fprintf(os.Stderr, "CDP server listening on ws://%s:%d\n", *host, *port)
+	if err := srv.ListenAndServe(ctx, *host, *port); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runGet(args []string) {
