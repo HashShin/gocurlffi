@@ -72,6 +72,18 @@ func (e *jsEnv) fetch(call goja.FunctionCall) goja.Value {
 		}
 	}
 
+	// An already-aborted signal must reject before the request goes out. The
+	// request itself is synchronous, so a signal that fires mid-flight cannot
+	// interrupt it; that limit is documented in browser/README.md.
+	if sig := signalOf(input); sig != nil && sig.aborted {
+		return e.rejectedPromiseValue(sig.reason)
+	}
+	if init, ok := call.Argument(1).(*goja.Object); ok {
+		if sig := signalOf(init.Get("signal")); sig != nil && sig.aborted {
+			return e.rejectedPromiseValue(sig.reason)
+		}
+	}
+
 	rawURL = resolveURL(e.page.baseURL(), rawURL)
 	resp, err := e.doRequest(method, rawURL, headers.pairs(), body)
 	if err != nil {

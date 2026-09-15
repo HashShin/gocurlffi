@@ -72,6 +72,37 @@ func (p *Page) shadowOf(host *html.Node) (*shadowRoot, bool) {
 	return sr, ok
 }
 
+// isXMLNode reports whether a node came from an XML parse. tagName uppercases
+// for HTML but must preserve case for XML, so the two have to be told apart.
+// The map is nil on every page that never parsed XML, so this costs a length
+// check there.
+func (p *Page) isXMLNode(n *html.Node) bool {
+	if len(p.xmlDocs) == 0 || n == nil {
+		return false
+	}
+	for cur := n; cur != nil; cur = cur.Parent {
+		if p.xmlDocs[cur] {
+			return true
+		}
+	}
+	return false
+}
+
+// isConnected reports whether a node is in the document, following a shadow
+// boundary back to its host. A node with a parent is not necessarily connected:
+// a tree built with innerHTML and never inserted is detached.
+func (p *Page) isConnected(n *html.Node) bool {
+	for cur := n; cur != nil; cur = cur.Parent {
+		if cur == p.doc {
+			return true
+		}
+		if sr, ok := p.shadowsByContent[cur]; ok {
+			return p.isConnected(sr.host)
+		}
+	}
+	return false
+}
+
 // ShadowRoots returns every attached shadow root in document order, so a
 // caller can inspect the trees extraction walked through.
 func (p *Page) ShadowRoots() []*shadowRoot {

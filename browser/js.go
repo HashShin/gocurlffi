@@ -41,6 +41,14 @@ type jsEnv struct {
 	resizeObservers []func()
 	// history is the page's session history, shared with the location object.
 	history *pageHistory
+	// customElements is the page's CustomElementRegistry; nil-safe everywhere.
+	customElements *customElementRegistry
+	// constructing is the element being upgraded while its custom element
+	// constructor runs. A class constructor's `this` is a fresh object that
+	// does not carry the node symbol yet, but the constructor is allowed to
+	// call this.attachShadow() and friends, so those calls resolve to this
+	// element for the duration.
+	constructing *html.Node
 
 	// canvases holds the 2D drawing state of <canvas> elements, per environment.
 	canvases map[*html.Node]*canvasState
@@ -133,6 +141,11 @@ func (e *jsEnv) thisNode(call goja.FunctionCall) *html.Node {
 			if n, ok := v.Export().(*html.Node); ok {
 				return n
 			}
+		}
+		// Inside a custom element constructor the receiver has no node symbol
+		// yet; treat it as the element being upgraded.
+		if e.constructing != nil {
+			return e.constructing
 		}
 	}
 	return nil
@@ -973,12 +986,19 @@ func (e *jsEnv) invokeTimer(t *jsTimer) {
 // --- events ---
 
 func (e *jsEnv) addWindowListener(typ string, v goja.Value) {
+	// Dispatch lowercases the event name, so registration has to as well:
+	// otherwise window.addEventListener('DOMContentLoaded', ...) stored a
+	// mixed-case key that dispatchWindow("DOMContentLoaded") never looked up,
+	// and the listener silently never ran. 'load' hid the bug because it is
+	// already lowercase.
+	typ = strings.ToLower(typ)
 	if l, ok := e.makeListener(v); ok {
 		e.winListeners[typ] = append(e.winListeners[typ], l)
 	}
 }
 
 func (e *jsEnv) removeWindowListener(typ string, v goja.Value) {
+	typ = strings.ToLower(typ)
 	ls := e.winListeners[typ]
 	for i, l := range ls {
 		if e.sameListener(l, v) {

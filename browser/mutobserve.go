@@ -204,6 +204,9 @@ func (e *jsEnv) setAttrNoted(n *html.Node, name, value string) {
 	old, had := getAttr(n, name)
 	setAttr(n, name, value)
 	e.noteAttr(n, name, old, had)
+	if def := e.customElementAt(n, name); def != nil {
+		e.customElements.attributeChanged(n, name, old, value)
+	}
 }
 
 // removeAttrNoted is removeAttribute with the mutation recorded.
@@ -217,6 +220,9 @@ func (e *jsEnv) removeAttrNoted(n *html.Node, name string) {
 	}
 	removeAttr(n, name)
 	e.noteAttr(n, name, old, true)
+	if def := e.customElementAt(n, name); def != nil {
+		e.customElements.attributeChanged(n, name, old, "")
+	}
 }
 
 // --- delivery --------------------------------------------------------------

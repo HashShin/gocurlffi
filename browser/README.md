@@ -267,6 +267,33 @@ make build
   `back`/`forward`/`go` walk the entries those calls created and fire
   `popstate`. `location` reads through to the live URL rather than a copy taken
   at load.
+- Custom elements work. `customElements.define` upgrades the elements already in
+  the document, every later `createElement`/parse/insert upgrades too, and
+  `constructor`, `connectedCallback`, `disconnectedCallback` and
+  `attributeChangedCallback` (driven by the static `observedAttributes`) all
+  fire. `get`, `upgrade` and `whenDefined` behave. The element object the page
+  receives is the constructed instance, so a component's own methods are
+  callable on it, and an element the page already held keeps its identity across
+  the upgrade. A constructor may call `this.attachShadow(...)`:
+  `document.querySelector` still stops at the boundary, but extraction reads
+  through it, so a component's content reaches `Text`, `Markdown` and `HTML`.
+  Two limits: callback timing is not modelled, so lifecycle and attribute
+  callbacks run synchronously instead of being queued on a microtask, and only
+  autonomous custom elements are supported (`define(name, ctor, {extends:...})`
+  for a customized built-in is ignored), with no `:defined` CSS.
+- `AbortSignal` is real. `abort()` updates `aborted`/`reason`, fires the `abort`
+  event to `addEventListener` and `onabort` listeners, and propagates to signals
+  derived with `AbortSignal.any`; `AbortSignal.timeout` schedules an abort on the
+  page's own timer queue. A `Request` carries the controller's own signal, so
+  `request.signal.aborted` follows `controller.abort()`, and `fetch` rejects an
+  already-aborted signal before sending. A request in flight cannot be
+  interrupted, because the loader is synchronous.
+- `DOMParser` honours its type argument. `text/xml`, `application/xml`,
+  `application/xhtml+xml` and `image/svg+xml` parse as XML through
+  `encoding/xml` and yield an `XMLDocument` whose `documentElement` is the XML
+  root, with case preserved (`tagName`, `localName`) as XML requires; anything
+  else parses as HTML. Malformed XML returns a `<parsererror>` document rather
+  than throwing, as a browser does.
 - `structuredClone` is a real structured clone rather than a JSON round-trip:
   `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and cycles all
   survive, and a nested `Map` no longer comes back as a plain object.
@@ -276,7 +303,16 @@ make build
 ### MCP server
 
 `gocurlffi mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
-`--port`. Point an MCP client at it:
+`--port`. Each HTTP session gets its own browsing context -- its own page,
+cookies and memory -- so several agents can share one server without clobbering
+each other. A client that `initialize`s without an `Mcp-Session-Id` header is
+assigned one, and the id comes back in the response; send it on later requests
+to stay on that session, or send the same id from two clients to deliberately
+share one page. `DELETE /mcp` with the header closes a session, and the
+`session_new`, `session_list` and `session_close` tools manage them explicitly.
+Over stdio there is one implicit session, because the client owns the process.
+
+Point an MCP client at it:
 
 ```json
 {
@@ -640,8 +676,7 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 This is a browsing core with a document renderer, not a full web rendering
 engine. `Screenshot` applies a large subset of CSS (see the limits above) but is
-not a browser: there is no native LLM agent mode (the MCP server is there for an
-external agent to drive), and the gaps below remain. Specifically absent:
+not a browser, and the gaps below remain. Specifically absent:
 
 - The JavaScript engine has no async generators or `for await (... of ...)`
   (goja reports "Async generators are not supported yet"). Bundles that rely
@@ -701,6 +736,30 @@ it is enough.
   robots and CORS only act when their option is set; `serve` only costs while
   it runs; iframes and ES modules only cost on pages that contain them.
 
+### Waiting for a page
+
+A load runs scripts, fires `DOMContentLoaded` and `load`, then waits up to
+`--timer-budget` (default 2s) for pending timers. That covers most pages, and
+the waits below are for the rest:
+
+- `--wait-until load` (default) is the behaviour above.
+- `--wait-until domcontentloaded` stops right after the `DOMContentLoaded`
+  event, before the timer budget and before child frames. A handler that renders
+  on that event still runs; a page that needs a later turn does not. On a
+  timer-driven page this roughly halves the load time, which is the point.
+- `--wait-until networkidle0` keeps draining after load until nothing has been
+  pending for 500ms. A page that holds a socket open legitimately never goes
+  idle, so the timeout ends the wait without it being an error.
+- `--wait-ms 500ms` advances the page's clock, running timers as their turn
+  comes; sleeping alone would not run the callback.
+- `--wait-script 'window.__ready'` evaluates the expression repeatedly until it
+  is truthy, up to `--wait-timeout`. A syntax error fails immediately rather
+  than polling until the timeout, since it will never become true.
+- `--wait SELECTOR` waits for an element, as before.
+
+The same primitives are on `Page`: `WaitForTime`, `WaitForScript`,
+`WaitForNetworkIdle` and `WaitForSelector`.
+
 ### CLI flags
 
 ```sh
@@ -710,6 +769,9 @@ gocurlffi get URL --render \
   -o FILE               # write output to FILE
   --eval 'JS'           # evaluate JS and print the result
   --wait SELECTOR       # wait for a selector before extracting
+  --wait-until MODE     # load (default), domcontentloaded or networkidle0
+  --wait-ms 500ms       # keep running the page's timers for this long
+  --wait-script JS      # poll JS until it returns a truthy value
   --timeout 30s         # per-request timeout
   --load-timeout 30s    # script-loading budget per page
   --timer-budget 2s     # wait for pending timers after load (lower = faster)

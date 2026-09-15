@@ -88,6 +88,10 @@ type Page struct {
 	shadows          map[*html.Node]*shadowRoot
 	shadowsByContent map[*html.Node]*shadowRoot
 
+	// xmlDocs holds the document nodes produced by DOMParser XML parses, so
+	// tagName can preserve case for them.
+	xmlDocs map[*html.Node]bool
+
 	// templateContent maps each <template> to the fragment holding its
 	// content, which is kept out of the document tree.
 	templateContent map[*html.Node]*html.Node
@@ -325,6 +329,10 @@ func (p *Page) run() error {
 	}
 	p.env = newJSEnv(p)
 
+	// Elements the parser produced are upgraded before the page's scripts run,
+	// so a component written in the HTML is already live when they execute.
+	p.env.upgradeDocument()
+
 	// Init scripts run before the page's own scripts, which is the whole point
 	// of the hook: a driver's patch must be in place before any page code can
 	// observe navigator or the document.
@@ -384,6 +392,19 @@ func (p *Page) run() error {
 	p.readyState = "interactive"
 	p.debugf("scripts done; firing DOMContentLoaded")
 	p.env.fireDOMContentLoaded()
+	// A DOMContentLoaded handler is the commonest place to render, and it runs
+	// synchronously above; flush what it queued before deciding to stop.
+	p.env.flushObservers()
+
+	// --wait-until domcontentloaded stops here, before the timer budget. That
+	// budget is the expensive part of a load, so stopping after the event is
+	// what makes this mode worth choosing: the load event, the timer wait and
+	// child frames are all skipped.
+	if p.browser.opts.waitUntil() == "domcontentloaded" {
+		p.debugf("wait-until=domcontentloaded: stopping after DOMContentLoaded")
+		return nil
+	}
+
 	p.debugf("running timers (interactive)")
 	p.env.runTimers(1000)
 

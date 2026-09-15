@@ -31,6 +31,7 @@ const (
 	requestMark  = "__gocurlffiRequest"
 	responseMark = "__gocurlffiResponse"
 	streamMark   = "__gocurlffiStream"
+	abortMark    = "__gocurlffiAbortSignal"
 )
 
 func (e *jsEnv) mark(o *goja.Object, name string, v any) {
@@ -885,7 +886,17 @@ func (e *jsEnv) newRequestObject(input string, init *goja.Object) *goja.Object {
 	_ = o.Set("integrity", "")
 	_ = o.Set("keepalive", false)
 	_ = o.Set("destination", "")
-	_ = o.Set("signal", e.newAbortSignal())
+	// The Request shares the caller's signal, so aborting the controller is
+	// visible through request.signal.
+	if init != nil {
+		if sig := init.Get("signal"); sig != nil && !goja.IsUndefined(sig) && !goja.IsNull(sig) {
+			_ = o.Set("signal", sig)
+		} else {
+			_ = o.Set("signal", e.newAbortSignalState().obj)
+		}
+	} else {
+		_ = o.Set("signal", e.newAbortSignalState().obj)
+	}
 
 	var body []byte
 	if init != nil {

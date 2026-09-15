@@ -37,7 +37,10 @@ flags:
   -f, --format FORMAT      html (default), markdown, text, links
       --eval JS            evaluate JS after load and print the result
       --wait SELECTOR      wait for a selector before extracting
-      --wait-timeout DUR   timeout for --wait (default 10s)
+      --wait-timeout DUR   timeout for --wait and --wait-script (default 10s)
+  --wait-until MODE    load (default), domcontentloaded or networkidle0
+  --wait-ms DUR        keep running the page's timers for this long after load
+  --wait-script JS     evaluate JS repeatedly until it returns a truthy value
       --timeout DUR        per-request timeout (default 30s)
       --load-timeout DUR   script-loading budget per page (default 30s)
       --timer-budget DUR   wait for pending timers after load (default 2s)
@@ -174,7 +177,10 @@ func RunBrowserGet(args []string) {
 		formatL      = fs.String("format", "html", "output format")
 		eval         = fs.String("eval", "", "JS to evaluate after load")
 		wait         = fs.String("wait", "", "selector to wait for")
-		waitTimeout  = fs.Duration("wait-timeout", 10*time.Second, "selector wait timeout")
+		waitTimeout  = fs.Duration("wait-timeout", 10*time.Second, "timeout for --wait and --wait-script")
+		waitUntil    = fs.String("wait-until", "load", "how far the load goes: load, domcontentloaded or networkidle0")
+		waitMs       = fs.Duration("wait-ms", 0, "keep running the page's timers for this long after load")
+		waitScript   = fs.String("wait-script", "", "evaluate JS repeatedly until it returns a truthy value")
 		timeout      = fs.Duration("timeout", 30*time.Second, "request timeout")
 		loadTimeout  = fs.Duration("load-timeout", 30*time.Second, "script-loading budget")
 		timerBudget  = fs.Duration("timer-budget", 2*time.Second, "wait for pending timers after load")
@@ -240,6 +246,7 @@ func RunBrowserGet(args []string) {
 		Proxy:       *proxy,
 		ObeyRobots:  *obeyRobots,
 		Adblock:     *adblock,
+		WaitUntil:   *waitUntil,
 	}
 	if len(blocks) > 0 {
 		patterns := append([]string(nil), blocks...)
@@ -284,6 +291,21 @@ func RunBrowserGet(args []string) {
 	}
 	if *showStatus && p.Response() != nil {
 		fmt.Fprintf(os.Stderr, "status: %d %s\n", p.Response().StatusCode, p.Response().Reason)
+	}
+	// --wait-until networkidle0 drains what the load left pending. It is a
+	// separate step rather than a load mode because the load already ran.
+	if strings.EqualFold(*waitUntil, "networkidle0") || strings.EqualFold(*waitUntil, "networkidle") {
+		p.WaitForNetworkIdle(500*time.Millisecond, *timeout)
+	}
+	// The waits run in the order they are most useful: let timers settle, then
+	// poll for the page's own readiness signal, then for a specific element.
+	if *waitMs > 0 {
+		p.WaitForTime(*waitMs)
+	}
+	if *waitScript != "" {
+		if err := p.WaitForScript(*waitScript, *waitTimeout); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
 	}
 	if *wait != "" {
 		if p.WaitForSelector(*wait, *waitTimeout) == nil {

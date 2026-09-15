@@ -98,9 +98,19 @@ type Options struct {
 	// fulfilling a request the blocker would have dropped.
 	Adblock bool
 
+	// WaitUntil decides how far a load goes before Open returns:
+	// "load" (the default) runs scripts, DOMContentLoaded, load and the timer
+	// budget; "domcontentloaded" stops after DOMContentLoaded; "networkidle0"
+	// additionally keeps draining until nothing is pending. An unknown value
+	// means "load". See wait.go.
+	WaitUntil string
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }
+
+// waitUntil returns the normalized WaitUntil value.
+func (o Options) waitUntil() string { return normalizeWaitUntil(o.WaitUntil) }
 
 func (o Options) scriptsEnabled() bool { return o.RunScripts == nil || *o.RunScripts }
 
@@ -115,6 +125,12 @@ type Browser struct {
 	robotsMu sync.Mutex
 	robots   map[string]*robotsRules
 }
+
+// Fork returns a new Browser with the same options and its own cookie jar,
+// robots cache and page set. Two forks can hold independent logins, which is
+// what gives each MCP HTTP session its own cookies and memory. They still share
+// nothing else, so a fork is cheap: no request is made until it loads a page.
+func (b *Browser) Fork() *Browser { return New(b.opts) }
 
 // New creates a Browser with the given options.
 func New(opts Options) *Browser {

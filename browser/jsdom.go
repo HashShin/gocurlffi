@@ -93,6 +93,10 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		if n == nil || n.Type != html.ElementNode {
 			return goja.Undefined()
 		}
+		// HTML uppercases tagName; XML preserves the source case.
+		if e.page.isXMLNode(n) {
+			return e.vm.ToValue(n.Data)
+		}
 		return e.vm.ToValue(strings.ToUpper(n.Data))
 	}, nil)
 	e.accessor(p, "localName", func(call goja.FunctionCall) goja.Value {
@@ -161,6 +165,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		}
 		appendChild(parent, child)
 		e.noteChildList(parent, []*html.Node{child}, nil)
+		e.upgradeConnectedSubtree(child)
 		return e.wrap(child)
 	})
 	e.method(p, "removeChild", func(call goja.FunctionCall) goja.Value {
@@ -169,6 +174,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 			panic(e.vm.NewTypeError("removeChild: invalid node"))
 		}
 		parent := child.Parent
+		e.upgradeRemovedSubtree(child)
 		removeChild(child)
 		e.noteChildList(parent, nil, []*html.Node{child})
 		return e.wrap(child)
@@ -182,6 +188,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		}
 		insertBefore(parent, child, ref)
 		e.noteChildList(parent, []*html.Node{child}, nil)
+		e.upgradeConnectedSubtree(child)
 		return e.wrap(child)
 	})
 	e.method(p, "replaceChild", func(call goja.FunctionCall) goja.Value {
@@ -191,8 +198,10 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		if parent == nil || newN == nil || oldN == nil {
 			panic(e.vm.NewTypeError("replaceChild: invalid node"))
 		}
+		e.upgradeRemovedSubtree(oldN)
 		replaceChild(parent, newN, oldN)
 		e.noteChildList(parent, []*html.Node{newN}, []*html.Node{oldN})
+		e.upgradeConnectedSubtree(newN)
 		return e.wrap(oldN)
 	})
 	e.method(p, "hasChildNodes", func(call goja.FunctionCall) goja.Value {
@@ -452,6 +461,7 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.method(p, "remove", func(call goja.FunctionCall) goja.Value {
 		if n := e.thisNode(call); n != nil {
 			parent := n.Parent
+			e.upgradeRemovedSubtree(n)
 			removeChild(n)
 			e.noteChildList(parent, nil, []*html.Node{n})
 		}
@@ -755,10 +765,15 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.nodeList(out)
 	})
 	e.method(p, "createElement", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(createElement(argString(call.Argument(0))))
+		n := createElement(argString(call.Argument(0)))
+		// An element for a defined custom element is upgraded on creation.
+		e.registerCustomElement(n)
+		return e.wrap(n)
 	})
 	e.method(p, "createElementNS", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(createElement(argString(call.Argument(1))))
+		n := createElement(argString(call.Argument(1)))
+		e.registerCustomElement(n)
+		return e.wrap(n)
 	})
 	e.method(p, "createTextNode", func(call goja.FunctionCall) goja.Value {
 		return e.wrap(&html.Node{Type: html.TextNode, Data: argString(call.Argument(0))})

@@ -33,8 +33,10 @@ func (e *jsEnv) setupWeb() {
 	_ = rt.Set("AbortController", func(call goja.ConstructorCall) *goja.Object {
 		return e.newAbortController()
 	})
+	// AbortSignal.abort / .timeout / .any need the constructor to exist first.
+	e.installAbortStatics()
 	_ = rt.Set("AbortSignal", func(call goja.ConstructorCall) *goja.Object {
-		return e.newAbortSignal()
+		return e.newAbortSignalState().obj
 	})
 	_ = rt.Set("Event", func(call goja.ConstructorCall) *goja.Object {
 		return e.newEventCtor(argString(call.Argument(0)), call.Argument(1))
@@ -79,11 +81,18 @@ func (e *jsEnv) setupWeb() {
 	e.installWorker(rt)
 }
 
-// newDOMParser implements new DOMParser().parseFromString(html, type).
+// newDOMParser implements new DOMParser().parseFromString(source, type). The
+// type selects the parser: an XML type goes through encoding/xml and yields an
+// XMLDocument, anything else is HTML.
 func (e *jsEnv) newDOMParser() *goja.Object {
 	o := e.vm.NewObject()
+	e.tagObject(o, "DOMParser")
 	_ = o.Set("parseFromString", func(call goja.FunctionCall) goja.Value {
-		doc, err := html.Parse(strings.NewReader(argString(call.Argument(0))))
+		source := argString(call.Argument(0))
+		if isXMLType(argString(call.Argument(1))) {
+			return e.vm.ToValue(e.newXMLDocumentObject(e.parseXMLDocument(source)))
+		}
+		doc, err := html.Parse(strings.NewReader(source))
 		if err != nil {
 			panic(e.vm.NewGoError(err))
 		}
@@ -213,30 +222,6 @@ func (e *jsEnv) addIdleCallback(call goja.FunctionCall) goja.Value {
 }
 
 // customElementsObject is a registry stub; enough for registrations to succeed.
-func (e *jsEnv) customElementsObject() *goja.Object {
-	o := e.vm.NewObject()
-	registry := map[string]goja.Value{}
-	_ = o.Set("define", func(call goja.FunctionCall) goja.Value {
-		name := argString(call.Argument(0))
-		if _, exists := registry[name]; exists {
-			panic(e.vm.NewTypeError("custom element already defined: " + name))
-		}
-		registry[name] = call.Argument(1)
-		return goja.Undefined()
-	})
-	_ = o.Set("get", func(call goja.FunctionCall) goja.Value {
-		if v, ok := registry[argString(call.Argument(0))]; ok {
-			return v
-		}
-		return goja.Undefined()
-	})
-	_ = o.Set("whenDefined", func(goja.FunctionCall) goja.Value {
-		return e.resolvedPromise(goja.Undefined())
-	})
-	_ = o.Set("upgrade", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	return o
-}
-
 // --- URL ---
 
 func (e *jsEnv) newURLObject(raw, base string) *goja.Object {
@@ -449,33 +434,6 @@ func toBytes(v goja.Value) []byte {
 		}
 	}
 	return []byte(v.String())
-}
-
-// --- AbortController / AbortSignal ---
-
-func (e *jsEnv) newAbortSignal() *goja.Object {
-	o := e.vm.NewObject()
-	_ = o.Set("aborted", false)
-	_ = o.Set("reason", goja.Undefined())
-	_ = o.Set("addEventListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("removeEventListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("throwIfAborted", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
-	_ = o.Set("dispatchEvent", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
-	return o
-}
-
-func (e *jsEnv) newAbortController() *goja.Object {
-	o := e.vm.NewObject()
-	signal := e.newAbortSignal()
-	_ = o.Set("signal", signal)
-	_ = o.Set("abort", func(call goja.FunctionCall) goja.Value {
-		_ = signal.Set("aborted", true)
-		if r := call.Argument(0); r != nil && !goja.IsUndefined(r) {
-			_ = signal.Set("reason", r)
-		}
-		return goja.Undefined()
-	})
-	return o
 }
 
 // --- Event constructors ---
