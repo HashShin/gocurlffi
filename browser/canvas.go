@@ -43,6 +43,135 @@ type pathSeg struct {
 
 var defaultCanvasSize = [2]int{300, 150}
 
+// webGLContext returns a WebGL context for a canvas. A browser always has one -
+// even headless Chrome runs ANGLE - so getContext("webgl") answering null is a
+// direct tell that the environment is not a browser. Only the surface a
+// fingerprinting script reads is modelled: the parameter table, the extension
+// list, and no-op entry points for the rest.
+func (e *jsEnv) webGLContext(n *html.Node, major int) *goja.Object {
+	o := e.vm.NewObject()
+	_ = o.Set("canvas", e.wrap(n))
+	_ = o.Set("drawingBufferWidth", e.canvasFor(n).w)
+	_ = o.Set("drawingBufferHeight", e.canvasFor(n).h)
+	// A browser reports the specific context interface, not [object Object].
+	tag := "WebGLRenderingContext"
+	if major == 2 {
+		tag = "WebGL2RenderingContext"
+	}
+	e.tagObject(o, tag)
+	_ = o.DefineDataProperty("constructor", e.namedConstructor(tag, nil),
+		goja.FLAG_TRUE, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	versionStr := "WebGL 1.0 (OpenGL ES 2.0 Chromium)"
+	glslStr := "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
+	if major == 2 {
+		versionStr = "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+		glslStr = "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+	}
+
+	const (
+		cVendor    = 0x1F00
+		cRenderer  = 0x1F01
+		cVersion   = 0x1F02
+		cGLSL      = 0x8B8C
+		cMaxView   = 0x0D3A
+		cUnmaskedV = 0x9245
+		cUnmaskedR = 0x9246
+	)
+
+	for name, val := range map[string]int{
+		"VENDOR": cVendor, "RENDERER": cRenderer, "VERSION": cVersion,
+		"SHADING_LANGUAGE_VERSION": cGLSL, "MAX_VIEWPORT_DIMS": cMaxView,
+		"MAX_TEXTURE_SIZE": 0x0D33, "MAX_RENDERBUFFER_SIZE": 0x84E8,
+		"MAX_CUBE_MAP_TEXTURE_SIZE": 0x851C, "MAX_VERTEX_ATTRIBS": 0x8869,
+		"MAX_VARYING_VECTORS": 0x8DF6, "MAX_FRAGMENT_UNIFORM_VECTORS": 0x8DFD,
+		"MAX_TEXTURE_IMAGE_UNITS": 0x8872, "MAX_COMBINED_TEXTURE_IMAGE_UNITS": 0x8B4D,
+		"MAX_VERTEX_TEXTURE_IMAGE_UNITS": 0x8B4C, "MAX_VERTEX_UNIFORM_VECTORS": 0x8DFB,
+		"NO_ERROR": 0, "DEPTH_TEST": 0x0B71, "TEXTURE_2D": 0x0DE1,
+		"COLOR_BUFFER_BIT": 0x4000, "TRIANGLES": 0x0004, "ARRAY_BUFFER": 0x8892,
+		"STATIC_DRAW": 0x88E4, "FLOAT": 0x1406, "UNSIGNED_SHORT": 0x1403,
+		"FRAGMENT_SHADER": 0x8B30, "VERTEX_SHADER": 0x8B31,
+		"COMPILE_STATUS": 0x8B81, "LINK_STATUS": 0x8B82,
+	} {
+		_ = o.Set(name, val)
+	}
+
+	_ = o.Set("getParameter", func(call goja.FunctionCall) goja.Value {
+		switch int(call.Argument(0).ToInteger()) {
+		case cVendor:
+			return e.vm.ToValue("WebKit")
+		case cRenderer:
+			return e.vm.ToValue("WebKit WebGL")
+		case cVersion:
+			return e.vm.ToValue(versionStr)
+		case cGLSL:
+			return e.vm.ToValue(glslStr)
+		case cMaxView:
+			return e.vm.NewArray(16384, 16384)
+		case cUnmaskedV:
+			return e.vm.ToValue("Google Inc. (Google)")
+		case cUnmaskedR:
+			return e.vm.ToValue("ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)")
+		}
+		return e.vm.ToValue(16384)
+	})
+	_ = o.Set("getExtension", func(call goja.FunctionCall) goja.Value {
+		switch argString(call.Argument(0)) {
+		case "WEBGL_debug_renderer_info":
+			ext := e.vm.NewObject()
+			_ = ext.Set("UNMASKED_VENDOR_WEBGL", cUnmaskedV)
+			_ = ext.Set("UNMASKED_RENDERER_WEBGL", cUnmaskedR)
+			return ext
+		case "WEBGL_lose_context":
+			ext := e.vm.NewObject()
+			_ = ext.Set("loseContext", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+			_ = ext.Set("restoreContext", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+			return ext
+		}
+		return goja.Null()
+	})
+	_ = o.Set("getSupportedExtensions", func(goja.FunctionCall) goja.Value {
+		return e.vm.NewArray(
+			"ANGLE_instanced_arrays", "EXT_blend_minmax", "EXT_color_buffer_half_float",
+			"EXT_float_blend", "EXT_frag_depth", "EXT_shader_texture_lod",
+			"EXT_texture_compression_bptc", "EXT_texture_compression_rgtc",
+			"EXT_texture_filter_anisotropic", "OES_element_index_uint",
+			"OES_fbo_render_mipmap", "OES_standard_derivatives", "OES_texture_float",
+			"OES_texture_float_linear", "OES_vertex_array_object",
+			"WEBGL_color_buffer_float", "WEBGL_compressed_texture_s3tc",
+			"WEBGL_debug_renderer_info", "WEBGL_debug_shaders", "WEBGL_depth_texture",
+			"WEBGL_draw_buffers", "WEBGL_lose_context", "WEBGL_multi_draw")
+	})
+	// Every remaining entry point answers, so a probe that calls one does not
+	// throw. getError reports NO_ERROR, which is what an idle context returns.
+	for _, m := range []string{
+		"activeTexture", "attachShader", "bindAttribLocation", "bindBuffer",
+		"bindFramebuffer", "bindRenderbuffer", "bindTexture", "blendColor",
+		"blendEquation", "blendFunc", "bufferData", "bufferSubData", "clear",
+		"clearColor", "clearDepth", "clearStencil", "colorMask", "compileShader",
+		"createBuffer", "createFramebuffer", "createProgram", "createRenderbuffer",
+		"createShader", "createTexture", "cullFace", "deleteBuffer",
+		"deleteFramebuffer", "deleteProgram", "deleteRenderbuffer", "deleteShader",
+		"deleteTexture", "depthFunc", "depthMask", "detachShader", "disable",
+		"disableVertexAttribArray", "drawArrays", "drawElements", "enable",
+		"enableVertexAttribArray", "finish", "flush", "frontFace", "generateMipmap",
+		"getAttribLocation", "getProgramInfoLog", "getShaderInfoLog",
+		"getShaderSource", "getUniformLocation", "lineWidth", "linkProgram",
+		"pixelStorei", "polygonOffset", "readPixels", "renderbufferStorage",
+		"scissor", "shaderSource", "stencilFunc", "stencilMask", "stencilOp",
+		"texImage2D", "texParameterf", "texParameteri", "uniform1f", "uniform1i",
+		"uniform2f", "uniform3f", "uniform4f", "uniformMatrix3fv",
+		"uniformMatrix4fv", "useProgram", "validateProgram", "vertexAttribPointer",
+		"viewport",
+	} {
+		_ = o.Set(m, func(goja.FunctionCall) goja.Value { return goja.Null() })
+	}
+	_ = o.Set("getError", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(0) })
+	_ = o.Set("getProgramParameter", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+	_ = o.Set("getShaderParameter", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+	return o
+}
+
 // installCanvas adds canvas support to the element prototype.
 func (e *jsEnv) installCanvas(p *goja.Object) {
 	e.method(p, "getContext", func(call goja.FunctionCall) goja.Value {
@@ -50,10 +179,15 @@ func (e *jsEnv) installCanvas(p *goja.Object) {
 		if n == nil || n.Data != "canvas" {
 			return goja.Null()
 		}
-		if call.Argument(0).String() != "2d" {
-			return goja.Null()
+		switch call.Argument(0).String() {
+		case "2d":
+			return e.canvasContext(n)
+		case "webgl", "experimental-webgl":
+			return e.webGLContext(n, 1)
+		case "webgl2":
+			return e.webGLContext(n, 2)
 		}
-		return e.canvasContext(n)
+		return goja.Null()
 	})
 	e.accessor(p, "width", func(call goja.FunctionCall) goja.Value {
 		n := e.thisNode(call)

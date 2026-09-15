@@ -212,6 +212,17 @@ func (e *jsEnv) installInterfaceTags() {
 	}
 	_ = e.vm.Set("Window", e.namedConstructor("Window", nil))
 	_ = e.vm.Set("Navigator", e.namedConstructor("Navigator", nil))
+	for _, name := range []string{
+		"WebGLRenderingContext", "WebGL2RenderingContext", "CanvasRenderingContext2D",
+		"AudioContext", "webkitAudioContext", "RTCPeerConnection", "Notification",
+		"Permissions", "NetworkInformation", "Blob", "File", "FileReader", "FormData",
+		"Headers", "Request", "Response", "EventSource", "BroadcastChannel",
+		"MessageChannel", "MessagePort", "caches", "SharedWorker",
+	} {
+		if existing := e.vm.Get(name); existing == nil || goja.IsUndefined(existing) {
+			_ = e.vm.Set(name, e.namedConstructor(name, nil))
+		}
+	}
 	e.installElementInterfaces()
 
 	// The global's constructor is Window, and the document's is HTMLDocument:
