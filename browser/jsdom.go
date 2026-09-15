@@ -35,6 +35,9 @@ func isFragment(n *html.Node) bool {
 }
 
 func nodeNameOf(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
 	if isFragment(n) {
 		return "#document-fragment"
 	}

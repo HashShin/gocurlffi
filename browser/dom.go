@@ -28,6 +28,9 @@ func childNodes(n *html.Node) []*html.Node {
 
 // elementChildren returns only element children.
 func elementChildren(n *html.Node) []*html.Node {
+	if n == nil {
+		return nil
+	}
 	out := make([]*html.Node, 0, 4)
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode {

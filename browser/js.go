@@ -199,6 +199,8 @@ func (e *jsEnv) setupConstructors() {
 			return call.This
 		}).(*goja.Object)
 		_ = fn.Set("prototype", proto)
+		// A browser's document.constructor.name is "HTMLDocument", not "Object".
+		_ = proto.Set("constructor", fn)
 		_ = e.vm.Set(name, fn)
 		return fn
 	}
@@ -485,6 +487,12 @@ func (e *jsEnv) setupGlobals() {
 
 	e.setupNetwork()
 	e.setupWeb()
+	// Every host function installed above still wears its Go symbol as a name,
+	// which Function.prototype.toString and .name both expose.
+	e.fixHostFunctionNames()
+	e.sanitizeFunctionToString()
+	e.installErrorStatics()
+	e.installInterfaceTags()
 }
 
 func (e *jsEnv) navigatorObject() *goja.Object {
@@ -509,8 +517,20 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 		_ = o.Set("maxTouchPoints", 0)
 	}
 	_ = o.Set("webdriver", false)
-	_ = o.Set("plugins", e.pluginArray())
-	_ = o.Set("mimeTypes", e.mimeTypeArray())
+	plugins := e.pluginArray()
+	if po, ok := plugins.(*goja.Object); ok {
+		e.tagObject(po, "PluginArray")
+		_ = po.DefineDataProperty("constructor", e.namedConstructor("PluginArray", nil),
+			goja.FLAG_TRUE, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+	_ = o.Set("plugins", plugins)
+	mimes := e.mimeTypeArray()
+	if mo, ok := mimes.(*goja.Object); ok {
+		e.tagObject(mo, "MimeTypeArray")
+		_ = mo.DefineDataProperty("constructor", e.namedConstructor("MimeTypeArray", nil),
+			goja.FLAG_TRUE, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+	_ = o.Set("mimeTypes", mimes)
 	// userAgentData is Chromium-only, so carrying it under a Firefox or Safari
 	// UA is as much a mismatch as a Chrome UA without it.
 	if uaVendor(ua) == "Google Inc." {
