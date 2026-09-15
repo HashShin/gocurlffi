@@ -204,6 +204,34 @@ make gobrowser
   dependency order.
 - A Chrome DevTools Protocol server (`gobrowser serve`) and WebDriver BiDi on
   the same port, so Puppeteer, Playwright and chromedp can drive it.
+- An MCP (Model Context Protocol) tool server (`gobrowser mcp`) over stdio or
+  HTTP, exposing navigate, get_content, evaluate, screenshot, click, type and
+  structured_data to an AI agent.
+- Structured data: `Page.StructuredData()` returns every JSON-LD object the
+  document declares, and `Page.Microdata()` the itemscope/itemprop graph.
+- An ad and tracker blocker (`Options.Adblock`): well-known advertising and
+  analytics hosts and paths are dropped, with the caller's Intercept hook still
+  able to override it.
+- PDF output: `Page.PDF` renders the page and embeds the image in a one-page
+  PDF, the same class of output the screenshot produces.
+
+### MCP server
+
+`gobrowser mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
+`--port`. Point an MCP client at it:
+
+```json
+{
+  "mcpServers": {
+    "gobrowser": { "command": "/path/to/gobrowser", "args": ["mcp"] }
+  }
+}
+```
+
+The tools are `navigate`, `get_content` (text/markdown/html/links), `evaluate`,
+`screenshot`, `click`, `type` and `structured_data`. Each session keeps one
+current page; a tool that needs a page and has none says so rather than
+failing.
 - `Screenshot`, a text-layout PNG renderer (see below).
 
 Verified live:
@@ -545,8 +573,8 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 This is a browsing core with a document renderer, not a full web rendering
 engine. `Screenshot` applies a large subset of CSS (see the limits above) but is
-not a browser: there is no PDF output, no adblocker and no MCP/agent mode, and
-the gaps below remain. Specifically absent:
+not a browser: there is no native LLM agent mode (the MCP server is there for an
+external agent to drive), and the gaps below remain. Specifically absent:
 
 - The JavaScript engine has no async generators or `for await (... of ...)`
   (goja reports "Async generators are not supported yet"). Bundles that rely
@@ -555,9 +583,8 @@ the gaps below remain. Specifically absent:
 - A frame's `contentWindow` is a thin window shape over the shared DOM nodes,
   because a frame runs in its own JavaScript runtime; a script cannot call a
   function the frame defined on its own window.
-- No PDF output and no adblocker. Structured data (`application/ld+json`) is
-  not parsed, and there is no MCP server or native agent mode: those were left
-  out of this port on purpose.
+- There is no native agent mode (an LLM driving the browser in-process); the
+  MCP server lets an external agent drive it instead.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element
@@ -630,7 +657,14 @@ gobrowser get URL \
   --type SEL=TEXT       # type text into a control (repeatable)
   --fill SEL=VALUE      # set a control's value (repeatable)
   --select SEL=VALUE    # choose an option (repeatable)
+  --pdf FILE            # render the page to a PDF file
+  --adblock             # block ads and trackers
+  -f structured         # print the page's JSON-LD structured data
   -H 'K: V'             # extra header (repeatable)
+
+gobrowser mcp \
+  --port 9223 \         # serve over HTTP (omit for stdio)
+  -i chrome131          # impersonation target
 
 gobrowser serve \
   --host 127.0.0.1 \    # CDP/BiDi bind host

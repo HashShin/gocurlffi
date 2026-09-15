@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -38,6 +40,8 @@ func main() {
 		runGet(args)
 	case "serve":
 		runServe(args)
+	case "mcp":
+		runMCP(args)
 	case "list", "targets":
 		for _, t := range impersonate.Targets() {
 			fmt.Println(t)
@@ -57,6 +61,7 @@ func usage() {
 usage:
   gobrowser get <url> [flags]
   gobrowser serve [--host 127.0.0.1] [--port 9222]
+  gobrowser mcp [--port 9223]
   gobrowser list
 
 flags:
@@ -86,6 +91,9 @@ flags:
       --type SEL=TEXT      type text into a control (repeatable)
       --fill SEL=VALUE     set a control's value (repeatable)
       --select SEL=VALUE   choose an option (repeatable)
+      --pdf FILE           render the page to a PDF file
+      --adblock            block ads and trackers
+      -f structured        print the page's JSON-LD structured data
       --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
@@ -103,6 +111,7 @@ func runServe(args []string) {
 		noJS         = fs.Bool("no-js", false, "disable JavaScript")
 		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
 		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
+		adblock      = fs.Bool("adblock", false, "block ads and trackers")
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 	)
 	// --protocol is accepted for parity with the original. Both CDP (at
@@ -119,6 +128,7 @@ func runServe(args []string) {
 		Impersonate: *impersonate,
 		Proxy:       *proxy,
 		ObeyRobots:  *obeyRobots,
+		Adblock:     *adblock,
 		RunScripts:  &runScripts,
 		Debug:       *debug,
 	}
@@ -131,6 +141,57 @@ func runServe(args []string) {
 	fmt.Fprintf(os.Stderr, "CDP server listening on ws://%s:%d\n", *host, *port)
 	if err := srv.ListenAndServe(ctx, *host, *port); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runMCP starts the MCP tool server, over stdio by default or HTTP with --port.
+func runMCP(args []string) {
+	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+	var (
+		host         = fs.String("host", "127.0.0.1", "bind host for the HTTP transport")
+		port         = fs.Int("port", 0, "serve over HTTP on this port (0 = stdio)")
+		impersonate  = fs.String("i", "", "impersonate target")
+		impersonateL = fs.String("impersonate", "", "impersonate target")
+		noJS         = fs.Bool("no-js", false, "disable JavaScript")
+		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
+		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
+		adblock      = fs.Bool("adblock", false, "block ads and trackers")
+		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
+	)
+	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
+	if *impersonate == "" {
+		*impersonate = *impersonateL
+	}
+	runScripts := !*noJS
+	b := browser.New(browser.Options{
+		Impersonate: *impersonate,
+		Proxy:       *proxy,
+		ObeyRobots:  *obeyRobots,
+		Adblock:     *adblock,
+		RunScripts:  &runScripts,
+		Debug:       *debug,
+	})
+	defer b.Close()
+	server.SetVersion(version)
+	s := server.NewMCP(b)
+	if *port == 0 {
+		if err := s.ServeStdio(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", s.ServeHTTP)
+	mux.HandleFunc("/mcp/", s.ServeHTTP)
+	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", *host, *port), Handler: mux}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	go func() { <-ctx.Done(); _ = srv.Close() }()
+	fmt.Fprintf(os.Stderr, "MCP server listening on http://%s:%d/mcp\n", *host, *port)
+	if err := srv.ListenAndServe(); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -151,6 +212,7 @@ func runGet(args []string) {
 		loadTimeout  = fs.Duration("load-timeout", 30*time.Second, "script-loading budget")
 		timerBudget  = fs.Duration("timer-budget", 2*time.Second, "wait for pending timers after load")
 		screenshot   = fs.String("screenshot", "", "render the page to a PNG file")
+		pdfOut       = fs.String("pdf", "", "render the page to a PDF file")
 		width        = fs.Int("width", 1280, "screenshot layout width in px")
 		scale        = fs.Float64("scale", 1, "screenshot scale factor")
 		maxHeight    = fs.Int("max-height", 20000, "screenshot height cap in px")
@@ -162,6 +224,7 @@ func runGet(args []string) {
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
 		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
 		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
+		adblock      = fs.Bool("adblock", false, "block ads and trackers")
 		xpath        = fs.String("xpath", "", "evaluate an XPath expression and print matched text")
 	)
 	var headers headerList
@@ -209,6 +272,7 @@ func runGet(args []string) {
 		Debug:       *debug,
 		Proxy:       *proxy,
 		ObeyRobots:  *obeyRobots,
+		Adblock:     *adblock,
 	}
 	if len(blocks) > 0 {
 		patterns := append([]string(nil), blocks...)
@@ -323,6 +387,22 @@ func runGet(args []string) {
 		}
 	}
 
+	if *pdfOut != "" {
+		pdfBytes, err := p.PDF(browser.ScreenshotOptions{
+			Width: *width, Scale: *scale, MaxHeight: *maxHeight, NoImages: *noImages,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pdf error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*pdfOut, pdfBytes, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *pdfOut, err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(pdfBytes), *pdfOut)
+		return
+	}
+
 	if *screenshot != "" {
 		png, err := p.Screenshot(browser.ScreenshotOptions{
 			Width:     *width,
@@ -379,6 +459,9 @@ func runGet(args []string) {
 			out = p.Markdown()
 		case "text", "txt":
 			out = p.Text()
+		case "structured", "jsonld", "ld+json":
+			b, _ := json.MarshalIndent(p.StructuredData(), "", "  ")
+			out = string(b)
 		case "links":
 			var sb strings.Builder
 			for _, l := range p.Links() {

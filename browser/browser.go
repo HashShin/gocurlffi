@@ -92,6 +92,12 @@ type Options struct {
 	// and off means fetch behaves as before.
 	CORS bool
 
+	// Adblock drops requests to well-known advertising and analytics hosts and
+	// paths, so a page renders without the noise and loads faster. Off by
+	// default. It runs after Intercept, so a hook can override it by
+	// fulfilling a request the blocker would have dropped.
+	Adblock bool
+
 	// Debug logs page-load phases to stderr.
 	Debug bool
 }
@@ -169,6 +175,14 @@ func (b *Browser) fetch(rawURL string, headers map[string]string, rtype string) 
 func (b *Browser) request(method, rawURL string, headers map[string]string, body []byte, rtype string) (*requests.Response, error) {
 	if r := b.intercept(method, rawURL, headers, rtype); r != nil {
 		return r.toRequests(rawURL), nil
+	}
+	if b.opts.Adblock && adblockBlocked(rawURL, rtype) {
+		resp := requests.NewResponse()
+		resp.URL = rawURL
+		resp.StatusCode = 403
+		resp.Reason = "Blocked by adblock"
+		resp.Ok = false
+		return resp, nil
 	}
 	crawlerVisible := rtype != "fetch" && rtype != "xhr"
 	if b.opts.ObeyRobots && crawlerVisible && method == "GET" && !b.robotsAllowed(rawURL) {
