@@ -424,6 +424,31 @@ is behind a `sync.Once`, faces are built lazily and nothing runs unless
 milliseconds; a tall 900x3500 page takes ~115 ms, most of it PNG encoding and
 pixel work rather than layout.
 
+### Measuring layout against a live page
+
+Computed styles are half of it; where a box ends is the other half, and both
+engines have to be asked the same question.
+
+- `Page.RenderOutline` prints the lines of text, then the boxes the layout
+  drew as `box x= y= w= h= id=`, carrying the same rectangle a
+  `getBoundingClientRect` would. Box lines only cover elements that paint
+  something, so give an element a background to see its rectangle.
+- Chromium answers through `tools/cssdiff/probe -js EXPRESSION`, which runs
+  the expression in the page and prints the result.
+
+Two traps, both of which cost real time here:
+
+- A live page's total height drifts. `bootstrap.com` moves about 180 pixels
+  between runs on its own, so comparing a sweep with one from an hour ago is
+  not evidence. Compare the same pages in one session, or better, in one run:
+  a change was once reverted on a 178-pixel "regression" that turned out to be
+  the page moving, not the change.
+- A fixture that copies a live page must rewrite its stylesheet `href`s to
+  absolute URLs, or neither engine loads any CSS and the comparison is
+  meaningless. A fixture that measures an element's *declared* size must also
+  put a block before it: as a container's first block, the container's own
+  height lands on the element as a minimum and its declaration cannot be seen.
+
 ## Checking sites
 
 `scripts/check_sites.sh -B` runs the same site/target matrix with the headless
