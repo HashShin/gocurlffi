@@ -106,6 +106,10 @@ type Page struct {
 	// geomLayouts counts the layouts the geometry accessors performed, so a
 	// test can prove that repeated measurements reuse one layout.
 	geomLayouts int
+
+	// focused is the element that most recently received focus, the target of
+	// Page.Press.
+	focused *html.Node
 }
 
 // newPage creates an empty page bound to a browser.

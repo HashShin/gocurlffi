@@ -6,7 +6,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -69,6 +71,14 @@ flags:
       --console            print page console output to stderr
       --status             print HTTP status to stderr
       --sheets             report the page's own stylesheets on stderr (keeps going)
+      --xpath EXPR         evaluate an XPath expression and print matched text
+      --proxy URL          route requests through a proxy
+      --obey-robots        honour robots.txt
+      --block GLOB         block requests matching GLOB (repeatable)
+      --click SELECTOR     click the matching element (repeatable)
+      --type SEL=TEXT      type text into a control (repeatable)
+      --fill SEL=VALUE     set a control's value (repeatable)
+      --select SEL=VALUE   choose an option (repeatable)
       --debug              log page-load phases to stderr
   -H, --header "K: V"      extra header to send (repeatable)
 `)
@@ -99,9 +109,22 @@ func runGet(args []string) {
 		listSheets   = fs.Bool("sheets", false, "report the page's stylesheets")
 		noImages     = fs.Bool("no-images", false, "do not draw the page's pictures")
 		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
+		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
+		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
+		xpath        = fs.String("xpath", "", "evaluate an XPath expression and print matched text")
 	)
 	var headers headerList
 	fs.Var(&headers, "H", "extra header \"K: V\" (repeatable)")
+	var blocks stringList
+	fs.Var(&blocks, "block", "block requests matching a glob (repeatable)")
+	var clicks stringList
+	fs.Var(&clicks, "click", "click the element matching a selector (repeatable)")
+	var types stringList
+	fs.Var(&types, "type", "type text into a control as \"selector=text\" (repeatable)")
+	var fills stringList
+	fs.Var(&fills, "fill", "set a control's value as \"selector=value\" (repeatable)")
+	var selects stringList
+	fs.Var(&selects, "select", "choose an option as \"selector=value\" (repeatable)")
 	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
 
 	target := fs.Arg(0)
@@ -133,6 +156,24 @@ func runGet(args []string) {
 		TimerBudget: *timerBudget,
 		RunScripts:  &runScripts,
 		Debug:       *debug,
+		Proxy:       *proxy,
+		ObeyRobots:  *obeyRobots,
+	}
+	if len(blocks) > 0 {
+		patterns := append([]string(nil), blocks...)
+		opts.Intercept = func(r *browser.Request) *browser.Response {
+			for _, pat := range patterns {
+				if ok, _ := path.Match(pat, r.URL); ok {
+					return browser.Block()
+				}
+				if u, err := url.Parse(r.URL); err == nil {
+					if ok, _ := path.Match(pat, u.Path); ok {
+						return browser.Block()
+					}
+				}
+			}
+			return nil
+		}
 	}
 	if len(headers) > 0 {
 		opts.Headers = map[string]string{}
@@ -165,6 +206,44 @@ func runGet(args []string) {
 	if *wait != "" {
 		if p.WaitForSelector(*wait, *waitTimeout) == nil {
 			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", *wait, *waitTimeout)
+		}
+	}
+
+	// Drive the page before extracting: click, type, fill and select run in
+	// the order their flags appear, so a flow can be scripted from the CLI.
+	for _, sel := range clicks {
+		if err := p.Click(sel); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: click %s: %v\n", sel, err)
+		}
+	}
+	for _, kv := range types {
+		sel, text, ok := strings.Cut(kv, "=")
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: --type wants \"selector=text\", got %q\n", kv)
+			os.Exit(2)
+		}
+		if err := p.Type(sel, text); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: type %s: %v\n", sel, err)
+		}
+	}
+	for _, kv := range fills {
+		sel, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: --fill wants \"selector=value\", got %q\n", kv)
+			os.Exit(2)
+		}
+		if err := p.Fill(sel, value); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: fill %s: %v\n", sel, err)
+		}
+	}
+	for _, kv := range selects {
+		sel, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: --select wants \"selector=value\", got %q\n", kv)
+			os.Exit(2)
+		}
+		if err := p.Select(sel, value); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: select %s: %v\n", sel, err)
 		}
 	}
 
@@ -236,6 +315,13 @@ func runGet(args []string) {
 		if v != nil && !isUndefined(v.Export()) {
 			out = fmt.Sprintf("%v", v.Export())
 		}
+	} else if *xpath != "" {
+		var sb strings.Builder
+		for _, n := range p.QueryXPath(*xpath) {
+			sb.WriteString(p.TextOf(n))
+			sb.WriteByte('\n')
+		}
+		out = sb.String()
 	} else {
 		switch *format {
 		case "markdown", "md":
@@ -274,6 +360,9 @@ func isUndefined(v any) bool { return v == nil }
 
 // headerList collects repeatable -H "K: V" flags.
 type headerList []string
+
+// stringList is a repeatable string flag; the value is used verbatim.
+type stringList = headerList
 
 func (h *headerList) String() string { return strings.Join(*h, ", ") }
 

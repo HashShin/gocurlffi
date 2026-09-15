@@ -536,11 +536,7 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 
 	// Interaction / geometry stubs
 	e.method(p, "click", func(call goja.FunctionCall) goja.Value {
-		n := e.thisNode(call)
-		if n == nil {
-			return goja.Undefined()
-		}
-		e.dispatchNode(n, "click", e.newEvent("click"))
+		_ = e.page.ClickNode(e.thisNode(call))
 		return goja.Undefined()
 	})
 	e.method(p, "focus", func(goja.FunctionCall) goja.Value { return goja.Undefined() })

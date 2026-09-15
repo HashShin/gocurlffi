@@ -12,6 +12,15 @@ type Link struct {
 	Href string
 }
 
+// TextOf returns the visible text of a node's subtree, which is how a matched
+// XPath or selector node is turned into a string.
+func (p *Page) TextOf(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
+	return visibleText(n)
+}
+
 // Links returns every anchor with a resolvable href.
 func (p *Page) Links() []Link {
 	var out []Link
