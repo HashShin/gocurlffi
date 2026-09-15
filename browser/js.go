@@ -185,6 +185,111 @@ func (e *jsEnv) method(proto *goja.Object, name string, f func(goja.FunctionCall
 	_ = proto.Set(name, e.vm.ToValue(f))
 }
 
+// setupConstructors exposes the DOM interface constructors as globals. Pages
+// branch on them (`typeof Node !== 'undefined'`, `x instanceof Element`,
+// `new Image()`), and a missing one is not a harmless gap: it is a
+// ReferenceError that aborts the entire script it appears in.
+func (e *jsEnv) setupConstructors() {
+	p := e.protosRef
+
+	iface := func(name string, proto *goja.Object) *goja.Object {
+		// DOM interfaces are not constructible per spec, so an accidental
+		// `new Node()` hands back `this` instead of throwing.
+		fn := e.vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+			return call.This
+		}).(*goja.Object)
+		_ = fn.Set("prototype", proto)
+		_ = e.vm.Set(name, fn)
+		return fn
+	}
+
+	node := iface("Node", p.node)
+	for name, val := range map[string]int{
+		"ELEMENT_NODE": 1, "ATTRIBUTE_NODE": 2, "TEXT_NODE": 3,
+		"CDATA_SECTION_NODE": 4, "ENTITY_REFERENCE_NODE": 5, "ENTITY_NODE": 6,
+		"PROCESSING_INSTRUCTION_NODE": 7, "COMMENT_NODE": 8, "DOCUMENT_NODE": 9,
+		"DOCUMENT_TYPE_NODE": 10, "DOCUMENT_FRAGMENT_NODE": 11, "NOTATION_NODE": 12,
+	} {
+		_ = node.Set(name, val)
+	}
+
+	iface("Element", p.element)
+	iface("HTMLElement", p.element)
+	iface("Document", p.document)
+	iface("DocumentFragment", p.fragment)
+	iface("Text", p.text)
+	iface("Comment", p.comment)
+
+	// Image(w, h) builds an <img>, the shorthand for the HTMLImageElement
+	// constructor. Pages use it to fire a request by assigning .src.
+	img := e.vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		n := createElement("img")
+		if w := call.Argument(0); !goja.IsUndefined(w) && !goja.IsNull(w) {
+			setAttr(n, "width", w.String())
+		}
+		if h := call.Argument(1); !goja.IsUndefined(h) && !goja.IsNull(h) {
+			setAttr(n, "height", h.String())
+		}
+		return e.wrap(n).(*goja.Object)
+	}).(*goja.Object)
+	_ = img.Set("prototype", p.element)
+	_ = e.vm.Set("Image", img)
+	_ = e.vm.Set("HTMLImageElement", img)
+
+	// WeakRef is ES2021. goja has no weak references, so the polyfill holds a
+	// strong one: deref() behaves correctly, the target simply stays reachable
+	// for the life of the page. Framework schedulers use it per node (Google's
+	// viewport bookkeeping does), so its absence is a ReferenceError that stops
+	// the script rather than a missing nicety.
+	_, _ = e.vm.RunString(`(function () {
+		if (typeof WeakRef === 'undefined') {
+			globalThis.WeakRef = function WeakRef(target) { this.__target = target; };
+			globalThis.WeakRef.prototype.deref = function () { return this.__target; };
+		}
+		if (typeof FinalizationRegistry === 'undefined') {
+			globalThis.FinalizationRegistry = function FinalizationRegistry() {};
+			globalThis.FinalizationRegistry.prototype.register = function () {};
+			globalThis.FinalizationRegistry.prototype.unregister = function () {};
+		}
+	})();`)
+
+	// The CSSOM namespace. CSS.escape is used to build selector strings out of
+	// data, and CSS.supports is a feature probe; both are cheap to provide and
+	// their absence is a ReferenceError.
+	css := e.vm.NewObject()
+	_ = css.Set("escape", func(call goja.FunctionCall) goja.Value {
+		return e.vm.ToValue(cssEscape(call.Argument(0).String()))
+	})
+	_ = css.Set("supports", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
+	_ = e.vm.Set("CSS", css)
+}
+
+// cssEscape implements the CSS.escape() serialization algorithm from CSSOM.
+func cssEscape(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		switch {
+		case r == 0:
+			b.WriteRune(0xFFFD)
+		case (r >= 0x1 && r <= 0x1F) || r == 0x7F:
+			fmt.Fprintf(&b, "\\%x ", r)
+		case i == 0 && r >= '0' && r <= '9':
+			fmt.Fprintf(&b, "\\%x ", r)
+		case i == 1 && r >= '0' && r <= '9' && strings.HasPrefix(s, "-"):
+			fmt.Fprintf(&b, "\\%x ", r)
+		case i == 0 && r == '-' && len(s) == 1:
+			b.WriteString("\\-")
+		case r >= 0x80 || r == '-' || r == '_' ||
+			(r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+			b.WriteRune(r)
+		default:
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func (e *jsEnv) accessor(proto *goja.Object, name string, get, set func(goja.FunctionCall) goja.Value) {
 	var g, s goja.Value = goja.Undefined(), goja.Undefined()
 	if get != nil {
@@ -215,6 +320,7 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("history", e.historyObject())
 	_ = rt.Set("localStorage", e.storageObject())
 	_ = rt.Set("sessionStorage", e.storageObject())
+	e.setupConstructors()
 
 	_ = rt.Set("isSecureContext", true)
 	_ = rt.Set("origin", e.page.originString())
@@ -367,6 +473,30 @@ func (e *jsEnv) navigatorObject() *goja.Object {
 	})
 	_ = o.Set("userAgentData", uad)
 	_ = o.Set("serviceWorker", e.serviceWorkerObject())
+	// sendBeacon is a fire-and-forget POST. The bytes are really sent - a page
+	// that beacons a capability proof only passes its gate if the request
+	// reaches the server - but the script does not wait for it, matching the
+	// API's contract, so a slow endpoint cannot stall the page load. The
+	// session and its cookie jar are safe for concurrent use.
+	_ = o.Set("sendBeacon", func(call goja.FunctionCall) goja.Value {
+		rawURL := argString(call.Argument(0))
+		if rawURL == "" {
+			return e.vm.ToValue(false)
+		}
+		var body []byte
+		switch d := call.Argument(1).Export().(type) {
+		case string:
+			body = []byte(d)
+		case []byte:
+			body = d
+		}
+		headers := map[string]string{"Content-Type": "text/plain;charset=UTF-8"}
+		target := resolveURL(e.page.baseURL(), rawURL)
+		go func() {
+			_, _ = e.doRequest("POST", target, headers, body)
+		}()
+		return e.vm.ToValue(true)
+	})
 	return o
 }
 

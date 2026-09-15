@@ -104,7 +104,7 @@ func (e *jsEnv) defineNodeProto(p *goja.Object) {
 		return e.wrap(parentOf(e.thisNode(call)))
 	}, nil)
 	e.accessor(p, "parentElement", func(call goja.FunctionCall) goja.Value {
-		return e.wrap(parentOf(e.thisNode(call)))
+		return e.wrap(parentElementOf(e.thisNode(call)))
 	}, nil)
 	e.accessor(p, "ownerDocument", func(call goja.FunctionCall) goja.Value {
 		return e.wrap(e.page.doc)
@@ -926,6 +926,15 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		_ = o.Set("check", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(true) })
 		_ = o.Set("add", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 		_ = o.Set("forEach", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		// load() resolves to the FontFace list that matched. Nothing here has a
+		// real font loader, so it resolves empty rather than throwing: pages
+		// feature-detect it with `document.fonts.load(...).catch(...)` and a
+		// missing method aborts the surrounding script with a TypeError.
+		_ = o.Set("load", func(goja.FunctionCall) goja.Value {
+			return e.resolvedPromise(e.vm.NewArray())
+		})
+		_ = o.Set("clear", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+		_ = o.Set("delete", func(goja.FunctionCall) goja.Value { return e.vm.ToValue(false) })
 		return o
 	}, nil)
 }

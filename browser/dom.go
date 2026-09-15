@@ -481,6 +481,19 @@ func parentOf(n *html.Node) *html.Node {
 	return n.Parent
 }
 
+// parentElementOf returns n's parent only when that parent is a real element.
+// The DOM spec makes `parentElement` null for a Document, DocumentFragment or
+// DocumentType parent, which matters in practice: walking up with
+// `while (e = e.parentElement)` must stop at <html> instead of handing back the
+// Document and crashing on an element-only method such as hasAttribute.
+func parentElementOf(n *html.Node) *html.Node {
+	p := parentOf(n)
+	if p == nil || p.Type != html.ElementNode || isFragment(p) {
+		return nil
+	}
+	return p
+}
+
 func firstChildOf(n *html.Node) *html.Node {
 	if n == nil {
 		return nil

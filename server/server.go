@@ -56,6 +56,28 @@ type target struct {
 	// contextSeq numbers the execution contexts announced to a client (the
 	// main world and any isolated world it asks for).
 	contextSeq int
+	// initScripts are the Page.addScriptToEvaluateOnNewDocument sources bound
+	// to this target, in installation order, so a client can revoke one by the
+	// identifier it was handed back.
+	initScripts []initScript
+	// uaOverride is the Network.setUserAgentOverride value, applied to the page
+	// and to the requests it issues.
+	uaOverride string
+}
+
+// initScript is one script installed with Page.addScriptToEvaluateOnNewDocument.
+type initScript struct {
+	id     string
+	source string
+}
+
+// sources returns the installed init scripts in installation order.
+func (t *target) initSources() []string {
+	out := make([]string, 0, len(t.initScripts))
+	for _, s := range t.initScripts {
+		out = append(out, s.source)
+	}
+	return out
 }
 
 type session struct {

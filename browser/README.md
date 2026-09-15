@@ -554,6 +554,15 @@ navigation, `Runtime.evaluate`, a DOM query, an interaction and
 `Page.captureScreenshot`. A client that asks for a method outside that set gets a
 protocol error rather than a hang.
 
+`Page.addScriptToEvaluateOnNewDocument` and `Network.setUserAgentOverride` are
+implemented, not accepted-and-ignored. An init script is evaluated in the page's
+JavaScript environment once the document exists but before any of the page's own
+scripts run, so an injected patch is in place before page code can read
+`navigator`; `Page.removeScriptToEvaluateOnNewDocument` revokes one from the next
+document on. This matters because Playwright's `addInitScript` and Puppeteer's
+`evaluateOnNewDocument` are built on that method, and a client whose setup script
+is silently dropped does not fail - it just runs unpatched.
+
 WebDriver BiDi is served on the same port at `/session`, sharing the target and
 page layer: `session.new`/`status`, `browsingContext.create`/`navigate`/`getTree`/
 `close`/`captureScreenshot`, `script.evaluate`/`callFunction` and

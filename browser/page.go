@@ -46,6 +46,12 @@ type Page struct {
 	userAgent string
 	platform  string
 
+	// initScripts run in the page's JavaScript environment once the document
+	// exists but before any of the page's own scripts, so a script installed by
+	// a driver (CDP Page.addScriptToEvaluateOnNewDocument, Playwright's
+	// addInitScript) gets to see the document first.
+	initScripts []string
+
 	resp    *requests.Response
 	console []ConsoleEntry
 
@@ -289,6 +295,18 @@ func (p *Page) run() error {
 		return nil
 	}
 	p.env = newJSEnv(p)
+
+	// Init scripts run before the page's own scripts, which is the whole point
+	// of the hook: a driver's patch must be in place before any page code can
+	// observe navigator or the document.
+	for _, src := range p.initScripts {
+		if strings.TrimSpace(src) == "" {
+			continue
+		}
+		if err := p.env.runScript(src, p.URL); err != nil {
+			p.log("error", "init script error: "+err.Error())
+		}
+	}
 
 	budget := p.browser.opts.LoadTimeout
 	if budget <= 0 {
@@ -656,6 +674,30 @@ func (p *Page) Query(sel string) *html.Node { return querySelector(p.doc, sel) }
 
 // UserAgent returns the User-Agent this page reports and sends.
 func (p *Page) UserAgent() string { return p.userAgent }
+
+// SetUserAgent overrides navigator.userAgent and the User-Agent sent on
+// subsequent requests. It is the hook behind CDP Network.setUserAgentOverride.
+// An empty value is ignored so a misconfigured driver cannot blank the UA.
+func (p *Page) SetUserAgent(ua string) {
+	if ua == "" {
+		return
+	}
+	p.userAgent = ua
+	if p.browser != nil && p.browser.sess != nil {
+		p.browser.sess.Headers().Set("User-Agent", ua)
+	}
+}
+
+// SetInitScripts installs scripts evaluated on every document load before the
+// page's own scripts run. The slice is copied, so the caller keeps ownership.
+func (p *Page) SetInitScripts(scripts []string) {
+	p.initScripts = append([]string(nil), scripts...)
+}
+
+// InitScripts returns a copy of the scripts installed with SetInitScripts.
+func (p *Page) InitScripts() []string {
+	return append([]string(nil), p.initScripts...)
+}
 
 // Runtime returns the page's JavaScript runtime, or nil when scripts are
 // disabled. It backs CDP's Runtime domain.

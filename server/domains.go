@@ -24,6 +24,29 @@ func (c *conn) dispatchDomain(t *target, sid, method string, params json.RawMess
 	// --- Page ---
 	case "Page.enable", "Page.setLifecycleEventsEnabled", "Page.setDownloadBehavior":
 		return map[string]any{}, nil
+	case "Page.addScriptToEvaluateOnNewDocument":
+		var p struct {
+			Source string `json:"source"`
+		}
+		_ = json.Unmarshal(params, &p)
+		id := randomID()
+		t.initScripts = append(t.initScripts, initScript{id: id, source: p.Source})
+		t.page.SetInitScripts(t.initSources())
+		return map[string]any{"identifier": id}, nil
+	case "Page.removeScriptToEvaluateOnNewDocument":
+		var p struct {
+			Identifier string `json:"identifier"`
+		}
+		_ = json.Unmarshal(params, &p)
+		kept := t.initScripts[:0]
+		for _, s := range t.initScripts {
+			if s.id != p.Identifier {
+				kept = append(kept, s)
+			}
+		}
+		t.initScripts = kept
+		t.page.SetInitScripts(t.initSources())
+		return map[string]any{}, nil
 	case "Page.getFrameTree":
 		return map[string]any{"frameTree": t.frameTree()}, nil
 	case "Page.navigate":
@@ -168,6 +191,14 @@ func (c *conn) dispatchDomain(t *target, sid, method string, params json.RawMess
 
 	// --- Network ---
 	case "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker":
+		return map[string]any{}, nil
+	case "Network.setUserAgentOverride":
+		var p struct {
+			UserAgent string `json:"userAgent"`
+		}
+		_ = json.Unmarshal(params, &p)
+		t.uaOverride = p.UserAgent
+		t.page.SetUserAgent(p.UserAgent)
 		return map[string]any{}, nil
 	case "Network.getCookies":
 		return map[string]any{"cookies": []any{}}, nil
@@ -407,7 +438,6 @@ var noopMethods = map[string]bool{
 	"Log.enable": true, "Log.disable": true, "Log.clear": true,
 	"Runtime.addBinding": true, "Runtime.removeBinding": true, "Runtime.compileScript": true,
 	"Runtime.setAsyncCallStackDepth": true, "Runtime.setCustomObjectFormatterEnabled": true,
-	"Page.addScriptToEvaluateOnNewDocument": true, "Page.removeScriptToEvaluateOnNewDocument": true,
 	"Page.setBypassCSP": true, "Page.setInterceptFileChooserDialog": true,
 	"Page.setDocumentContent": true, "Page.bringToFront": true,
 	"Page.startScreencast": true, "Page.stopScreencast": true,
@@ -415,7 +445,7 @@ var noopMethods = map[string]bool{
 	"Emulation.setDefaultBackgroundColorOverride": true, "Emulation.setEmulatedMedia": true,
 	"Emulation.setUserAgentOverride": true, "Emulation.setScriptExecutionDisabled": true,
 	"Emulation.setLocaleOverride": true, "Emulation.setTimezoneOverride": true,
-	"Network.setExtraHTTPHeaders": true, "Network.setUserAgentOverride": true,
+	"Network.setExtraHTTPHeaders":    true,
 	"Network.setRequestInterception": true, "Network.emulateNetworkConditions": true,
 	"Network.setBlockedURLs": true, "Network.disable": true,
 	"Security.enable": true, "Security.disable": true, "Security.setIgnoreCertificateErrors": true,
