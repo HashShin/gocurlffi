@@ -16,6 +16,7 @@ func TestEmptyBlockKeepsItsDeclaredHeight(t *testing.T) {
 		{"plain spacer", `<div style="height:448px"></div>`},
 		{"with background", `<div style="height:448px;background:#999"></div>`},
 		{"min-height", `<div style="min-height:448px"></div>`},
+		{"with a filled child", `<div style="height:448px"><div style="background:#999;height:100%"></div></div>`},
 		{"nested container", `<div style="height:448px"><div></div></div>`},
 	}
 	for _, c := range cases {
