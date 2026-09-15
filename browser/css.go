@@ -328,6 +328,21 @@ func (p *cssParser) parseAtRule(out *[]cssRule, imports *[]string) {
 		if f, ok := parseFontFace(body); ok {
 			p.fontFaces = append(p.fontFaces, f)
 		}
+	case "layer":
+		// A cascade layer is an ordering device, not a switch: its rules
+		// apply normally. Tailwind wraps its whole stylesheet in @layer
+		// blocks, so skipping them left a 654KB sheet parsing as 109 rules
+		// and collapsed tailwindcss.com into a single column.
+		p.skipSpace()
+		if !p.eof() && p.src[p.pos] == '{' {
+			p.pos++
+			p.parseRules(out, imports, true)
+			break
+		}
+		if !p.eof() && p.src[p.pos] == ';' {
+			// "@layer browser, legacy;" only declares the order.
+			p.pos++
+		}
 	case "supports":
 		// Conservative: skip @supports blocks.
 		p.skipBlock()
