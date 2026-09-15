@@ -3,7 +3,13 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"time"
 )
+
+// debugCDP logs incoming commands and outgoing events when the environment
+// variable is set, which turns a stuck client into a readable transcript.
+var debugCDP = os.Getenv("GOBROWSER_CDP_DEBUG") != ""
 
 // request is one CDP command.
 type request struct {
@@ -36,6 +42,9 @@ func (c *conn) handle(data []byte) {
 	if t == nil {
 		t = c.page
 	}
+	if debugCDP {
+		fmt.Fprintf(os.Stderr, "CDP <- %s sid=%q\n", req.Method, req.SessionID)
+	}
 	result, rerr := c.dispatch(t, req.Method, req.Params)
 	reply := map[string]any{"id": req.ID}
 	if req.SessionID != "" {
@@ -50,7 +59,24 @@ func (c *conn) handle(data []byte) {
 		reply["result"] = result
 	}
 	c.send(reply)
+	// Events that must arrive after the reply (navigation lifecycle) run a
+	// moment later, so a client that registers its load waiter after sending
+	// the command still sees them.
+	if len(c.pending) > 0 {
+		fns := c.pending
+		c.pending = nil
+		go func() {
+			time.Sleep(navEventDelay)
+			for _, f := range fns {
+				f()
+			}
+		}()
+	}
 }
+
+// navEventDelay is how long navigation events wait after the reply, long enough
+// for a client to install its waiters.
+const navEventDelay = 60 * time.Millisecond
 
 // dispatch routes a method to its handler. It is the whole CDP surface the
 // server supports; an unknown method returns a protocol error rather than
@@ -74,7 +100,23 @@ func (c *conn) dispatch(t *target, method string, params json.RawMessage) (any, 
 			c.sendEvent("", "Target.targetCreated", map[string]any{"targetInfo": targetInfo(tg)})
 		}
 		return map[string]any{}, nil
-	case "Target.setAutoAttach", "Target.setAttachToFrames":
+	case "Target.setAutoAttach":
+		var p struct {
+			AutoAttach bool `json:"autoAttach"`
+		}
+		_ = json.Unmarshal(params, &p)
+		already := c.autoAttach
+		c.autoAttach = p.AutoAttach
+		// Attach existing targets once, the first time auto-attach turns on.
+		if p.AutoAttach && !already {
+			for _, tg := range c.server.targetList() {
+				if !c.isAttached(tg) {
+					c.attachAuto(tg)
+				}
+			}
+		}
+		return map[string]any{}, nil
+	case "Target.setAttachToFrames":
 		return map[string]any{}, nil
 	case "Target.getTargets":
 		var infos []map[string]any
@@ -92,6 +134,9 @@ func (c *conn) dispatch(t *target, method string, params json.RawMessage) (any, 
 		_ = json.Unmarshal(params, &p)
 		nt := c.server.NewTarget(p.URL)
 		c.sendEvent("", "Target.targetCreated", map[string]any{"targetInfo": targetInfo(nt)})
+		if c.autoAttach && !c.isAttached(nt) {
+			c.attachAuto(nt)
+		}
 		return map[string]any{"targetId": nt.id}, nil
 	case "Target.attachToTarget":
 		return c.attachToTarget(params)
@@ -108,10 +153,7 @@ func (c *conn) dispatch(t *target, method string, params json.RawMessage) (any, 
 		}
 		_ = json.Unmarshal(params, &p)
 		if tg := c.server.getTarget(p.TargetID); tg != nil {
-			c.server.mu.Lock()
-			delete(c.server.targets, tg.id)
-			c.server.mu.Unlock()
-			c.sendEvent("", "Target.targetDestroyed", map[string]any{"targetId": tg.id})
+			c.destroyTarget(tg)
 		}
 		return map[string]any{"success": true}, nil
 	case "Target.getBrowserContexts":
@@ -140,6 +182,56 @@ func (c *conn) sessionFor(t *target) string {
 		}
 	}
 	return ""
+}
+
+// destroyTarget detaches and removes a target, emitting the events a client
+// waits for so Page.close resolves instead of hanging.
+func (c *conn) destroyTarget(t *target) {
+	for sid, tg := range c.sessions {
+		if tg == t {
+			delete(c.sessions, sid)
+		}
+	}
+	t.mu.Lock()
+	sessions := make([]string, 0, len(t.sessions))
+	for sid := range t.sessions {
+		sessions = append(sessions, sid)
+		delete(t.sessions, sid)
+	}
+	t.mu.Unlock()
+	for _, sid := range sessions {
+		c.sendEvent("", "Target.detachedFromTarget", map[string]any{"sessionId": sid, "targetId": t.id})
+	}
+	c.sendEvent("", "Target.targetDestroyed", map[string]any{"targetId": t.id})
+	c.server.mu.Lock()
+	delete(c.server.targets, t.id)
+	c.server.mu.Unlock()
+}
+
+// isAttached reports whether this connection already holds a session for a
+// target, so auto-attach does not attach the same target twice and loop.
+func (c *conn) isAttached(t *target) bool {
+	for _, tg := range c.sessions {
+		if tg == t {
+			return true
+		}
+	}
+	return false
+}
+
+// attachAuto attaches a target and emits the event a client with auto-attach on
+// is waiting for.
+func (c *conn) attachAuto(t *target) {
+	sid := randomID()
+	c.sessions[sid] = t
+	t.mu.Lock()
+	t.sessions[sid] = &session{id: sid, target: t}
+	t.mu.Unlock()
+	c.sendEvent("", "Target.attachedToTarget", map[string]any{
+		"sessionId":          sid,
+		"targetInfo":         targetInfo(t),
+		"waitingForDebugger": false,
+	})
 }
 
 func (c *conn) attachToTarget(params json.RawMessage) (any, *cdpError) {

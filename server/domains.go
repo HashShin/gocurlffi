@@ -14,6 +14,12 @@ import (
 // Emulation and Network. The target's mutex is already held, so a page is only
 // ever touched by one command at a time.
 func (c *conn) dispatchDomain(t *target, sid, method string, params json.RawMessage) (any, *cdpError) {
+	// Domains this browser does not implement, but that a client sends while
+	// setting up. Answering them with an empty result keeps the client moving;
+	// a genuinely unknown method still gets a protocol error.
+	if noopMethods[method] {
+		return map[string]any{}, nil
+	}
 	switch method {
 	// --- Page ---
 	case "Page.enable", "Page.setLifecycleEventsEnabled", "Page.setDownloadBehavior":
@@ -46,9 +52,31 @@ func (c *conn) dispatchDomain(t *target, sid, method string, params json.RawMess
 			"contentSize":    map[string]any{"x": 0, "y": 0, "width": t.viewportWidth(), "height": 600},
 		}, nil
 	case "Page.close":
+		c.destroyTarget(t)
 		return map[string]any{}, nil
 	case "Page.getResourceTree":
 		return map[string]any{"frameTree": t.frameTree()}, nil
+	case "Page.createIsolatedWorld":
+		// One JavaScript environment backs every world, but the client tracks
+		// execution contexts by id and name, so announce one for the world it
+		// asked for. Puppeteer runs page.title() and friends in this world.
+		var p struct {
+			FrameID   string `json:"frameId"`
+			WorldName string `json:"worldName"`
+		}
+		_ = json.Unmarshal(params, &p)
+		t.contextSeq++
+		id := t.contextSeq
+		if id < 2 {
+			id = 2
+		}
+		c.sendEvent(sid, "Runtime.executionContextCreated", map[string]any{
+			"context": map[string]any{
+				"id": id, "origin": originOf(t.page.URL), "name": p.WorldName, "uniqueId": "ctx-" + itoa(id),
+				"auxData": map[string]any{"isDefault": false, "type": "isolated", "frameId": t.id},
+			},
+		})
+		return map[string]any{"executionContextId": id}, nil
 
 	// --- Runtime ---
 	case "Runtime.enable":
@@ -124,6 +152,19 @@ func (c *conn) dispatchDomain(t *target, sid, method string, params json.RawMess
 	case "Emulation.clearDeviceMetricsOverride":
 		t.viewport = 0
 		return map[string]any{}, nil
+	case "Performance.getMetrics":
+		return map[string]any{"metrics": []any{}}, nil
+	case "DOM.describeNode":
+		var p struct {
+			NodeID   int    `json:"nodeId"`
+			ObjectID string `json:"objectId"`
+		}
+		_ = json.Unmarshal(params, &p)
+		n := t.nodeByID(p.NodeID)
+		if n == nil {
+			return map[string]any{"node": nil}, nil
+		}
+		return map[string]any{"node": t.describeNode(n, 0)}, nil
 
 	// --- Network ---
 	case "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker":
@@ -145,11 +186,13 @@ func (t *target) viewportWidth() int {
 	return 1280
 }
 
+// frameTree is called with the target lock already held, so it does not take
+// it again.
 func (t *target) frameTree() map[string]any {
 	return map[string]any{
 		"frame": map[string]any{
 			"id":                t.id,
-			"loaderId":          t.id,
+			"loaderId":          t.loaderID,
 			"url":               t.page.URL,
 			"domainAndRegistry": hostOf(t.page.URL),
 			"mimeType":          "text/html",
@@ -162,7 +205,7 @@ func (t *target) frameTree() map[string]any {
 func (t *target) executionContext() map[string]any {
 	return map[string]any{
 		"id": 1, "origin": originOf(t.page.URL), "name": "",
-		"uniqueId": "1", "auxData": map[string]any{"isDefault": true, "type": "default", "frameId": t.id},
+		"uniqueId": "ctx-1", "auxData": map[string]any{"isDefault": true, "type": "default", "frameId": t.id},
 	}
 }
 
@@ -171,20 +214,32 @@ func (c *conn) pageNavigate(t *target, sid string, params json.RawMessage) (any,
 		URL string `json:"url"`
 	}
 	_ = json.Unmarshal(params, &p)
-	if err := t.page.Load(p.URL); err != nil {
-		c.sendEvent(sid, "Page.frameNavigated", map[string]any{"frame": t.frameTree()["frame"]})
-		return map[string]any{"frameId": t.id, "loaderId": t.id}, nil
+	err := t.page.Load(p.URL)
+	if err == nil {
+		t.refresh()
 	}
-	t.refresh()
-	c.emitLoad(t, sid)
-	return map[string]any{"frameId": t.id, "loaderId": t.id}, nil
+	// A new document gets a new loader id, which is how a client recognizes a
+	// navigation commit.
+	t.loaderID = randomID()
+	// The lifecycle events are queued to run after the reply, so a client that
+	// registers its load waiter after sending Page.navigate still sees them.
+	c.pending = append(c.pending, func() {
+		t.mu.Lock()
+		c.emitLoad(t, sid)
+		t.mu.Unlock()
+	})
+	return map[string]any{"frameId": t.id, "loaderId": t.loaderID}, nil
 }
 
-// emitLoad emits the navigation lifecycle events a client waits for.
+// emitLoad emits the navigation lifecycle events a client waits for. The
+// "init" event is what carries the new loader id (a client learns the document
+// changed from it), so it precedes "load".
 func (c *conn) emitLoad(t *target, sid string) {
 	frameID := t.id
 	c.sendEvent(sid, "Page.frameNavigated", map[string]any{"frame": t.frameTree()["frame"]})
-	c.sendEvent(sid, "Page.lifecycleEvent", map[string]any{"frameId": frameID, "loaderId": frameID, "name": "load", "timestamp": 0})
+	for _, name := range []string{"init", "DOMContentLoaded", "load"} {
+		c.sendEvent(sid, "Page.lifecycleEvent", map[string]any{"frameId": frameID, "loaderId": t.loaderID, "name": name, "timestamp": 0})
+	}
 	c.sendEvent(sid, "Page.domContentEventFired", map[string]any{"timestamp": 0})
 	c.sendEvent(sid, "Page.loadEventFired", map[string]any{"timestamp": 0})
 }
@@ -339,4 +394,46 @@ func originOf(raw string) string {
 		return "://"
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+// noopMethods are commands a client sends while setting up that this browser
+// does not model. Answering with an empty result keeps Puppeteer/Playwright
+// moving instead of failing on the first unimplemented domain.
+var noopMethods = map[string]bool{
+	"Fetch.enable": true, "Fetch.disable": true, "Fetch.continueRequest": true,
+	"Fetch.failRequest": true, "Fetch.fulfillRequest": true, "Fetch.continueWithAuth": true,
+	"Fetch.getResponseBody": true, "Fetch.takeResponseBodyAsStream": true,
+	"Performance.enable": true, "Performance.disable": true,
+	"Log.enable": true, "Log.disable": true, "Log.clear": true,
+	"Runtime.addBinding": true, "Runtime.removeBinding": true, "Runtime.compileScript": true,
+	"Runtime.setAsyncCallStackDepth": true, "Runtime.setCustomObjectFormatterEnabled": true,
+	"Page.addScriptToEvaluateOnNewDocument": true, "Page.removeScriptToEvaluateOnNewDocument": true,
+	"Page.setBypassCSP": true, "Page.setInterceptFileChooserDialog": true,
+	"Page.setDocumentContent": true, "Page.bringToFront": true,
+	"Page.startScreencast": true, "Page.stopScreencast": true,
+	"Emulation.setFocusEmulationEnabled": true, "Emulation.setTouchEmulationEnabled": true,
+	"Emulation.setDefaultBackgroundColorOverride": true, "Emulation.setEmulatedMedia": true,
+	"Emulation.setUserAgentOverride": true, "Emulation.setScriptExecutionDisabled": true,
+	"Emulation.setLocaleOverride": true, "Emulation.setTimezoneOverride": true,
+	"Network.setExtraHTTPHeaders": true, "Network.setUserAgentOverride": true,
+	"Network.setRequestInterception": true, "Network.emulateNetworkConditions": true,
+	"Network.setBlockedURLs": true, "Network.disable": true,
+	"Security.enable": true, "Security.disable": true, "Security.setIgnoreCertificateErrors": true,
+	"Browser.getWindowForTarget": true, "Browser.setWindowBounds": true,
+	"Browser.getWindowBounds": true, "Browser.setPermission": true,
+	"Browser.grantPermissions": true, "Browser.resetPermissions": true,
+	"Overlay.enable": true, "Overlay.disable": true,
+	"Debugger.enable": true, "Debugger.disable": true, "Debugger.setBreakpointsActive": true,
+	"Accessibility.enable": true, "Accessibility.disable": true,
+	"Animation.enable": true, "Animation.disable": true,
+	"CSS.enable": true, "CSS.disable": true,
+	"Profiler.enable": true, "Profiler.disable": true,
+	"ServiceWorker.enable": true, "ServiceWorker.disable": true,
+	"Target.setDiscoverTargets": true, "Target.getBrowserContexts": true,
+	"DOM.getFrameOwner": true, "DOM.getAttributes": true,
+	"DOM.getBoxModel": true, "DOM.requestChildNodes": true, "DOM.focus": true,
+	"IndexedDB.enable": true, "IndexedDB.disable": true,
+	"Storage.getUsageAndQuota": true, "CacheStorage.requestCacheNames": true,
+	"Page.setWebLifecycleState": true, "Input.setIgnoreInputEvents": true,
+	"Audits.enable": true, "Audits.disable": true,
 }

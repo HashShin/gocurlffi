@@ -174,6 +174,36 @@ make gobrowser
   spinning forever, and a slow subresource cannot stall the load past the
   budget.
 - Extraction helpers: `HTML()`, `Text()`, `Links()`, `Markdown()`.
+- Element geometry: `getBoundingClientRect`, `getClientRects`, `offsetWidth`/
+  `offsetHeight`/`offsetTop`/`offsetLeft`, `clientWidth`/`clientHeight` and
+  `document.elementFromPoint` answer from the layout, not zeroed stubs. The
+  layout is computed at most once per document revision and reused, so a script
+  that measures many elements pays for one layout.
+- XPath: `Page.QueryXPath`/`QueryXPathFirst`/`XPath` and `document.evaluate`
+  with `XPathResult` (node iterators, snapshots, number, string and boolean
+  types). Compiled expressions are cached process-wide.
+- Page actions: `Click`, `ClickPoint`, `Type`, `Fill`, `Select`, `Check`,
+  `Focus`, `Press` and `Scroll`, dispatching the events a browser would. They
+  are the shared layer the CLI, the CDP Input domain and the BiDi input module
+  call, and clicks use the geometry centre.
+- iframes: each `<iframe>` is loaded as a child page with its own document and
+  JavaScript environment, sharing the browser's cookies. `Page.Frames()`,
+  `iframe.contentDocument`/`contentWindow` and extraction across the frame tree
+  (`Text`, `Links`, `Markdown`) all work. Nesting is bounded.
+- Network interception and proxy: `Options.Intercept` is offered every request
+  (document, script, stylesheet, image, font, fetch, XHR) and may continue,
+  block or fulfil it. `Options.Proxy` routes every request through a proxy.
+- `robots.txt`: `Options.ObeyRobots` fetches and caches each origin's
+  robots.txt and skips a disallowed URL with a synthetic 403.
+- CORS (`Options.CORS`, off by default): cross-origin fetch/XHR carries an
+  `Origin` header, runs a preflight when it is not simple, and rejects a
+  response without a matching `Access-Control-Allow-Origin`.
+- ES modules: `<script type="module">`, static `import`/`export` (default,
+  named and namespace forms), re-exports, side-effect imports, an import map
+  for bare specifiers, and dynamic `import()`, all loaded and evaluated in
+  dependency order.
+- A Chrome DevTools Protocol server (`gobrowser serve`) and WebDriver BiDi on
+  the same port, so Puppeteer, Playwright and chromedp can drive it.
 - `Screenshot`, a text-layout PNG renderer (see below).
 
 Verified live:
@@ -462,6 +492,44 @@ Two traps, both of which cost real time here:
   put a block before it: as a container's first block, the container's own
   height lands on the element as a minimum and its declaration cannot be seen.
 
+## Driving it as a browser (CDP and WebDriver BiDi)
+
+`gobrowser serve` starts a Chrome DevTools Protocol server on `--host`/`--port`
+(default `127.0.0.1:9222`), so an existing automation client drives this browser
+the way it drives Chrome:
+
+```sh
+./bin/gobrowser serve --port 9222
+# then, from Puppeteer:
+#   puppeteer.connect({ browserWSEndpoint: "ws://127.0.0.1:9222" })
+```
+
+It serves the discovery endpoints (`/json/version`, `/json/list`, `/json/new`)
+and a browser-level WebSocket (`/devtools/browser/<id>`) plus a per-page one
+(`/devtools/page/<id>`). The implemented domains are `Browser`, `Target`,
+`Page`, `Runtime`, `DOM`, `Network` (enable/cookies) and `Input`, enough for
+navigation, `Runtime.evaluate`, a DOM query, an interaction and
+`Page.captureScreenshot`. A client that asks for a method outside that set gets a
+protocol error rather than a hang.
+
+WebDriver BiDi is served on the same port at `/session`, sharing the target and
+page layer: `session.new`/`status`, `browsingContext.create`/`navigate`/`getTree`/
+`close`/`captureScreenshot`, `script.evaluate`/`callFunction` and
+`input.performActions`. Both protocols are always available; `--protocol` is
+accepted for parity with the original.
+
+The server only costs anything when it runs. A plain `Open` and extract never
+touches it.
+
+Verified against a real client: `scripts/check_puppeteer.sh` starts the server
+and a local page, then runs `scripts/check_puppeteer.mjs`, which connects with
+`puppeteer-core`, opens a page, navigates, reads `document.title`, evaluates an
+expression and takes a screenshot. It prints:
+
+```
+{"title":"Puppeteer Check","h1":"hello cdp","screenshotBytes":4356}
+```
+
 ## Checking sites
 
 `scripts/check_sites.sh -B` runs the same site/target matrix with the headless
@@ -477,25 +545,29 @@ bash scripts/check_sites.sh -B -i chrome131 https://bsky.app/
 
 This is a browsing core with a document renderer, not a full web rendering
 engine. `Screenshot` applies a large subset of CSS (see the limits above) but is
-not a browser: there is no PDF output, and the gaps below remain. Specifically
-absent:
+not a browser: there is no PDF output, no adblocker and no MCP/agent mode, and
+the gaps below remain. Specifically absent:
 
-- ES modules (`<script type="module">`, `import`/`export`) are skipped.
 - The JavaScript engine has no async generators or `for await (... of ...)`
   (goja reports "Async generators are not supported yet"). Bundles that rely
   on them, such as the Bluesky web app's main chunk, stop at that point even
   though the page still loads. Async functions and top-level `await` work.
-- No iframe browsing context: `iframe.contentWindow`/`contentDocument` return
-  the page's own window and document, so scripts that reach into a frame stop
-  throwing, but embedded frame documents are never fetched or parsed. Frame
-  documents are therefore always reported as same-origin.
-- Element geometry is a stub: `offsetWidth`/`offsetHeight` and
-  `getBoundingClientRect` return zeroed rectangles, and the CSS layout is not
-  used for hit-testing or scrolling.
+- A frame's `contentWindow` is a thin window shape over the shared DOM nodes,
+  because a frame runs in its own JavaScript runtime; a script cannot call a
+  function the frame defined on its own window.
+- No PDF output and no adblocker. Structured data (`application/ld+json`) is
+  not parsed, and there is no MCP server or native agent mode: those were left
+  out of this port on purpose.
 - No service workers, Workers, WebSocket, `indexedDB`, WebAssembly, Canvas.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element
   (visible) rather than in `content`. Use `template.content` to build content.
+
+Known approximation: when a container holds a single block child, the engine
+merges the container's padding onto that one block, so the parent and child can
+report the same rectangle from `getBoundingClientRect`; the parent's own height
+is still correct. Hit testing and a click's centre are unaffected in the common
+case (an element with its own content, or its own background box).
 
 Sites whose content is gated by a heavy framework and many chained dynamic
 imports may not fully render, and absolute JS-engine parity with V8 is out of
@@ -523,6 +595,11 @@ it is enough.
   `Page` is not safe for concurrent use. The race detector is unavailable on
   android/arm64, so this is covered by construction plus a concurrency test
   (`TestConcurrentPages`) run repeatedly, not by `-race`.
+- The parity features are opt-in and lazy, so they do not slow the plain
+  `Open` -> extract path: geometry, XPath and the actions only run when called
+  (and a geometry layout is cached until the DOM changes); interception, proxy,
+  robots and CORS only act when their option is set; `serve` only costs while
+  it runs; iframes and ES modules only cost on pages that contain them.
 
 ### CLI flags
 
@@ -545,5 +622,22 @@ gobrowser get URL \
   --status              # print HTTP status to stderr
   --sheets              # report the page's own stylesheets on stderr
   --debug               # log page-load phases to stderr
+  --proxy URL           # route requests through a proxy
+  --obey-robots         # honour robots.txt
+  --xpath EXPR          # evaluate XPath and print matched text
+  --block GLOB          # block requests matching GLOB (repeatable)
+  --click SELECTOR      # click the matching element (repeatable)
+  --type SEL=TEXT       # type text into a control (repeatable)
+  --fill SEL=VALUE      # set a control's value (repeatable)
+  --select SEL=VALUE    # choose an option (repeatable)
   -H 'K: V'             # extra header (repeatable)
+
+gobrowser serve \
+  --host 127.0.0.1 \    # CDP/BiDi bind host
+  --port 9222 \         # bind port
+  -i chrome131 \        # impersonation target
+  --proxy URL \         # route requests through a proxy
+  --obey-robots \       # honour robots.txt
+  --no-js \             # disable JavaScript
+  --debug               # log page-load phases to stderr
 ```

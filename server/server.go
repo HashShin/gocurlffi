@@ -9,8 +9,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -48,6 +50,12 @@ type target struct {
 	url      string
 	title    string
 	viewport int
+	// loaderID identifies the current document. It changes on every
+	// navigation, which is how a client detects a new document.
+	loaderID string
+	// contextSeq numbers the execution contexts announced to a client (the
+	// main world and any isolated world it asks for).
+	contextSeq int
 }
 
 type session struct {
@@ -159,6 +167,16 @@ func (s *Server) Handler() http.Handler {
 	// WebDriver BiDi shares the port, at /session and /session/{id}.
 	mux.HandleFunc("/session", s.serveBiDi)
 	mux.HandleFunc("/session/", s.serveBiDi)
+	// The root path is the browser-level WebSocket, which is what a client
+	// connects to when it is given "ws://host:port" with no path (Puppeteer's
+	// browserWSEndpoint style).
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		s.serveWS(w, r, nil)
+	})
 	return mux
 }
 
@@ -209,6 +227,12 @@ type conn struct {
 	mu       sync.Mutex
 	sessions map[string]*target
 	mode     string // "browser" or "page"
+	// autoAttach, when set by Target.setAutoAttach, makes a newly created
+	// target attach to this connection automatically, which is how Puppeteer
+	// discovers pages.
+	autoAttach bool
+	// pending holds event emitters to run after the reply is written.
+	pending []func()
 }
 
 func (c *conn) run(ctx context.Context) {
@@ -234,6 +258,9 @@ func (c *conn) send(v any) {
 
 // sendEvent delivers a protocol event, tagged with a session id when present.
 func (c *conn) sendEvent(sessionID, method string, params any) {
+	if debugCDP {
+		fmt.Fprintf(os.Stderr, "CDP -> %s sid=%q\n", method, sessionID)
+	}
 	msg := map[string]any{"method": method, "params": params}
 	if sessionID != "" {
 		msg["sessionId"] = sessionID
