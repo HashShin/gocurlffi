@@ -2084,9 +2084,15 @@ func layoutFlexRun(b renderBlock, idx []int, base []float64, contentX, avail, y,
 	for i, ci := range idx {
 		// A flex item's width comes from the row, so an ancestor's width
 		// context no longer applies: reset it before laying the column out.
+		// The declared width an ancestor pinned travelled down as the item's
+		// own, which made a nested row measure itself at the ancestor's width
+		// instead of the item's and wrap early.
 		col := b.children[ci]
 		for j := range col {
 			col[j].hasSizeOwner = false
+			if !col[j].boxWidthIsOwn {
+				col[j].hasBoxWidth = false
+			}
 		}
 		cl, endY := layoutColumn(col, x, widths[i], y, baseSize, boxes)
 		childLines[i] = cl
@@ -2182,13 +2188,15 @@ func intrinsicColumnWidth(col []renderBlock, limit, baseSize float64) float64 {
 			// borders. Missing the right padding made a padded flex item too
 			// narrow, so its text wrapped one word per line.
 			tw := b.textX + spansIntrinsicWidth(b.spans) + b.paddingRight + 2*b.borderW
-			// A box with no content of its own still takes the size it was
-			// given: that is how an empty icon <span> of "width: 18px" counts,
-			// and with it the row that holds the icon. Only a width that is
-			// the box's own is used; a percentage or a viewport length
-			// resolves against something else, and feeding those in inflated
-			// every shrink-to-fit container that held a "width: 100%" box.
-			if len(b.spans) == 0 && b.boxWidthIsOwn && b.boxWidthPx > tw {
+			// A box that declares its own width measures as that width: the
+			// max-content contribution of a definite size is the size, not the
+			// text inside it. That is how an empty icon <span> of
+			// "width: 18px" counts, and equally how three "width: 150px"
+			// spans count. Only a width that is the box's own is used; a
+			// percentage or a viewport length resolves against something
+			// else, and feeding those in inflated every shrink-to-fit
+			// container that held a "width: 100%" box.
+			if b.boxWidthIsOwn && b.boxWidthPx > tw {
 				tw = b.boxWidthPx
 			}
 			if tw > w {

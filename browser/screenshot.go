@@ -575,7 +575,11 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		b.hasSizing = true
 		b.sizeLeft = c.sizeLeft
 		b.boxWidthPx, b.boxWidthPct, b.hasBoxWidth = c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth
-		b.boxWidthIsOwn = c.sizeWidthIsOwn
+		// The width is the box's own only when this element declares it: the
+		// sizing context an ancestor pinned otherwise travels down as the
+		// box's, which made a nested row measure itself at the ancestor's
+		// width.
+		b.boxWidthIsOwn = c.sizeWidthIsOwn && cs != nil && cs.hasWidth
 		b.boxMaxWidthPx, b.boxMaxWidthPct, b.hasBoxMaxWidth = c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax
 		b.boxAutoLeft, b.boxAutoRight = c.sizeAutoLeft, c.sizeAutoRight
 		b.hasSizeOwner = c.hasSizeOwner
