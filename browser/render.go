@@ -1725,6 +1725,8 @@ func layoutTable(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBo
 	return lines, total
 }
 
+var debugPct = false
+
 // layoutGrid places a grid container's children in the column tracks of its
 // grid-template-columns. Auto placement is row-major: items fill the tracks
 // left to right and a new row starts when the remaining tracks cannot hold the

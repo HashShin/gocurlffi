@@ -524,6 +524,12 @@ type collector struct {
 	// against it instead of the page width.
 	contW    float64
 	hasContW bool
+	// contH is the height a percentage height resolves against: the containing
+	// block's own declared height, when it has one.
+	contH        float64
+	hasContH     bool
+	ownHeightPx  float64
+	hasOwnHeight bool
 
 	// rightInset is how far the containing block's content edge sits inside the
 	// column's right edge, accumulated over the containers between them. It is
@@ -560,7 +566,11 @@ func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 		c.blocks = append(c.blocks, b)
 	}
 	c.applyBoxEdges(start, cs)
-	c.assignSizing(start, cs)
+	ownHeight := 0.0
+	if c.hasOwnHeight {
+		ownHeight = c.ownHeightPx
+	}
+	c.assignSizing(start, cs, ownHeight)
 	if boxed {
 		c.assignBox(start, cs)
 	}
@@ -568,7 +578,7 @@ func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 
 // assignSizing copies the current sizing context onto the blocks an element
 // produced, unless a nested element already gave them their own.
-func (c *collector) assignSizing(start int, cs *computedStyle) {
+func (c *collector) assignSizing(start int, cs *computedStyle, ownHeight float64) {
 	for i := start; i < len(c.blocks); i++ {
 		b := &c.blocks[i]
 		// A declared height sizes the element's own box, so it reaches the
@@ -604,8 +614,8 @@ func (c *collector) assignSizing(start int, cs *computedStyle) {
 		b.sizePadRight, b.sizeMarginRight = c.sizePadRight, c.sizeMarginRight
 		if cs != nil {
 			b.borderBox = cs.boxSizingBorderBox
-			if cs.hasHeight && cs.heightPx > b.minHeight {
-				b.minHeight = cs.heightPx
+			if ownHeight > b.minHeight {
+				b.minHeight = ownHeight
 				b.hasDeclaredHeight = true
 			}
 			// A declared min-height holds a box open the same way, and is
@@ -811,6 +821,10 @@ func (c *collector) walkElement(el *html.Node) {
 		sizeAutoLeft, sizeAutoRight bool
 		contW                       float64
 		hasContW                    bool
+		contH                       float64
+		hasContH                    bool
+		ownHeightPx                 float64
+		hasOwnHeight                bool
 		rightInset                  float64
 		hasSizeOwner                bool
 		sizeBoxLeft                 float64
@@ -821,7 +835,7 @@ func (c *collector) walkElement(el *html.Node) {
 	}{c.style, c.content, c.quote, c.pre, c.lineH, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
-		c.contW, c.hasContW, c.rightInset,
+		c.contW, c.hasContW, c.contH, c.hasContH, c.ownHeightPx, c.hasOwnHeight, c.rightInset,
 		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight,
 		c.sizeWidthIsOwn}
 
@@ -847,6 +861,25 @@ func (c *collector) walkElement(el *html.Node) {
 	// own to carry the line height, so it is kept here for ensure.
 	c.lineH = cs.lineHeight
 	block := isBlockDisplay(cs.display)
+	c.ownHeightPx, c.hasOwnHeight = 0, false
+	if cs.hasHeight {
+		switch {
+		case cs.heightPx > 0:
+			c.ownHeightPx, c.hasOwnHeight = cs.heightPx, true
+		case cs.heightPct > 0 && c.hasContH:
+			c.ownHeightPx, c.hasOwnHeight = cs.heightPct*c.contH, true
+			if debugPct && c.ownHeightPx > 40 {
+				fmt.Printf("PCTRES tag=%s class=%.30s pct=%.2f parent=%.0f resolved=%.0f\n", tag, attrOf(el, "class"), cs.heightPct, c.contH, c.ownHeightPx)
+			}
+		}
+	}
+	if block {
+		if c.hasOwnHeight {
+			c.contH, c.hasContH = c.ownHeightPx, true
+		} else if cs.hasHeight {
+			c.contH, c.hasContH = 0, false
+		}
+	}
 	// A <summary> is display:list-item, but inside an inline-block <details>
 	// the block formatting context it starts is contained by the atomic
 	// inline box, so the summary reads as the box's one label and the text
@@ -969,6 +1002,8 @@ func (c *collector) walkElement(el *html.Node) {
 		c.sizePadLeft, c.sizePadRight = saved.sizePadLeft, saved.sizePadRight
 		c.sizeMarginRight = saved.sizeMarginRight
 		c.contW, c.hasContW = saved.contW, saved.hasContW
+		c.contH, c.hasContH = saved.contH, saved.hasContH
+		c.ownHeightPx, c.hasOwnHeight = saved.ownHeightPx, saved.hasOwnHeight
 		c.rightInset = saved.rightInset
 		c.blockInset = savedBlockInset
 	}()
@@ -1363,7 +1398,7 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 	c.blocks = append(c.blocks, b)
 	// The table's own declared width has to reach the layout: it is the width
 	// the columns are distributed over.
-	c.assignSizing(len(c.blocks)-1, cs)
+	c.assignSizing(len(c.blocks)-1, cs, 0)
 	c.content = b.boxLeft
 	return true
 }
@@ -1468,7 +1503,7 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 	// The row's own width, max-width and auto margins size and center it like
 	// any other block: a "max-width: 300px; margin: 0 auto" row is centered and
 	// its items share 300px, not the whole column.
-	c.assignSizing(len(c.blocks)-1, cs)
+	c.assignSizing(len(c.blocks)-1, cs, 0)
 	// A row is a box like any other block, so its own background, border and
 	// shadow are drawn: a colored page header is a flex row.
 	if cs.hasBackground || cs.hasBorder || cs.hasRadius() || cs.hasShadow {

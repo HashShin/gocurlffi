@@ -4,16 +4,11 @@ import (
 	"testing"
 )
 
-// A box that fills its container with "h-full" stays inside the container's
-// own declared height, and a percentage with nothing to resolve against leaves
-// the box empty. Chromium holds the following text 300px down in each case but
-// the third.
-//
-// The engine reaches this through the container's height rather than by
-// resolving the percentage on its own: a percentage height whose container has
-// other content in front of it would need the container to overflow, which the
-// layout does not model yet.
-func TestFullHeightChildStaysInItsContainer(t *testing.T) {
+// A percentage height resolves against the containing block's declared height:
+// "h-full" is how a page fills a sized panel. Chromium holds the text after
+// the box 300px down in each case but the third, where the percentage has
+// nothing to resolve against and the box stays empty.
+func TestPercentageHeightResolvesAgainstTheBox(t *testing.T) {
 	cases := []struct {
 		name string
 		html string
@@ -22,6 +17,7 @@ func TestFullHeightChildStaysInItsContainer(t *testing.T) {
 		{"full", `<div style="height:300px"><div style="height:100%;background:#999"></div></div>`, 300},
 		{"half", `<div style="height:300px"><div style="height:50%;background:#999"></div></div>`, 300},
 		{"no sized container", `<div><div style="height:100%;background:#999"></div></div>`, 0},
+		{"content before the child", `<div style="height:300px"><p style="margin:0">x</p><div style="height:100%;background:#999"></div></div>`, 300},
 		{"percentage inside a percentage", `<div style="height:300px"><div style="height:50%"><div style="height:100%;background:#999"></div></div></div>`, 300},
 	}
 	for _, c := range cases {
