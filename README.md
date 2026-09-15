@@ -281,16 +281,24 @@ fingerprint baseline, which used the Python curl_cffi as the reference.
   How far the browser gets on that page, measured. The interstitial carries
   Google's BotGuard program (pure JavaScript - `window.knitsail`, no
   WebAssembly) and the browser runs it to completion: the challenge callback
-  fires rather than the `sg_b_e` error beacon, `SG_SS` is minted with a ~807
-  byte token, and the page then hands off with `location.replace(...)`. So the
-  client-side half works. It still does not return results, because Google
-  answers the follow-up request with `429` and a CAPTCHA page reading "our
-  systems have detected unusual traffic from your computer network". That is a
-  network-level judgement: the same code path succeeds from a residential or
-  mobile address, which is why driving a real browser from Termux works while
-  this does not. Query flags (`gbv=1`, `udm=14`), every impersonation target and
-  a warmed cookie jar all make no difference. Use one of the alternatives above
-  when the HTML is all that is wanted.
+  fires rather than the `sg_b_e` error beacon, and `SG_SS` is minted with a
+  ~807 byte token. The page then hands off with `location.replace(...)`, which
+  the browser follows, so the follow-up request really does carry
+  `sg_ss=<token>&sei=<id>` the way a real browser sends it. Google answers that
+  request with `429` and redirects to `/sorry/index`, whose text is "our systems
+  have detected unusual traffic from your computer network ... the block will
+  expire shortly after those requests stop".
+
+  So the client half is complete and the request is well formed; what fails is
+  Google's server-side judgement. Two readings fit the evidence and this vantage
+  point cannot separate them: the network is blocked (which is why driving a real
+  browser from a residential or mobile address works while this does not), or
+  the BotGuard token is rejected despite running. Note the differential - a
+  `/search` with no token still gets the ordinary interstitial, and the CAPTCHA
+  appears once a token is presented. Query flags (`gbv=1`, `udm=14`), every
+  impersonation target and a warmed cookie jar all make no difference. Use one
+  of the alternatives above when the HTML is all that is wanted, or reach Google
+  from an address with a residential reputation.
 - `browser` has no CSS box model (no borders, shadows, floats, positioning,
   gradients or images), no WebSockets and no PDF output. It cascades the page's
   CSS - selectors, specificity, `!important`, inheritance, `@import`, `@media`,
