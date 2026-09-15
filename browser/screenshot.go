@@ -97,7 +97,7 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 
 	// Media queries must be evaluated against the width being rendered, and
 	// getComputedStyle called from page scripts should agree with it.
-	p.layoutWidth = float64(width)
+	p.setViewportWidth(float64(width))
 	if !opts.NoImages {
 		maxImages, maxBytes := opts.MaxImages, opts.MaxImageBytes
 		if maxImages <= 0 {
@@ -192,6 +192,10 @@ func (p *Page) documentBackground(eng *styleEngine) (color.RGBA, bool) {
 
 // defaultLayoutWidth is the viewport getComputedStyle assumes before a render.
 const defaultLayoutWidth = 1280
+
+// defaultLayoutHeight pairs with defaultLayoutWidth. Nothing lays a page out
+// by height yet, so it is the viewport height a page script sees.
+const defaultLayoutHeight = 720
 
 // --- stylesheet loading ---
 
@@ -430,6 +434,23 @@ func (p *Page) computedStyle(n *html.Node) *computedStyle {
 }
 
 // viewportWidth is the layout width media queries are resolved against.
+// setViewportWidth records the width the page is laid out at and tells the
+// page's own scripts, so innerWidth and the layout cannot disagree.
+func (p *Page) setViewportWidth(w float64) {
+	p.layoutWidth = w
+	if p.env == nil || p.env.vm == nil {
+		return
+	}
+	_ = p.env.vm.Set("innerWidth", w)
+	_ = p.env.vm.Set("outerWidth", w)
+	if screen := p.env.vm.Get("screen"); screen != nil {
+		if o := screen.ToObject(p.env.vm); o != nil {
+			_ = o.Set("width", w)
+			_ = o.Set("availWidth", w)
+		}
+	}
+}
+
 func (p *Page) viewportWidth() float64 {
 	if p.layoutWidth > 0 {
 		return p.layoutWidth

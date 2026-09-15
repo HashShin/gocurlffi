@@ -214,10 +214,13 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("status", "")
 	_ = rt.Set("closed", false)
 	_ = rt.Set("frameElement", goja.Null())
-	_ = rt.Set("innerWidth", 1280)
-	_ = rt.Set("innerHeight", 720)
-	_ = rt.Set("outerWidth", 1280)
-	_ = rt.Set("outerHeight", 720)
+	// The viewport the layout uses, so a script and the picture agree: a page
+	// that reads innerWidth, or asks matchMedia, gets the width the document
+	// is laid out at. Before any layout that is the default 1280.
+	_ = rt.Set("innerWidth", e.page.viewportWidth())
+	_ = rt.Set("innerHeight", defaultLayoutHeight)
+	_ = rt.Set("outerWidth", e.page.viewportWidth())
+	_ = rt.Set("outerHeight", defaultLayoutHeight)
 	_ = rt.Set("devicePixelRatio", 1)
 	_ = rt.Set("scrollX", 0)
 	_ = rt.Set("scrollY", 0)
@@ -296,9 +299,10 @@ func (e *jsEnv) setupGlobals() {
 	_ = rt.Set("focus", func(call goja.FunctionCall) goja.Value { return goja.Undefined() })
 	_ = rt.Set("blur", func(call goja.FunctionCall) goja.Value { return goja.Undefined() })
 	_ = rt.Set("matchMedia", func(call goja.FunctionCall) goja.Value {
+		q := argString(call.Argument(0))
 		m := e.vm.NewObject()
-		_ = m.Set("matches", false)
-		_ = m.Set("media", argString(call.Argument(0)))
+		_ = m.Set("matches", matchMediaQuery(q, e.page.viewportWidth(), defaultLayoutHeight))
+		_ = m.Set("media", q)
 		_ = m.Set("addListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 		_ = m.Set("removeListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 		_ = m.Set("addEventListener", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
@@ -437,10 +441,10 @@ func (e *jsEnv) consoleObject() *goja.Object {
 
 func (e *jsEnv) screenObject() *goja.Object {
 	o := e.vm.NewObject()
-	_ = o.Set("width", 1280)
-	_ = o.Set("height", 720)
-	_ = o.Set("availWidth", 1280)
-	_ = o.Set("availHeight", 720)
+	_ = o.Set("width", e.page.viewportWidth())
+	_ = o.Set("height", defaultLayoutHeight)
+	_ = o.Set("availWidth", e.page.viewportWidth())
+	_ = o.Set("availHeight", defaultLayoutHeight)
 	_ = o.Set("colorDepth", 24)
 	_ = o.Set("pixelDepth", 24)
 	return o

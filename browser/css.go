@@ -690,6 +690,14 @@ func splitTopLevel(s string, sep byte) []string {
 
 // matchMedia evaluates a media query list against the layout the caller asked
 // about. Comma-separated queries are ORed.
+// matchMediaQuery reports whether a CSS media query matches a viewport of the
+// given size. The stylesheet parser and window.matchMedia both come through
+// here, so a page script and the layout cannot disagree about a query.
+func matchMediaQuery(q string, width, height float64) bool {
+	p := &cssParser{mediaWidth: width, mediaHeightV: height}
+	return p.matchMedia(q)
+}
+
 func (p *cssParser) matchMedia(q string) bool {
 	q = cssStripComments(q)
 	if strings.TrimSpace(q) == "" {
