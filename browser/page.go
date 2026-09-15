@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -555,21 +558,98 @@ func (p *Page) cookieString() string {
 	return strings.Join(parts, "; ")
 }
 
+// setCookieString applies a document.cookie assignment. It parses the
+// attributes a browser honours (Path, Domain, Secure, Max-Age, Expires) rather
+// than keeping only the name and value, because the cookie jar scopes what it
+// sends by domain and path: a cookie stored without a domain was handed to
+// every host the page went on to contact.
 func (p *Page) setCookieString(s string) {
-	if p.browser == nil || p.browser.sess == nil || s == "" {
-		return
-	}
-	pair := strings.SplitN(s, ";", 2)[0]
-	name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
-	if !ok || name == "" {
+	if p.browser == nil || p.browser.sess == nil || strings.TrimSpace(s) == "" {
 		return
 	}
 	jar := p.browser.sess.Cookies()
-	if strings.TrimSpace(value) == "" {
-		jar.Del(strings.TrimSpace(name))
+
+	parts := strings.Split(s, ";")
+	name, value, ok := strings.Cut(strings.TrimSpace(parts[0]), "=")
+	name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+	if !ok || name == "" {
 		return
 	}
-	jar.Set(strings.TrimSpace(name), strings.TrimSpace(value))
+
+	ck := requests.Cookie{
+		Name:   name,
+		Value:  value,
+		Domain: cookieHost(p.URL),
+		Path:   cookieDefaultPath(p.URL),
+	}
+	expired := false
+	for _, attr := range parts[1:] {
+		k, v, _ := strings.Cut(strings.TrimSpace(attr), "=")
+		v = strings.TrimSpace(v)
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "path":
+			if v != "" {
+				ck.Path = v
+			}
+		case "domain":
+			if d := strings.TrimLeft(v, "."); d != "" {
+				ck.Domain = d
+			}
+		case "secure":
+			ck.Secure = true
+		case "httponly":
+			ck.HTTPOnly = true
+		case "max-age":
+			if n, err := strconv.Atoi(v); err == nil {
+				if n <= 0 {
+					expired = true
+				} else {
+					ck.Expires = time.Now().Add(time.Duration(n) * time.Second)
+				}
+			}
+		case "expires":
+			if t, err := http.ParseTime(v); err == nil {
+				ck.Expires = t
+				if t.Before(time.Now()) {
+					expired = true
+				}
+			}
+		}
+	}
+
+	// An empty value or a past expiry deletes the cookie, which is how a page
+	// clears one.
+	if value == "" || expired {
+		jar.Del(name)
+		return
+	}
+	jar.SetCookie(ck)
+}
+
+// cookieHost is the host a document.cookie write is scoped to.
+func cookieHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// cookieDefaultPath is the path a cookie written without a Path attribute is
+// scoped to: the directory of the document, per RFC 6265 section 5.1.4.
+func cookieDefaultPath(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "/"
+	}
+	p := u.EscapedPath()
+	if p == "" || !strings.HasPrefix(p, "/") {
+		return "/"
+	}
+	if i := strings.LastIndex(p, "/"); i > 0 {
+		return p[:i]
+	}
+	return "/"
 }
 
 // templateContentNode returns the content fragment for a template, creating an
