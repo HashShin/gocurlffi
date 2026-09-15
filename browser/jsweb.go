@@ -77,6 +77,7 @@ func (e *jsEnv) setupWeb() {
 	_ = rt.Set("XPathResult", e.newXPathResultCtor())
 	e.installIndexedDB(rt)
 	e.installWebSocket(rt)
+	e.installWorker(rt)
 }
 
 // newDOMParser implements new DOMParser().parseFromString(html, type).

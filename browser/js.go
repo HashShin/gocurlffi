@@ -40,8 +40,9 @@ type jsEnv struct {
 	canvases map[*html.Node]*canvasState
 	// idb holds the in-memory IndexedDB databases, per environment.
 	idb map[string]*idbDatabase
-	// webSockets are the sockets a page opened.
+	// webSockets are the sockets a page opened, workers the workers it started.
 	webSockets []*pageWebSocket
+	workers    []*jsWorker
 }
 
 type jsListener struct {
@@ -588,7 +589,11 @@ func (e *jsEnv) runTimers(maxRounds int) {
 				socketDeadline = time.Time{}
 				continue
 			}
-			if e.hasOpenWebSocket() && time.Now().Before(deadline) {
+			if e.drainWorkers() {
+				socketDeadline = time.Time{}
+				continue
+			}
+			if (e.hasOpenWebSocket() || e.hasLiveWorker()) && time.Now().Before(deadline) {
 				if socketDeadline.IsZero() {
 					socketDeadline = time.Now().Add(socketWait)
 				}
@@ -607,6 +612,7 @@ func (e *jsEnv) runTimers(maxRounds int) {
 		}
 		e.invokeTimer(due)
 		e.drainWebSockets()
+		e.drainWorkers()
 	}
 }
 
