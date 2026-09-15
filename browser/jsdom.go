@@ -330,23 +330,26 @@ func (e *jsEnv) defineElementProto(p *goja.Object) {
 	e.accessor(p, "dataset", func(call goja.FunctionCall) goja.Value {
 		return e.datasetObject(e.thisNode(call))
 	}, nil)
-	// Frame accessors. There is no separate browsing context, so an iframe
-	// reports the page window/document. This keeps scripts that reach into a
-	// frame from throwing; it also means contentDocument is always
-	// same-origin, which only matters for isolation, not for scraping.
+	// Frame accessors. An <iframe> loads as a child Page, so contentDocument
+	// is that page's own document. The frame runs in its own runtime, so
+	// contentWindow is a thin window shape over the shared DOM nodes.
 	e.accessor(p, "contentWindow", func(call goja.FunctionCall) goja.Value {
 		n := e.thisNode(call)
 		if n == nil || n.Data != "iframe" {
 			return goja.Undefined()
 		}
-		return e.vm.GlobalObject()
+		return e.frameWindow(e.page.FrameFor(n))
 	}, nil)
 	e.accessor(p, "contentDocument", func(call goja.FunctionCall) goja.Value {
 		n := e.thisNode(call)
 		if n == nil || n.Data != "iframe" {
 			return goja.Undefined()
 		}
-		return e.wrap(e.page.doc)
+		child := e.page.FrameFor(n)
+		if child == nil {
+			return goja.Null()
+		}
+		return e.wrap(child.doc)
 	}, nil)
 
 	e.accessor(p, "children", func(call goja.FunctionCall) goja.Value {

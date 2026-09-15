@@ -206,7 +206,10 @@ func TestFrameAccessors(t *testing.T) {
 	_ = p.SetContent(`<html><body><div id="plain"></div><iframe id="f"></iframe></body></html>`, "https://example.test/")
 
 	cases := []struct{ expr, want string }{
-		{`document.getElementById('f').contentDocument === document ? 'same' : 'other'`, "same"},
+		// An iframe loads its own browsing context, so its document is not the
+		// top document.
+		{`document.getElementById('f').contentDocument === document ? 'same' : 'other'`, "other"},
+		{`typeof document.getElementById('f').contentDocument`, "object"},
 		{`typeof document.getElementById('f').contentWindow.document`, "object"},
 		// non-frame elements do not expose the property
 		{`String(document.getElementById('plain').contentDocument)`, "undefined"},

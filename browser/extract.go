@@ -21,7 +21,8 @@ func (p *Page) TextOf(n *html.Node) string {
 	return visibleText(n)
 }
 
-// Links returns every anchor with a resolvable href.
+// Links returns every anchor with a resolvable href, including those inside
+// child frames.
 func (p *Page) Links() []Link {
 	var out []Link
 	for _, a := range getElementsByTagName(p.doc, "a") {
@@ -31,16 +32,32 @@ func (p *Page) Links() []Link {
 		}
 		out = append(out, Link{Text: strings.TrimSpace(textContent(a)), Href: resolveURL(p.baseURL(), href)})
 	}
+	for _, f := range p.frames {
+		out = append(out, f.Links()...)
+	}
 	return out
 }
 
 // Attr returns an element attribute value.
 func Attr(n *html.Node, key string) string { return attrOf(n, key) }
 
-// Markdown renders the current DOM as markdown, useful for feeding an LLM.
+// Markdown renders the current DOM as markdown, useful for feeding an LLM. A
+// child frame's content is appended in document order, so framed content is not
+// lost the way a plain text extraction of the top document would lose it.
 func (p *Page) Markdown() string {
 	var b strings.Builder
 	renderMarkdown(&b, p.doc, p.baseURL())
+	for _, f := range p.frames {
+		s := strings.TrimSpace(f.Markdown())
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString(s)
+		b.WriteString("\n")
+	}
 	return strings.TrimSpace(b.String())
 }
 

@@ -110,6 +110,15 @@ type Page struct {
 	// focused is the element that most recently received focus, the target of
 	// Page.Press.
 	focused *html.Node
+
+	// Frames: an <iframe> is loaded as a child Page with its own document and
+	// JavaScript environment, sharing this Browser's session (and so its
+	// cookies). parent is nil for the top document. frameDepth bounds the
+	// nesting so a frame that embeds itself cannot recurse forever.
+	parent     *Page
+	frames     []*Page
+	frameFor   map[*html.Node]*Page
+	frameDepth int
 }
 
 // newPage creates an empty page bound to a browser.
@@ -328,6 +337,7 @@ func (p *Page) run() error {
 	p.debugf("running timers (load)")
 	p.env.runTimers(1000)
 	p.debugf("page load complete")
+	p.loadFrames()
 	return nil
 }
 
@@ -614,9 +624,22 @@ func (p *Page) HTML() string {
 	return p.serialize(p.doc)
 }
 
-// Text returns the visible text of the rendered DOM, skipping script and
-// style content.
-func (p *Page) Text() string { return visibleText(p.doc) }
+// Text returns the visible text of the rendered DOM, skipping script and style
+// content, with child frame text appended so framed content is not lost.
+func (p *Page) Text() string {
+	out := visibleText(p.doc)
+	for _, f := range p.frames {
+		t := strings.TrimSpace(f.Text())
+		if t == "" {
+			continue
+		}
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		out += t
+	}
+	return out
+}
 
 // Query returns the first element matching a CSS selector.
 func (p *Page) Query(sel string) *html.Node { return querySelector(p.doc, sel) }
