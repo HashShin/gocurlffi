@@ -2225,8 +2225,21 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 		"noscript", "base", "param", "source", "track", "col", "colgroup",
 		"dialog":
 		cs.display = "none"
-	case "iframe", "svg", "canvas", "audio", "video", "object", "embed",
-		"input", "textarea", "select", "button":
+	case "iframe", "svg", "canvas", "video", "object", "embed":
+		// A replaced element's initial display is inline. The rendering spec's
+		// UA sheet does not blockify these, and Chromium reports inline, which
+		// decides whether an inline sibling stays on the same line.
+		cs.display = "inline"
+	case "audio":
+		// "audio:not([controls]) { display: none }" in the UA sheet: an audio
+		// element with no controls occupies nothing.
+		if _, ok := getAttr(n, "controls"); ok {
+			cs.display = "inline"
+		} else {
+			cs.display = "none"
+		}
+	case "input", "textarea", "select", "button":
+		// These are inline-block, unlike the replaced elements above.
 		cs.display = "inline-block"
 	case "option":
 		cs.display = "block"
@@ -2318,6 +2331,12 @@ func applyUADefaults(cs *computedStyle, n *html.Node, tag string, parent *comput
 		// A browser gives text-ish controls white on black; buttons and
 		// selects keep the platform face, and a checkbox or radio is
 		// transparent unless the page paints it.
+		//
+		// They do not inherit font size either: the UA sheet is
+		// "font: 400 13.3333px Arial", which is why Chromium reports 13.3333px
+		// for a bare input inside a 16px body. An author rule on the control
+		// still wins, because applyUADefaults runs before the cascade.
+		cs.fontSize = 13.3333
 		cs.textColor = color.RGBA{R: 0, G: 0, B: 0, A: 0xff}
 		cs.textAlign = "left"
 		cs.background = renderFieldBG
