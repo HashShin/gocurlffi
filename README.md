@@ -133,8 +133,8 @@ go get github.com/HashShin/gocurlffi
 
 ## Limitations
 
-- The browser has no CSS box model and no WebAssembly. It is a document
-  renderer, not a web renderer.
+- The browser is a document renderer, not a web renderer, and there is no
+  WebAssembly: goja has no engine for it.
 - HTTP/1.1 header names are lower-cased on the wire, Chrome's per-connection
   extension permutation is replaced by one fixed valid order, and the IP, port
   and size counters on `Response` are unpopulated.

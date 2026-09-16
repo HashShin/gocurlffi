@@ -43,6 +43,12 @@ type renderStyle struct {
 	underline bool
 	strike    bool
 	color     color.RGBA
+	// bg and hasBG are an inline element's background, painted behind this
+	// run. A block's background is its box and is drawn separately; an inline
+	// element has no box, so without this a tag pill or a <code> span had no
+	// background at all.
+	bg    color.RGBA
+	hasBG bool
 	// font is the page's webfont for this run, or nil to use the embedded Go
 	// font. It already carries the weight and slope the family asked for.
 	font *webFont
@@ -279,8 +285,14 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 				drawScaledImage(img, r.img, s(r.x), s(ln.baseline)-h, s(r.imgW), h, scale)
 				continue
 			}
-			drawRunText(img, s(r.x), s(ln.baseline), r.text, r.style, s(r.style.letterSpacing))
 			wpx := textWidth(r.style, r.text)
+			if r.style.hasBG && wpx > 0 {
+				// The font's content box, which is the area an inline
+				// background covers before padding and line-height.
+				asc, desc, _ := lineMetrics(styleKey(r.style))
+				fillRect(img, s(r.x), s(ln.baseline)-s(asc), s(wpx), s(asc+desc), r.style.bg)
+			}
+			drawRunText(img, s(r.x), s(ln.baseline), r.text, r.style, s(r.style.letterSpacing))
 			if r.style.underline {
 				fillRect(img, s(r.x), s(ln.baseline)+1.5*scale, s(wpx), 1*scale, r.style.color)
 			}
@@ -386,7 +398,10 @@ func (b drawBox) draw(img *image.RGBA, scale float64) {
 	}
 	r := [4]float64{b.radius[0] * scale, b.radius[1] * scale, b.radius[2] * scale, b.radius[3] * scale}
 	if b.hasShadow {
-		drawShadow(img, b.x*scale+b.shadowX*scale, b.y*scale+b.shadowY*scale, w, h, r, b.shadowSpread*scale, b.shadowBlur*scale, b.shadowC)
+		// The shadow is offset from the box, but it is clipped to the box, so
+		// the clip is the box's own rectangle and not the offset one.
+		clip := image.Rect(int(x), int(y), int(x+w+0.5), int(y+h+0.5))
+		drawShadow(img, b.x*scale+b.shadowX*scale, b.y*scale+b.shadowY*scale, w, h, r, b.shadowSpread*scale, b.shadowBlur*scale, b.shadowC, clip)
 	}
 	if b.hasBG {
 		if rounded(r) {
@@ -411,10 +426,19 @@ func (b drawBox) draw(img *image.RGBA, scale float64) {
 // drawShadow paints a soft rectangle behind a box: a solid expanded rectangle
 // when the blur is zero, otherwise a few expanding layers with falling alpha,
 // which reads as a glow at these sizes.
-func drawShadow(img *image.RGBA, x, y, w, h float64, r [4]float64, spread, blur float64, c color.RGBA) {
+//
+// An outer box-shadow is clipped so that it is not painted inside the element's
+// border box, which is what clip carries. The grown rectangle covers the box as
+// well as the ring around it, so without the clip a shadowed element with no
+// background of its own was filled with the shadow colour: every quote card on
+// quotes.toscrape.com came out flat grey under a #333 shadow.
+func drawShadow(img *image.RGBA, x, y, w, h float64, r [4]float64, spread, blur float64, c color.RGBA, clip image.Rectangle) {
 	if c.A == 0 || w < 1 || h < 1 {
 		return
 	}
+	saved := copyRegion(img, clip)
+	defer pasteRegion(img, saved, clip)
+
 	layers := 1
 	if blur > 0 {
 		layers = 4
@@ -437,6 +461,30 @@ func drawShadow(img *image.RGBA, x, y, w, h float64, r [4]float64, spread, blur 
 		}
 		roundRectMaskDraw(img, x-grow, y-grow, w+2*grow, h+2*grow, rr, 0, cc)
 	}
+}
+
+// copyRegion snapshots a rectangle of img so it can be restored, or nil when
+// the rectangle is empty or off the image.
+func copyRegion(img *image.RGBA, r image.Rectangle) *image.RGBA {
+	r = r.Intersect(img.Bounds())
+	if r.Empty() {
+		return nil
+	}
+	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
+	return out
+}
+
+// pasteRegion puts back what copyRegion saved.
+func pasteRegion(img *image.RGBA, saved *image.RGBA, r image.Rectangle) {
+	if saved == nil {
+		return
+	}
+	r = r.Intersect(img.Bounds())
+	if r.Empty() {
+		return
+	}
+	draw.Draw(img, r, saved, image.Point{}, draw.Src)
 }
 
 func rounded(r [4]float64) bool {
@@ -2377,11 +2425,21 @@ func wrapSpansWidth(spans []renderSpan, limitAt func(line int) float64) [][]rend
 			}
 			continue
 		}
+		// Whitespace at the start or end of a run is a space between that run
+		// and its neighbour. strings.Fields discards it, so without recording
+		// it here the boundary was lost and the runs were drawn touching:
+		// "by <small>Albert</small>" came out "byAlbert".
+		const ws = " \t\r\n\f\v"
+		lead := sp.text != strings.TrimLeft(sp.text, ws)
+		trail := sp.text != strings.TrimRight(sp.text, ws)
 		for i, w := range fields {
-			if i > 0 {
+			if (i > 0 || lead) && len(items) > 0 {
 				spaceStyles[len(items)-1] = sp.style
 			}
 			items = append(items, item{span: renderSpan{text: w, style: sp.style}, w: textWidth(sp.style, w)})
+		}
+		if trail && len(items) > 0 {
+			spaceStyles[len(items)-1] = sp.style
 		}
 	}
 	if len(items) == 0 {

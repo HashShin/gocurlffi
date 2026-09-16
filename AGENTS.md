@@ -48,7 +48,7 @@ staticcheck ./browser        # the slow one, tens of seconds
 | `browser/` | The headless browser. Files are grouped by prefix; see `docs/architecture.md`. |
 | `server/` | CDP, WebDriver BiDi and MCP front ends. |
 | `internal/cli/` | The command line. The flag definitions are the documentation. |
-| `docs/` | User documentation. `docs/design/` is archived planning. |
+| `docs/` | User documentation. |
 | `tools/cssdiff/` | Separate module: compares the cascade and geometry with Chromium. |
 
 `tools/cssdiff` is a separate module so its `chromedp` dependency stays out of

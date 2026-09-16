@@ -818,6 +818,14 @@ func (c *collector) addText(s string) {
 	if collapsed == "" {
 		return
 	}
+	// A run of nothing but whitespace only separates what is already on the
+	// line. With nothing before it, it is a leading space that the line wrapper
+	// drops anyway, and it must not be the thing that makes an otherwise empty
+	// block non-empty: flush skips a block with no spans, so appending here
+	// turned every whitespace node between two elements into a zero-height box.
+	if strings.TrimSpace(collapsed) == "" && (c.cur == nil || len(c.cur.spans) == 0) {
+		return
+	}
 	b := c.ensure(nil)
 	b.spans = append(b.spans, renderSpan{text: collapsed, style: c.style})
 }
@@ -899,6 +907,13 @@ func (c *collector) walkElement(el *html.Node) {
 		font:          c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
 		textTransform: cs.textTransform,
 		letterSpacing: cs.letterSpacing,
+	}
+	// An inline element's background belongs to its text runs. A block's is its
+	// box, which finishBlock draws, so painting it here as well would draw it
+	// twice and darken a translucent colour.
+	if cs.hasBackground && !isBlockDisplay(cs.display) {
+		c.style.bg = scaleAlpha(cs.background, cs.opacity)
+		c.style.hasBG = true
 	}
 	// Text that is a direct child of a flex row or grid has no element of its
 	// own to carry the line height, so it is kept here for ensure.
@@ -1665,7 +1680,12 @@ func collapseWhitespace(s string) string {
 	trimmedRight := strings.TrimRight(s, " \t\r\n\f\v")
 	fields := strings.Fields(s)
 	if len(fields) == 0 {
-		return ""
+		// A node that is nothing but whitespace still separates the runs on
+		// either side of it, so it collapses to one space rather than to
+		// nothing. Dropping it ran "by" into "Albert Einstein" and every tag
+		// into the next one. The line wrapper suppresses a space at the start
+		// or end of a line, so this cannot leave a visible edge space.
+		return " "
 	}
 	out := strings.Join(fields, " ")
 	if trimmedLeft != s {
