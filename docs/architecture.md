@@ -3,8 +3,8 @@
 `gocurlffi` is one Go module with two request paths that share a transport, plus
 a server that exposes the slower one to other tools. This document explains how
 the pieces fit and how the source tree is laid out. For the command line itself
-see [`cli.md`](cli.md); for what the browser is missing against Lightpanda see
-[`parity.md`](parity.md).
+see [`cli.md`](cli.md); for what the browser does not do yet see
+[`limitations.md`](limitations.md).
 
 ## The two paths
 
@@ -95,4 +95,3 @@ Two structural limits are worth knowing before reading the code:
 | How is a fingerprint preset turned into a connection? | `impersonate/preset.go`, `requests/transport.go` |
 | Which flags does a command accept? | `internal/cli/*.go` — the definitions are the documentation |
 | What does the CDP server implement? | `server/domains.go` |
-| What is still missing versus Lightpanda? | `docs/parity.md` |

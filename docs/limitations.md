@@ -26,5 +26,5 @@ there is one. The README carries the short version.
 - Async sessions, caching backends, DoH and `curl_options` are not ported.
 - **`requests` alone has no JavaScript engine.** For client-rendered pages use
   the `browser` package or `--render`.
-- The browser is missing a further set of web APIs. The list is measured, not
-  estimated, in [`parity.md`](parity.md).
+- The browser is missing a further set of web APIs; the notable ones are listed
+  in [`browser/README.md`](../browser/README.md).

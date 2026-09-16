@@ -95,7 +95,7 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
 | A public function or type in `requests` | `gocurlffi.go` (the facade test names what is missing) |
 | An option | `requests/options.go`, `docs/api.md` |
 | A CLI flag | `internal/cli/` only; `gocurlffi help <cmd>` is generated from the definitions |
-| A web API in the browser | `browser/js_*`; then `docs/parity.md` if it closes a listed gap |
+| A web API in the browser | `browser/js_*`, and the "Not implemented" list in `browser/README.md` |
 
 ## Gotchas
 

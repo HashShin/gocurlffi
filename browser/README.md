@@ -1,10 +1,9 @@
 # browser - a pure-Go headless browser
 
-`browser` is a headless browser for scraping and automation, written
-entirely in Go. It is the Go answer to the Zig
-[Lightpanda browser](https://github.com/lightpanda-io/browser); how much of
-Lightpanda's web API surface it covers is measured in
-[`../docs/parity.md`](../docs/parity.md).
+`browser` is a headless browser for scraping and automation, written entirely in
+Go, in the spirit of the Zig [Lightpanda
+browser](https://github.com/lightpanda-io/browser) but built only from portable
+parts.
 
 The point of the port is portability. Lightpanda embeds V8, BoringSSL, curl,
 brotli, nghttp2, sqlite and PCRE2, so it needs a Zig toolchain and per-platform
@@ -736,10 +735,6 @@ it is enough.
 
 ## Notes
 
-- No Lightpanda checkout is kept in this repository. `../docs/parity.md` records
-  what is still missing from it, measured by probing, so the reference is not
-  needed in-tree to plan the remaining work. Clone it yourself if you want to
-  re-run the probe; the instructions are at the top of that file.
 - Scripts run in the same goroutine as `Open`. A runaway script is bounded by
   `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
   bounded by `Options.LoadTimeout` (default 30s). After `DOMContentLoaded` and
