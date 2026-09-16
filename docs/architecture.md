@@ -50,20 +50,12 @@ and makes no extra request.
 | `server` | CDP, WebDriver BiDi and MCP front ends over a `browser.Browser`. |
 | `internal/capturehello` | Captures and parses a TLS ClientHello from any external command, for comparing fingerprints. |
 | `tools/cssdiff` | Development-only comparison of this browser's CSS cascade and geometry against a real Chromium. A separate Go module. |
-| `gsearch` | A standalone tool that drives a real Chromium to scrape search results. A separate Go module; see below. |
 
 The project is pure Go. It contains no C and uses no cgo, so it cross-compiles
 and builds with nothing but the Go toolchain. The preset table in
 `impersonate/presets.go` is ordinary Go source, transcribed from
 curl-impersonate's `lib/impersonate.c`; the MIT license for that data is at
 `impersonate/upstream/LICENSE.curl-impersonate`.
-
-### Why `gsearch` is a separate module
-
-`gsearch` needs a real Chromium process, which is exactly what the main binary
-avoids. Keeping it in its own module means the main module's dependency graph
-stays pure Go and cross-compiles, while `gsearch` can depend on what it likes.
-It is not built by the root `make build`.
 
 ## The `browser` package
 

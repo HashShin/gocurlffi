@@ -3,11 +3,6 @@
 Everything this port does not do, with the measurement behind each claim where
 there is one. The README carries the short version.
 
-## - **Google search is refused.** The interstitial and the BotGuard token are
-  handled correctly; Google escalates the token's environment verdict anyway, and
-  a real Chromium from the same host is refused identically. The measurements
-  are in [`docs/botguard.md`](botguard.md). Use Bing, Brave or
-  `lite.duckduckgo.com` for HTML results.
 - **The browser has no CSS box model.** No borders, shadows, floats,
   positioning, gradients or images. It cascades the page's CSS - selectors,
   specificity, `!important`, inheritance, `@import`, `@media`, custom properties
@@ -32,4 +27,4 @@ there is one. The README carries the short version.
 - **`requests` alone has no JavaScript engine.** For client-rendered pages use
   the `browser` package or `--render`.
 - The browser is missing a further set of web APIs. The list is measured, not
-  estimated, in [`docs/parity.md`](parity.md).
+  estimated, in [`parity.md`](parity.md).

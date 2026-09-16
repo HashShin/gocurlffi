@@ -40,22 +40,76 @@ defer sess.Close()
 rsp, err := sess.Get("https://example.com/")
 ```
 
-The browser is a second import. It fetches through the same transport and then
-runs the page:
-
-```go
-import "github.com/HashShin/gocurlffi/browser"
-
-p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
-defer p.Close()
-fmt.Println(p.Text()) // rendered, after the page's scripts have run
-```
-
-The same from the shell:
+From the shell:
 
 ```sh
 gocurlffi get tls.browserleaks.com/json -i chrome150
-gocurlffi get quotes.toscrape.com/js/ --render --format text
+gocurlffi post httpbin.org/post -j '{"a":1}'
+```
+
+## Browser
+
+`browser` fetches through the same impersonating transport and then runs the
+page's scripts, so client-rendered pages can be read too.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/HashShin/gocurlffi/browser"
+)
+
+func main() {
+	p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
+	if err != nil {
+		panic(err)
+	}
+	defer p.Close()
+
+	fmt.Println(p.Title())
+	fmt.Println(p.Text())     // rendered, after the page's scripts have run
+	fmt.Println(p.Markdown()) // the same document as Markdown
+	for _, l := range p.Links() {
+		fmt.Println(l.Href, l.Text)
+	}
+}
+```
+
+A page renders and drives as well as reads:
+
+```go
+png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
+if err != nil {
+	panic(err)
+}
+os.WriteFile("page.png", png, 0o644)
+
+if err := p.Fill("#user", "me"); err != nil {
+	panic(err)
+}
+if err := p.Click("button[type=submit]"); err != nil {
+	panic(err)
+}
+p.WaitForSelector("#account", 5*time.Second)
+```
+
+From the shell, `--render` selects the same path:
+
+```sh
+gocurlffi get https://quotes.toscrape.com/js/ --render --format text
+gocurlffi open example.com --screenshot page.png
+gocurlffi open example.com/login --fill '#user=me' --click 'button[type=submit]'
+gocurlffi open example.com/login --click '#submit' --pdf login.pdf
+```
+
+It can also be driven by Puppeteer or Playwright over CDP, or by an agent over
+MCP:
+
+```sh
+gocurlffi serve            # ws://127.0.0.1:9222
+gocurlffi mcp --port 9223  # http://127.0.0.1:9223/mcp
 ```
 
 ## Install
@@ -81,13 +135,12 @@ go get github.com/HashShin/gocurlffi
 
 - The browser has no CSS box model and no WebAssembly. It is a document
   renderer, not a web renderer.
-- Google search is refused. The challenge token is handled correctly and Google
-  escalates anyway; a real Chromium from this host is refused identically.
 - HTTP/1.1 header names are lower-cased on the wire, Chrome's per-connection
   extension permutation is replaced by one fixed valid order, and the IP, port
   and size counters on `Response` are unpopulated.
+- The browser is missing a further set of web APIs.
 
-[`docs/limitations.md`](docs/limitations.md) has the rest.
+[`docs/limitations.md`](docs/limitations.md) has the rest, with the measurements.
 
 ## License
 

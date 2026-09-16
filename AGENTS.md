@@ -50,10 +50,9 @@ staticcheck ./browser        # the slow one, tens of seconds
 | `internal/cli/` | The command line. The flag definitions are the documentation. |
 | `docs/` | User documentation. `docs/design/` is archived planning. |
 | `tools/cssdiff/` | Separate module: compares the cascade and geometry with Chromium. |
-| `gsearch/` | Separate module: drives a real Chromium. Deliberately not merged. |
 
-Two modules are deliberately separate so the main one stays pure Go and
-cross-compiles. Do not fold them in.
+`tools/cssdiff` is a separate module so its `chromedp` dependency stays out of
+the library. Do not fold it in.
 
 ## Invariants
 
@@ -112,10 +111,10 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
 - **A dot import is deliberate here.** The root facade exists to be dot
   imported. `staticcheck` reports it as `ST1001`; that is expected and
   documented in the README rather than worked around.
-- **`tools/cssdiff` and `gsearch` have their own `go.mod`**, so `go build ./...`
-  from the root does not touch them, and `go test ./...` does not either. The
-  `go` directive in all three must stay in step (`1.26.0`), or the toolchain
-  tries to download a second one.
+- **`tools/cssdiff` has its own `go.mod`**, so `go build ./...` from the root
+  does not touch it, and `go test ./...` does not either. The `go` directive in
+  both must stay in step (`1.26.0`), or the toolchain tries to download a second
+  one.
 
 ## Style
 
