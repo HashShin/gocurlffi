@@ -272,15 +272,59 @@ than you asked for.
 `browser` is a pure-Go headless browser that runs page JavaScript over the same
 impersonating transport, so sites that render client-side can be scraped too.
 
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/HashShin/gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/impersonate"
+)
+
+func main() {
+	b := browser.New(browser.Options{Impersonate: impersonate.Chrome131})
+	defer b.Close()
+
+	// Open fetches through the same impersonating transport the fast path
+	// uses, then runs the page's scripts.
+	p, err := b.Open("https://quotes.toscrape.com/js/")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(p.Title())
+	fmt.Println(p.Text())     // the rendered text, not the raw HTML
+	fmt.Println(p.Markdown()) // the same document as Markdown
+	for _, l := range p.Links() {
+		fmt.Println(l.Href, l.Text)
+	}
+}
+```
+
+A `Page` renders and drives as well as reads:
+
+```go
+png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
+if err != nil {
+	panic(err)
+}
+os.WriteFile("page.png", png, 0o644)
+
+if err := p.Fill("#user", "me"); err != nil {
+	panic(err)
+}
+if err := p.Click("button[type=submit]"); err != nil {
+	panic(err)
+}
+p.WaitForSelector("#account", 5*time.Second)
+```
+
+The same thing from the shell, where `--render` selects this path:
+
 ```sh
 gocurlffi get https://quotes.toscrape.com/js/ --render --format text
 gocurlffi open example.com --screenshot page.png
-gocurlffi open example.com --wait '#results' --wait-until domcontentloaded
-```
-
-It drives the page as well as reading it:
-
-```sh
 gocurlffi open example.com/login \
   --fill '#user=me' --fill '#pass=secret' --click 'button[type=submit]' \
   --wait '#account'
@@ -294,8 +338,8 @@ gocurlffi serve            # ws://127.0.0.1:9222
 gocurlffi mcp --port 9223  # http://127.0.0.1:9223/mcp
 ```
 
-See [`browser/README.md`](browser/README.md) and
-[`server/README.md`](server/README.md).
+See [`browser/README.md`](browser/README.md) for the full surface and
+[`server/README.md`](server/README.md) for the protocols.
 
 ## Checking sites
 

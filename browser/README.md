@@ -33,7 +33,14 @@ TLS/JA3, HTTP/2 fingerprint and default headers.
 ## Usage
 
 ```go
-b := browser.New(browser.Options{Impersonate: "chrome131"})
+import (
+    "fmt"
+
+    "github.com/HashShin/gocurlffi/browser"
+    "github.com/HashShin/gocurlffi/impersonate"
+)
+
+b := browser.New(browser.Options{Impersonate: impersonate.Chrome131})
 defer b.Close()
 
 p, err := b.Open("https://quotes.toscrape.com/js/") // scripts run during load
@@ -41,21 +48,34 @@ if err != nil {
     panic(err)
 }
 
-fmt.Println(p.Text())                    // rendered text
-fmt.Println(p.Query("h1").FirstChild.Data)
-for _, l := range p.Links() { fmt.Println(l.Href, l.Text) }
+fmt.Println(p.Title())
+fmt.Println(p.Text())     // the rendered text, not the raw HTML
+fmt.Println(p.Markdown()) // the same document as Markdown
+for _, l := range p.Links() {
+    fmt.Println(l.Href, l.Text)
+}
 ```
 
-Lower-level control:
+Lower-level control, for a page you already have or one you want to drive:
 
 ```go
+off := false
 b := browser.New(browser.Options{RunScripts: &off})
 p := b.NewPage("https://example.com/")
 _ = p.SetContent(html, "https://example.com/") // no network
 _ = p.Load("https://example.com/other")
 v, _ := p.Eval("document.querySelectorAll('.quote').length")
-p.WaitForSelector(".loaded", 5*time.Second)
+fmt.Println(v.ToInteger()) // goja.Value
+
+png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
+if err != nil {
+    panic(err)
+}
+_ = os.WriteFile("page.png", png, 0o644)
 ```
+
+`Page.Eval` and `Page.CallOn` hand back a `goja.Value`, so a caller that
+evaluates JavaScript imports `github.com/dop251/goja` for the result type.
 
 CLI:
 
