@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 // Options configure a Browser or a one-off Page.

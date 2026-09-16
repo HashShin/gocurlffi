@@ -15,7 +15,7 @@ package main
 import (
 	"fmt"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 func main() {
@@ -73,6 +73,7 @@ session is safe for concurrent use.
 | Method | Purpose |
 | --- | --- |
 | `Request(method, rawURL string, opts ...Option) (*Response, error)` | send a request |
+| `Send(req Request) (*Response, error)` | send a request described by a value |
 | `Get` / `Post` / `Put` / `Patch` / `Delete` / `Head` / `Options` / `Trace` | verb helpers taking `(rawURL string, opts ...Option)` |
 | `Close()` | close idle connections; later requests fail with `*SessionClosed` |
 | `Cookies() *Cookies` | the live session cookie jar |
@@ -94,6 +95,25 @@ Session defaults come from `defaultConfig`:
 A session keeps a transport cache keyed by impersonation name, effective proxy,
 TLS verification, HTTP version, interface and client certificate, so requests
 that share those values reuse connections.
+
+`Send` takes the struct form, which is useful when a request is built from
+configuration or stored rather than written out at the call site:
+
+```go
+rsp, err := sess.Send(requests.Request{
+	Method:      "GET",
+	URL:         "https://httpbun.com/get",
+	Headers:     requests.Headers{"Accept: application/json"},
+	Impersonate: impersonate.Chrome146,
+	Timeout:     10 * time.Second,
+})
+```
+
+Only `URL` is required. `Method` empty means GET, and a zero `Timeout` or empty
+`Proxy` leaves the session's setting in place rather than overriding it with an
+empty value. `JSON` wins over `Body` when both are set. The fields are `Method`,
+`URL`, `Headers`, `Params`, `Cookies`, `Body`, `JSON`, `Impersonate`, `Timeout`
+and `Proxy`.
 
 ## Response
 
@@ -161,9 +181,26 @@ and zstd/zstandard, including stacked values.
 `Headers` is an ordered, case-insensitive header collection. `Set` replaces in
 place (keeping the key's position), `Add` appends a second line.
 
-`NewHeaders(h HeaderTypes) *Headers` accepts `*Headers`, `Headers`,
-`[]HeaderPair`, `map[string]string` or `map[string][]string`. A `HeaderPair` is
-`{Name, Value string}`. Map inputs are applied in sorted key order.
+It is a `[]string` of `"Name: Value"` lines, so it can be written as a literal,
+which is how headers appear in HTTP and on a command line:
+
+```go
+requests.Headers{
+	"Accept: application/json",
+	"X-Custom: value",
+}
+```
+
+`NewHeaders(h HeaderTypes) *Headers` accepts `Headers` or a plain `[]string`
+(same content), `*Headers`, `[]HeaderPair`, `map[string]string` or
+`map[string][]string`. A `HeaderPair` is `{Name, Value string}`. Map inputs are
+applied in sorted key order, because a map has none. An unsupported type panics,
+so a caller finds out immediately rather than sending a request with headers
+silently missing.
+
+A value's leading and trailing spaces are not significant and are dropped when
+the line is read back, matching how an HTTP parser treats them. Only the first
+colon separates the name from the value, so a value may contain one.
 
 | Method | Purpose |
 | --- | --- |

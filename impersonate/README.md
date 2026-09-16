@@ -114,6 +114,26 @@ The `Default...` constants name the same defaults: `DefaultChrome`,
 `DefaultSafariIOSBeta`, `DefaultChromeAndroid`, `DefaultFirefox` and
 `DefaultTor`. `CustomTarget` is `"custom"`.
 
+### Target constants
+
+`targets.go` names every target as a constant, so a target can be written
+`impersonate.Chrome131` and the compiler checks the spelling:
+
+```go
+impersonate.Chrome146   impersonate.Safari260   impersonate.Firefox147
+impersonate.Edge101     impersonate.Tor145      impersonate.Chrome131Android
+```
+
+`Target` is an alias for `string`, not a defined type, so the constants are
+usable anywhere a string is, including the `Impersonate` field of a
+`requests.Request`. The `Default...` constants above are the better choice when
+any recent version of a family will do; these name one exact version.
+
+`TestTargetConstantsResolve` checks the list in both directions: every constant
+must name a real preset, and every preset must have a constant, so adding a
+target without naming it fails the test rather than leaving callers to spell a
+raw string.
+
 ## Mapping to TLS, HTTP/2 and HTTP/3
 
 `Preset.TLSProfile()` looks the target up in `tlsProfileMap` and returns a name

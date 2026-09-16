@@ -12,7 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 type cdpClient struct {

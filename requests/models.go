@@ -10,12 +10,40 @@ import (
 	"unicode/utf8"
 )
 
-// Request describes a request that was (or is about to be) sent.
+// Request describes an HTTP request as a value. It is what Response.Request
+// reports for a request that was sent, and what Session.Send accepts to send
+// one, so a request can be built, stored and passed around rather than being a
+// list of options at the call site.
+//
+// Only Method and URL are required; every other field falls back to the
+// session's setting when it is left at its zero value.
 type Request struct {
-	URL     string
-	Method  string
-	Headers *Headers
-	Body    []byte
+	// Method is the HTTP method. Empty means GET.
+	Method string
+	// URL is the target. A URL without a scheme defaults to https.
+	URL string
+
+	// Headers accepts anything the WithHeaders option accepts, including
+	// []string{"Name: Value"} and map[string]string.
+	Headers HeaderTypes
+	// Params accepts anything the WithParams option accepts.
+	Params any
+	// Cookies accepts anything the WithCookies option accepts.
+	Cookies CookieTypes
+
+	// Body is the raw request body. JSON wins when both are set.
+	Body []byte
+	// JSON is marshalled as the request body and sets application/json.
+	JSON any
+
+	// Impersonate selects the fingerprint target, for example
+	// impersonate.Chrome131. Empty uses the session default.
+	Impersonate string
+
+	// Timeout overrides the session timeout when it is non-zero.
+	Timeout time.Duration
+	// Proxy overrides the session proxy when it is non-empty.
+	Proxy string
 }
 
 var charsetRE = regexp.MustCompile(`charset=([\w-]+)`)

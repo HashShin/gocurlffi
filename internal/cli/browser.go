@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"gocurlffi/browser"
-	"gocurlffi/server"
+	"github.com/HashShin/gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/server"
 )
 
 // browserFlags are the page-loading options every browser subcommand shares, so

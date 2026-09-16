@@ -13,7 +13,7 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 	tls "github.com/bogdanfinn/utls"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 // clientKey identifies a cached transport. Timeouts and redirect policy are

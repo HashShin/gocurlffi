@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 func newTestServer() *httptest.Server {

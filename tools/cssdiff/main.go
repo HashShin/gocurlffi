@@ -219,7 +219,7 @@ func repoRoot() (string, error) {
 	}
 	for {
 		b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(b), "module gocurlffi") {
+		if err == nil && strings.Contains(string(b), "module github.com/HashShin/gocurlffi") {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)

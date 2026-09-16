@@ -87,7 +87,7 @@ func (c *conn) dispatch(t *target, method string, params json.RawMessage) (any, 
 	case "Browser.getVersion":
 		return map[string]any{
 			"protocolVersion": "1.3",
-			"product":         "gocurlffi/" + version,
+			"product":         "github.com/HashShin/gocurlffi/" + version,
 			"revision":        "",
 			"userAgent":       userAgent(c),
 			"jsVersion":       "goja",

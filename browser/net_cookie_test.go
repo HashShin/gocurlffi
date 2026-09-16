@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 func storedCookie(t *testing.T, p *Page, name string) requests.Cookie {

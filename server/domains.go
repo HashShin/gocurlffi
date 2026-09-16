@@ -7,7 +7,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 // dispatchDomain handles the page-scoped domains: Page, Runtime, DOM, Input,

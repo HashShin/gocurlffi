@@ -1,4 +1,4 @@
-module gocurlffi
+module github.com/HashShin/gocurlffi
 
 go 1.26.0
 

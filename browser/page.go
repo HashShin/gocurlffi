@@ -16,7 +16,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 // defaultUserAgent is the fallback when no impersonation preset supplies one.

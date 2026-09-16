@@ -14,7 +14,7 @@ package main
 import (
 	"fmt"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 func main() {
@@ -48,14 +48,40 @@ gocurlffi get https://tls.browserleaks.com/json --impersonate chrome
 
 ## Install
 
+As a command:
+
+```sh
+go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
+
+# or from a checkout
+make install                 # -> /usr/local/bin/gocurlffi
+make install PREFIX=$HOME/.local
+make install-go              # -> $(go env GOPATH)/bin
+```
+
+The repository is private, so a remote install needs credentials and Go told not
+to use the public checksum database:
+
+```sh
+export GOPRIVATE=github.com/HashShin/*
+go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
+```
+
+Building from a checkout needs neither. `make build` writes `bin/gocurlffi`,
+which is the same binary. Run it directly rather than through `go run`: the
+version is embedded at build time and `go run` will not have it.
+
+As a library, it is a normal Go module:
+
+```sh
+go get github.com/HashShin/gocurlffi
+```
+
 ```sh
 make build          # -> bin/gocurlffi
 make test           # unit tests, no network
 make test-live      # fingerprints against a recorded curl_cffi baseline
 ```
-
-Run the built binary directly rather than through `go run`; the version is
-embedded at build time and `go run` will not have it.
 
 ## Fidelity
 
@@ -142,20 +168,52 @@ requests.Put / Patch / Delete / Head / Options / Trace
 requests.Do(method, url, opts...)
 ```
 
-For connection and cookie reuse, use a `Session`:
+For connection and cookie reuse, use a `Session`. A request can be written as a
+value and sent:
 
 ```go
-s := requests.NewSession(
-	requests.WithImpersonate("firefox"),
-	requests.WithHeaders([]requests.HeaderPair{{Name: "X-Api-Key", Value: "..."}}),
-)
-defer s.Close()
+sess := requests.NewSession()
+defer sess.Close()
 
-rsp, err := s.Post("https://httpbin.org/post",
+rsp, err := sess.Send(requests.Request{
+	Method: "GET",
+	URL:    "https://httpbun.com/get",
+	Headers: requests.Headers{
+		"Accept: application/json",
+		"X-Custom: value",
+	},
+	Impersonate: impersonate.Chrome146,
+})
+if err != nil {
+	panic(err)
+}
+fmt.Println(rsp.StatusCode, rsp.Text())
+```
+
+`Request` only requires `URL`; every other field falls back to the session when
+it is left empty. The same request works as options, which is the shorter form
+for a one-off:
+
+```go
+sess := requests.NewSession(requests.WithImpersonate("firefox"))
+defer sess.Close()
+
+rsp, err := sess.Post("https://httpbin.org/post",
 	requests.WithJSON(map[string]any{"hello": "world"}),
 	requests.WithTimeoutSeconds(15),
 )
 ```
+
+Targets are named constants, so a typo is a compile error rather than a request
+that quietly uses the wrong browser:
+
+```go
+impersonate.Chrome146   impersonate.Safari260   impersonate.Firefox147
+impersonate.Edge101     impersonate.Tor145      impersonate.Chrome131Android
+```
+
+`Headers` is a slice of `"Name: Value"` lines, so it can also be built from a
+`map[string]string`, a `[]requests.HeaderPair`, or an existing `*Headers`.
 
 Options include `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 `WithHeaders`, `WithHeader`, `WithCookies`, `WithAuth`, `WithTimeout`,

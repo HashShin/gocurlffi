@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 // Session is a requests-like client with a shared cookie jar and connection
@@ -466,6 +466,55 @@ func (s *Session) Options(rawURL string, opts ...Option) (*Response, error) {
 // Trace sends a TRACE request.
 func (s *Session) Trace(rawURL string, opts ...Option) (*Response, error) {
 	return s.Request("TRACE", rawURL, opts...)
+}
+
+// Send performs the request described by req. It is the struct-shaped
+// counterpart to Request(method, url, opts...): the same request can be built
+// as a value, stored, or filled in from configuration, instead of being spread
+// across options at the call site.
+//
+//	req := requests.Request{
+//		Method:      "GET",
+//		URL:         "https://httpbun.com/get",
+//		Headers:     []string{"Accept: application/json"},
+//		Impersonate: impersonate.Chrome131,
+//	}
+//	resp, err := sess.Send(req)
+//
+// Fields left at their zero value fall back to the session's defaults, so an
+// empty Method means GET and an empty Timeout means the session timeout.
+func (s *Session) Send(req Request) (*Response, error) {
+	method := req.Method
+	if method == "" {
+		method = "GET"
+	}
+
+	var opts []Option
+	if req.Headers != nil {
+		opts = append(opts, WithHeaders(req.Headers))
+	}
+	if req.Params != nil {
+		opts = append(opts, WithParams(req.Params))
+	}
+	if req.Cookies != nil {
+		opts = append(opts, WithCookies(req.Cookies))
+	}
+	switch {
+	case req.JSON != nil:
+		opts = append(opts, WithJSON(req.JSON))
+	case len(req.Body) > 0:
+		opts = append(opts, WithContent(req.Body))
+	}
+	if req.Impersonate != "" {
+		opts = append(opts, WithImpersonate(req.Impersonate))
+	}
+	if req.Timeout > 0 {
+		opts = append(opts, WithTimeout(req.Timeout))
+	}
+	if req.Proxy != "" {
+		opts = append(opts, WithProxy(req.Proxy))
+	}
+	return s.Request(method, req.URL, opts...)
 }
 
 // oneShot performs a request in a fresh session, mirroring the module level

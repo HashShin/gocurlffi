@@ -14,7 +14,7 @@ package main
 import (
 	"os"
 
-	"gocurlffi/internal/cli"
+	"github.com/HashShin/gocurlffi/internal/cli"
 )
 
 // version is the build commit, injected with -ldflags -X main.version=...

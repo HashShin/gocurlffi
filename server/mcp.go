@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 // An MCP (Model Context Protocol) server over JSON-RPC 2.0, so an AI agent can

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 func mustParseURL(t *testing.T, raw string) *url.URL {

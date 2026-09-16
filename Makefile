@@ -2,7 +2,7 @@
 
 BIN := bin/gocurlffi
 
-.PHONY: all build fmt vet test test-browser test-race test-live sites capture lint clean
+.PHONY: all build install install-go uninstall fmt vet test test-browser test-race test-live sites capture lint clean
 
 all: build
 
@@ -16,6 +16,23 @@ LDFLAGS := -X main.version=$(VERSION)
 # headless browser, and serve/mcp/targets share the same file. See browser/README.md.
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gocurlffi
+
+# Install the command onto PATH. PREFIX defaults to /usr/local, so
+# "sudo make install" puts it in /usr/local/bin. Override for a user-local
+# install: "make install PREFIX=$HOME/.local".
+PREFIX ?= /usr/local
+install: build
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/gocurlffi
+	@echo "installed $(DESTDIR)$(PREFIX)/bin/gocurlffi"
+
+# Install with the Go toolchain instead, into GOBIN or GOPATH/bin.
+install-go:
+	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/gocurlffi
+	@echo "installed with go install; ensure $$(go env GOPATH)/bin is on PATH"
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/gocurlffi
 
 fmt:
 	gofmt -w .

@@ -1,6 +1,6 @@
 package browser
 
-import "gocurlffi/requests"
+import "github.com/HashShin/gocurlffi/requests"
 
 // Request is offered to an Intercept hook before it is sent. Its fields are a
 // copy, so a hook may modify the returned request through the pointer it

@@ -9,7 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 // WebDriver BiDi support. BiDi is a WebSocket protocol of JSON-RPC-like

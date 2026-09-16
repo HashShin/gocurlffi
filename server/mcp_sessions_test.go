@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 func stringReader(s string) *strings.Reader { return strings.NewReader(s) }

@@ -18,7 +18,7 @@ import (
 	"os"
 	"strings"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 // Version is the commit the binary was built from, injected by the Makefile

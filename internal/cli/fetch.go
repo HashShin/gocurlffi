@@ -15,7 +15,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gocurlffi/requests"
+	"github.com/HashShin/gocurlffi/requests"
 )
 
 // output modes. body is the default; the other two are selected by --headers

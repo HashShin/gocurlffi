@@ -61,7 +61,7 @@ server-initiated event stream.
 
 ## Go API
 
-Import `gocurlffi/server`. The exported surface is small. The CDP target, MCP
+Import `github.com/HashShin/gocurlffi/server`. The exported surface is small. The CDP target, MCP
 session, and JSON-RPC response types are unexported, so external code holds
 values returned by the package and passes them back rather than naming their
 types.

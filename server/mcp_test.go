@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"gocurlffi/browser"
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 func mcpCall(t *testing.T, m *MCP, id int, method string, params any) map[string]any {

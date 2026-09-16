@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gocurlffi/impersonate"
+	"github.com/HashShin/gocurlffi/impersonate"
 )
 
 func sortedKeys(m map[string][]string) []string {

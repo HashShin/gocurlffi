@@ -3,8 +3,8 @@ package browser
 import (
 	"strings"
 
+	"github.com/HashShin/gocurlffi/requests"
 	"github.com/dop251/goja"
-	"gocurlffi/requests"
 )
 
 // setupNetwork installs fetch() and XMLHttpRequest. Both use the browser's
