@@ -14,20 +14,20 @@ package main
 import (
 	"fmt"
 
-	"github.com/HashShin/gocurlffi/requests"
+	. "github.com/HashShin/gocurlffi"
 )
 
 func main() {
-	sess := requests.NewSession()
+	sess := NewSession()
 	defer sess.Close()
 
-	rsp, err := sess.Send(requests.Request{
+	rsp, err := sess.Send(Request{
 		Method: "GET",
 		URL:    "https://tls.browserleaks.com/json",
-		Headers: requests.Headers{
+		Headers: Headers{
 			"Accept: application/json",
 		},
-		Impersonate: requests.DefaultChrome,
+		Impersonate: DefaultChrome,
 	})
 	if err != nil {
 		panic(err)
@@ -39,8 +39,8 @@ func main() {
 A one-off request needs no session and no `Request` value:
 
 ```go
-rsp, err := requests.Get("https://tls.browserleaks.com/json",
-	requests.WithImpersonate(requests.DefaultChrome),
+rsp, err := Get("https://tls.browserleaks.com/json",
+	WithImpersonate(DefaultChrome),
 )
 ```
 
@@ -53,7 +53,7 @@ gocurlffi get https://tls.browserleaks.com/json --impersonate chrome
 | Document | Contents |
 | --- | --- |
 | [`docs/cli.md`](docs/cli.md) | Every command and flag, and the two request paths. |
-| [`gocurlffi.go`](gocurlffi.go) | The dotted form: the whole API re-exported at the module root. |
+| [`gocurlffi.go`](gocurlffi.go) | The whole API at the module root, which is what the unqualified examples import. |
 | [`docs/architecture.md`](docs/architecture.md) | How the packages fit together and how to read the `browser` tree. |
 | [`docs/parity.md`](docs/parity.md) | What the browser is still missing against Lightpanda, measured. |
 | [`docs/botguard.md`](docs/botguard.md) | Why Google search is refused, with the measurements. |
@@ -175,14 +175,19 @@ Verified: against that endpoint `-i custom` returns the same backend response
 
 ## API
 
+`import . "github.com/HashShin/gocurlffi"` brings the whole client into one
+namespace, which is how the examples here are written. Every name it provides is
+an alias of the same name in the `requests` package, so the unqualified and the
+qualified spelling refer to the same values, types and functions.
+
 Module-level helpers run in a throwaway session, mirroring
 `curl_cffi.requests`:
 
 ```go
-requests.Get(url, opts...)
-requests.Post(url, opts...)
-requests.Put / Patch / Delete / Head / Options / Trace
-requests.Do(method, url, opts...)
+Get(url, opts...)
+Post(url, opts...)
+Put / Patch / Delete / Head / Options / Trace
+Do(method, url, opts...)
 ```
 
 For connection and cookie reuse, use a `Session` and send a `Request` value, as
@@ -203,105 +208,56 @@ back to the session when it is left empty, so a zero `Timeout` or an empty
 | `Timeout` | Overrides the session timeout when non-zero. |
 | `Proxy` | Overrides the session proxy when non-empty. |
 
-### The dotted form
-
-Every name is also available unqualified, from the module root, so a request
-can be written without prefixes at all. This is the shortest spelling the
-library offers:
+The same request works as options:
 
 ```go
-package main
-
-import (
-	"fmt"
-
-	. "github.com/HashShin/gocurlffi"
-)
-
-func main() {
-	sess := NewSession()
-	defer sess.Close()
-
-	rsp, err := sess.Send(Request{
-		Method: "GET",
-		URL:    "https://httpbun.com/get",
-		Headers: Headers{
-			"Accept: application/json",
-			"X-Custom: value",
-		},
-		Impersonate: Chrome146,
-	})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(rsp.StatusCode, rsp.Text())
-}
-```
-
-and the one-liner goes further, since the options are unqualified too:
-
-```go
-rsp, err := Get("https://httpbun.com/get",
-	WithImpersonate(Chrome146),
-	WithTimeout(10*time.Second),
-)
-```
-
-Everything the root exports is an alias of the same name in `requests`, so the
-dotted form and the qualified one are the same values and functions and the two
-can be mixed in one file. Import `requests` normally instead if any of the 32
-types, 52 functions or 49 constants collide with a name already in your file -
-`Get`, `Head`, `Options`, `Timeout` and `Cookie` are the likely ones.
-
-A dot import is a real trade and the tooling says so: `staticcheck` reports it
-as `ST1001`. To keep it deliberately, silence the check for the file with a
-`//lint:file-ignore ST1001 <reason>` comment, or exclude ST1001 in
-`staticcheck.conf`.
-
-The same request works as options, which is shorter when nothing is reused:
-
-```go
-sess := requests.NewSession(requests.WithImpersonate(requests.DefaultFirefox))
+sess := NewSession(WithImpersonate(DefaultFirefox))
 defer sess.Close()
 
 rsp, err := sess.Post("https://httpbin.org/post",
-	requests.WithJSON(map[string]any{"hello": "world"}),
-	requests.WithTimeoutSeconds(15),
+	WithJSON(map[string]any{"hello": "world"}),
+	WithTimeoutSeconds(15),
 )
 ```
 
-The fingerprint target can be named in these ways, in decreasing order of
-safety:
+The fingerprint target can be named two ways:
 
 ```go
-Impersonate: requests.Chrome146   // a constant, re-exported where the field is
-Impersonate: impersonate.Chrome146 // the same constant, from its own package
-Impersonate: "chrome146"          // a plain string: the field is a string
+Impersonate: Chrome146   // a constant: a typo does not compile
+Impersonate: "chrome146" // a plain string: a typo fails at request time
 ```
 
-Prefer a constant: a misspelt one does not compile, whereas a misspelt string
+Prefer the constant. A misspelt one does not compile, whereas a misspelt string
 fails only when the request is made, as an `*ImpersonateError`. All 40 targets
 are named, for example `Chrome146`, `Safari260`, `Firefox147`, `Edge101`,
-`Tor145` and `Chrome131Android`.
-
-If the qualifier is unwelcome at the call site, alias it once in your own
-package. This is the only way to write the name bare, because Go does not let a
-package export an unqualified identifier:
-
-```go
-const chrome = requests.DefaultChrome
-
-rsp, err := sess.Send(requests.Request{URL: url, Impersonate: chrome})
-```
-
-A dot import (`import . ".../requests"`) drops the qualifier too, and it does
-compile, but it puts every name the package exports into your file: `Request`,
-`Response`, `Headers`, `Cookies`, `Timeout`, `Params`, `Get`, `Post` and all 49
-constants, so a local `Headers` or `Timeout` of your own stops compiling.
-`staticcheck` rejects it as `ST1001`. The one-line alias has neither problem.
+`Tor145` and `Chrome131Android`, and the family defaults such as `DefaultChrome`
+follow the current version of each family rather than pinning one.
 
 `Headers` is a slice of `"Name: Value"` lines, so it can also be built from a
-`map[string]string`, a `[]requests.HeaderPair`, or an existing `*Headers`.
+`map[string]string`, a `[]HeaderPair`, or an existing `*Headers`.
+
+### If you would rather have prefixes
+
+Every one of those names is also in the `requests` package, so importing it
+normally gives `requests.Request`, `requests.Headers`, `requests.Chrome146` and
+so on, and puts nothing else in scope:
+
+```go
+import "github.com/HashShin/gocurlffi/requests"
+
+sess := requests.NewSession()
+rsp, err := sess.Send(requests.Request{
+	URL:         url,
+	Headers:     requests.Headers{"Accept: application/json"},
+	Impersonate: requests.Chrome146,
+})
+```
+
+Import that one instead if any of the unqualified names collide with a name
+already in your file; `Get`, `Head`, `Options`, `Timeout` and `Cookie` are the
+likely ones. A dot import is what `staticcheck` reports as `ST1001`, so to keep
+it deliberately, silence it for the file with a `//lint:file-ignore ST1001
+<reason>` comment, or exclude ST1001 in `staticcheck.conf`.
 
 Options include `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 `WithHeaders`, `WithHeader`, `WithCookies`, `WithAuth`, `WithTimeout`,

@@ -1,6 +1,6 @@
 # browser - a pure-Go headless browser
 
-`gocurlffi/browser` is a headless browser for scraping and automation, written
+`browser` is a headless browser for scraping and automation, written
 entirely in Go. It is the Go answer to the Zig
 [Lightpanda browser](https://github.com/lightpanda-io/browser); how much of
 Lightpanda's web API surface it covers is measured in
@@ -18,7 +18,7 @@ anywhere Go does, including Android/Termux on `arm64`.
 | HTML5 parse + serialize | `golang.org/x/net/html` | conformant, pure Go |
 | CSS selectors | `github.com/andybalholm/cascadia` | querySelector/querySelectorAll |
 | JavaScript | `github.com/dop251/goja` | ECMAScript engine, pure Go |
-| Network | `gocurlffi/requests` | reuses the impersonating TLS/HTTP transport |
+| Network | `requests` | reuses the impersonating TLS/HTTP transport |
 | DOM | the `x/net/html` node tree itself | small, and the parsed nodes are the ones scripts mutate |
 
 The DOM *is* the `*html.Node` tree. There is no separate wrapper model, so
@@ -26,7 +26,7 @@ The DOM *is* the `*html.Node` tree. There is no separate wrapper model, so
 same nodes. Compiled CSS selectors are cached process-wide, because pages issue
 thousands of `querySelector` calls and compilation dominates the cost.
 
-Network requests go through `gocurlffi/requests`, so the document, external
+Network requests go through `requests`, so the document, external
 scripts, `fetch()` and `XMLHttpRequest` all carry the selected browser's
 TLS/JA3, HTTP/2 fingerprint and default headers.
 

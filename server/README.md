@@ -1,6 +1,6 @@
 # server
 
-`gocurlffi/server` exposes one pure-Go browser through three protocols on one
+`server` exposes one pure-Go browser through three protocols on one
 server: Chrome DevTools Protocol (CDP), WebDriver BiDi, and a Model Context
 Protocol (MCP) tool server.
 

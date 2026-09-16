@@ -14,7 +14,7 @@ The package owns three things:
 3. the mapping from a preset to a transport TLS ClientHello profile and to its
    HTTP/2 and HTTP/3 settings, exposed as methods on `Preset`.
 
-It performs no I/O and no handshake. The `gocurlffi/requests` package builds the
+It performs no I/O and no handshake. The `requests` package builds the
 transport from this data, and the underlying TLS/HTTP2/HTTP3 stack comes from
 `github.com/bogdanfinn/utls`, `fhttp` and `tls-client`.
 

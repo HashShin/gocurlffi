@@ -5,7 +5,10 @@ impersonates real browsers' TLS/JA3, HTTP/2 and HTTP/3 fingerprints.
 
 The package is pure Go (no cgo). A `Session` owns a cookie jar and a cache of
 transports; the module-level helpers run in a throwaway session. Import path:
-`gocurlffi/requests`.
+`github.com/HashShin/gocurlffi/requests`.
+
+The module root re-exports all of it, so `import . "github.com/HashShin/gocurlffi"`
+gives the same names unqualified; see the root README.
 
 ## Quick start
 
