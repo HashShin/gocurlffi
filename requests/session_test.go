@@ -365,7 +365,7 @@ func TestLargeResponseNotCancelled(t *testing.T) {
 
 func TestAcceptEncodingKeepsBrowserPosition(t *testing.T) {
 	p, _ := impersonate.Get("chrome131")
-	h := buildFinalHeaders(NewHeaders(nil), "", p)
+	h := buildFinalHeaders(NewHeaders(nil), "", p, true)
 	items := h.MultiItems()
 	// The preset lists accept-encoding second to last, after sec-fetch-dest.
 	if items[0].Name == "Accept-Encoding" {

@@ -218,8 +218,12 @@ is set.
 ## Options
 
 `Option` configures a `Session` or a single request. All options below exist in
-`options.go`. Options marked "not applied" are accepted and stored but not read
-by this port's transport.
+`options.go`.
+
+Some are kept only for curl_cffi API compatibility and cannot be honoured by
+this port's transport. Those are marked **refused**: setting one makes the
+request fail with an `*UnsupportedOptionError` before anything is sent, rather
+than silently dropping it and sending a fingerprint the caller did not ask for.
 
 ### Request body
 
@@ -235,7 +239,7 @@ by this port's transport.
 | --- | --- |
 | `WithParams(p any)` | query parameters, appended to any in the URL |
 | `WithBaseURL(u string)` | base URL for resolving a relative request URL |
-| `WithQuote(v any)` | URL percent-encoding parity hook; not applied |
+| `WithQuote(v any)` | URL percent-encoding parity hook; **refused** |
 
 ### Headers and cookies
 
@@ -263,7 +267,7 @@ by this port's transport.
 | `WithHTTPVersion(v string)` | `"v1"`, `"v2"` or `"v3"` (also `1`, `http/2`, `h3`, `auto`, ...) |
 | `WithTrustEnv(v bool)` | honour `HTTPS_PROXY`, `https_proxy`, `ALL_PROXY`, `all_proxy` when no proxy is set |
 | `WithDebug(v bool)` | verbose impersonating-transport logging |
-| `WithMaxRecvSpeed(n int)` | download rate limit; not applied |
+| `WithMaxRecvSpeed(n int)` | download rate limit; **refused** |
 | `WithDefaultEncoding(enc string)` | charset for responses without one |
 
 ### TLS and fingerprint
@@ -271,10 +275,10 @@ by this port's transport.
 | Option | Effect |
 | --- | --- |
 | `WithImpersonate(name string)` | select a preset, `curl`, or `native`/`none`/`go` |
-| `WithJA3(s string)` | custom JA3 string; not applied (use `WithImpersonate`) |
-| `WithAkamai(s string)` | custom Akamai HTTP/2 string; not applied |
-| `WithExtraFP(fp *ExtraFingerprints)` | per-request fingerprint overrides; not applied |
-| `WithDefaultHeaders(v bool)` | toggle preset default headers; not applied |
+| `WithJA3(s string)` | custom JA3 string; **refused** (use `WithImpersonate`) |
+| `WithAkamai(s string)` | custom Akamai HTTP/2 string; **refused** |
+| `WithExtraFP(fp *ExtraFingerprints)` | per-request fingerprint overrides; **refused** |
+| `WithDefaultHeaders(v bool)` | keep only the caller's headers, dropping the preset's default set (`false`); the fingerprint preset itself is still used |
 
 `ExtraFingerprints` carries `TLSMinVersion`, `TLSGrease`,
 `TLSPermuteExtensions`, `TLSCertCompression`, `TLSRecordSizeLimit`,
@@ -332,6 +336,7 @@ is no retry on HTTP status.
 | `*InvalidURL`, `*InvalidSchema` | malformed URL or unsupported scheme |
 | `*ImpersonateError` | unknown target or unusable TLS configuration |
 | `*SessionClosed` | request after `Close` |
+| `*UnsupportedOptionError` | an option set for curl_cffi parity that this port cannot honour |
 | `*HTTPError` | `RaiseForStatus` / `WithRaiseForStatus` |
 
 `NewRequestException` builds the most specific wrapper for a transport error
@@ -365,8 +370,14 @@ the Python curl_cffi; run it with `make test-live`.
 - Chrome 110+ permutes its TLS extensions per connection. This port emits a
   fixed valid canonical order, so JA3N/JA4 (which sort extensions) are exact
   while the raw JA3 byte order is one valid sample rather than re-randomised.
-- `WithJA3`, `WithAkamai`, `WithExtraFP`, `WithDefaultHeaders`, `WithQuote` and
-  `WithMaxRecvSpeed` are accepted but not applied.
+- `WithJA3`, `WithAkamai`, `WithExtraFP`, `WithQuote` and `WithMaxRecvSpeed` are
+  accepted for curl_cffi compatibility but cannot be honoured, so setting any of
+  them makes the request fail with an `*UnsupportedOptionError`. `WithJA3` is
+  the clearest case: a JA3 string lists extension ids, not their contents, and
+  the transport builds a ClientHello from a full spec, so there is nothing
+  faithful to construct from it. `WithAkamai` and `WithExtraFP` are plumbed to
+  no profile, and no supported transport can rate-limit for
+  `WithMaxRecvSpeed`.
 - `WithCert` and `WithProxyAuth` only affect the impersonating transport; the
   `native` target ignores them. `WithInterface` binds only when its value parses
   as a local IP address, not for a named interface.

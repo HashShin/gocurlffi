@@ -121,6 +121,14 @@ func (s *Session) Request(method, rawURL string, opts ...Option) (*Response, err
 		o(&cfg)
 	}
 
+	// Fail before any connection is made. An option this port cannot honour
+	// must not be silently dropped: the caller would get a request carrying a
+	// different fingerprint than the one they asked for.
+	if bad := cfg.unsupportedOptions(); len(bad) > 0 {
+		return nil, &UnsupportedOptionError{newError(
+			"requests: unsupported option(s): "+strings.Join(bad, "; "), 0, nil)}
+	}
+
 	var lastErr error
 	attempts := cfg.retry + 1
 	if attempts < 1 {
@@ -173,7 +181,7 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 		return nil, err
 	}
 
-	baseHeaders := buildFinalHeaders(cfg.headers, contentType, preset)
+	baseHeaders := buildFinalHeaders(cfg.headers, contentType, preset, cfg.defaultHeaders)
 	// Browsers send Accept-Encoding as part of their header set, which keeps
 	// it in the fingerprint position; only add the libcurl default when the
 	// user did not choose one and no preset supplied it.

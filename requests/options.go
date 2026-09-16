@@ -311,4 +311,33 @@ func WithMaxRecvSpeed(n int) Option { return func(c *config) { c.maxRecvSpeed = 
 
 // WithQuote controls URL percent-encoding behaviour (parity with curl_cffi's
 // quote parameter). Pass false to disable automatic encoding.
+//
+// Not implemented: setting it makes the request fail with an
+// *UnsupportedOptionError rather than silently ignoring it.
 func WithQuote(v any) Option { return func(c *config) { c.quote = v } }
+
+// unsupportedOptions names the options that were set but that this port cannot
+// honour, with the reason for each. Every entry here is a curl_cffi option
+// kept for API compatibility; reporting them is what stops a caller believing
+// a fingerprint was applied when it was dropped.
+func (c *config) unsupportedOptions() []string {
+	var out []string
+	add := func(name, why string) { out = append(out, name+": "+why) }
+
+	if c.ja3 != "" {
+		add("WithJA3", "a JA3 string lists extension ids and not their contents, so the transport cannot build a ClientHello from it")
+	}
+	if c.akamai != "" {
+		add("WithAkamai", "not wired to the HTTP/2 profile the session already negotiated")
+	}
+	if c.extraFP != nil {
+		add("WithExtraFP", "not wired to the TLS or HTTP/2 profile")
+	}
+	if c.quote != nil {
+		add("WithQuote", "not wired to URL encoding")
+	}
+	if c.maxRecvSpeed != 0 {
+		add("WithMaxRecvSpeed", "the transport has no rate limiting")
+	}
+	return out
+}

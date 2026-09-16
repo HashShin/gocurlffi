@@ -150,8 +150,10 @@ func resolveURL(baseURL, rawURL string, params Params) (string, error) {
 
 // buildFinalHeaders produces the ordered header set for a request, merging the
 // session/request headers with the impersonated browser defaults. User headers
-// always win, matching curl_cffi's default_headers behaviour.
-func buildFinalHeaders(user *Headers, contentType string, preset *impersonate.Preset) *Headers {
+// always win. Passing defaultHeaders false, from WithDefaultHeaders(false),
+// keeps only the caller's headers, which is what curl_cffi does for
+// default_headers=False.
+func buildFinalHeaders(user *Headers, contentType string, preset *impersonate.Preset, defaultHeaders bool) *Headers {
 	out := &Headers{}
 	seen := map[string]bool{}
 	for _, it := range user.MultiItems() {
@@ -162,7 +164,7 @@ func buildFinalHeaders(user *Headers, contentType string, preset *impersonate.Pr
 		out.Set("Content-Type", contentType)
 		seen["content-type"] = true
 	}
-	if preset != nil {
+	if preset != nil && defaultHeaders {
 		for _, h := range preset.HTTPHeaders {
 			lower := strings.ToLower(h.Name)
 			if seen[lower] {

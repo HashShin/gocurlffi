@@ -165,7 +165,12 @@ Options include `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 `WithDefaultHeaders`, `WithDefaultEncoding`, `WithHTTPVersion`, `WithInterface`,
 `WithCert`, `WithStream`, `WithContentCallback`, `WithDiscardCookies`,
 `WithRaiseForStatus`, `WithRetry`, `WithBaseURL`, `WithTrustEnv`, `WithDebug`.
-See [`requests/README.md`](requests/README.md) for the full list.
+See [`requests/README.md`](requests/README.md) for the full list. Five of them
+are kept only for curl_cffi API compatibility and cannot be honoured by this
+port's transport - `WithJA3`, `WithAkamai`, `WithExtraFP`, `WithQuote` and
+`WithMaxRecvSpeed`. Setting one fails the request with an
+`*UnsupportedOptionError` rather than silently sending a different fingerprint
+than you asked for.
 
 `Response` mirrors curl_cffi: `Content`, `Text()`, `JSON(v)`, `StatusCode`,
 `Reason`, `Ok`, `Headers`, `Cookies`, `Elapsed`, `RedirectCount`, `RedirectURL`,

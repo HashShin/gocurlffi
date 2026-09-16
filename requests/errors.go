@@ -65,6 +65,12 @@ type ImpersonateError struct{ *RequestException }
 // SessionClosed indicates the session was already closed.
 type SessionClosed struct{ *RequestException }
 
+// UnsupportedOptionError indicates an option that curl_cffi accepts but that
+// this port cannot honour. It is returned rather than ignored on purpose:
+// silently dropping a fingerprint option would send a request that does not
+// match what the caller asked for, which is worse than failing outright.
+type UnsupportedOptionError struct{ *RequestException }
+
 // HTTPError is returned by Response.raise_for_status for 4xx/5xx.
 type HTTPError struct{ *RequestException }
 
