@@ -214,7 +214,8 @@ rsp, err := sess.Post("https://httpbin.org/post",
 )
 ```
 
-The target can be written three ways, in decreasing order of safety:
+The fingerprint target can be named in these ways, in decreasing order of
+safety:
 
 ```go
 Impersonate: requests.Chrome146   // a constant, re-exported where the field is
@@ -226,6 +227,22 @@ Prefer a constant: a misspelt one does not compile, whereas a misspelt string
 fails only when the request is made, as an `*ImpersonateError`. All 40 targets
 are named, for example `Chrome146`, `Safari260`, `Firefox147`, `Edge101`,
 `Tor145` and `Chrome131Android`.
+
+If the qualifier is unwelcome at the call site, alias it once in your own
+package. This is the only way to write the name bare, because Go does not let a
+package export an unqualified identifier:
+
+```go
+const chrome = requests.DefaultChrome
+
+rsp, err := sess.Send(requests.Request{URL: url, Impersonate: chrome})
+```
+
+A dot import (`import . ".../requests"`) drops the qualifier too, and it does
+compile, but it puts every name the package exports into your file: `Request`,
+`Response`, `Headers`, `Cookies`, `Timeout`, `Params`, `Get`, `Post` and all 49
+constants, so a local `Headers` or `Timeout` of your own stops compiling.
+`staticcheck` rejects it as `ST1001`. The one-line alias has neither problem.
 
 `Headers` is a slice of `"Name: Value"` lines, so it can also be built from a
 `map[string]string`, a `[]requests.HeaderPair`, or an existing `*Headers`.

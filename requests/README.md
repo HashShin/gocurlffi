@@ -55,6 +55,11 @@ defaults follow the current preset of each family, the exact targets are
 lists them all. `native`, `none`, `go` or an empty name select Go's own stack,
 and `curl` reproduces the system curl.
 
+To drop the qualifier at a call site, alias the constant in your own package
+(`const chrome = requests.DefaultChrome`); Go cannot export a name that is used
+unqualified, and a dot import would put all 49 constants and every type in this
+package into the importing file. `staticcheck` rejects dot imports as `ST1001`.
+
 ## Module-level helpers
 
 Each helper builds a `Session`, sends the request and closes the session, so
