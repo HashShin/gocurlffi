@@ -18,14 +18,30 @@ import (
 )
 
 func main() {
-	rsp, err := requests.Get("https://tls.browserleaks.com/json",
-		requests.WithImpersonate(requests.DefaultChrome),
-	)
+	sess := requests.NewSession()
+	defer sess.Close()
+
+	rsp, err := sess.Send(requests.Request{
+		Method: "GET",
+		URL:    "https://tls.browserleaks.com/json",
+		Headers: requests.Headers{
+			"Accept: application/json",
+		},
+		Impersonate: requests.DefaultChrome,
+	})
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(rsp.Text())
 }
+```
+
+A one-off request needs no session and no `Request` value:
+
+```go
+rsp, err := requests.Get("https://tls.browserleaks.com/json",
+	requests.WithImpersonate(requests.DefaultChrome),
+)
 ```
 
 ```sh
@@ -168,31 +184,25 @@ requests.Put / Patch / Delete / Head / Options / Trace
 requests.Do(method, url, opts...)
 ```
 
-For connection and cookie reuse, use a `Session`. A request can be written as a
-value and sent:
+For connection and cookie reuse, use a `Session` and send a `Request` value, as
+in the example at the top. `Request` only requires `URL`; every other field falls
+back to the session when it is left empty, so a zero `Timeout` or an empty
+`Proxy` leaves the session's setting alone instead of clearing it:
 
-```go
-sess := requests.NewSession()
-defer sess.Close()
+| Field | Meaning |
+| --- | --- |
+| `Method` | HTTP method. Empty means GET. |
+| `URL` | Target. A URL with no scheme defaults to https. |
+| `Headers` | `Headers`, `[]string`, `[]HeaderPair`, `map[string]string`, or `*Headers`. |
+| `Params` | Query parameters, appended to any already in the URL. |
+| `Cookies` | Cookies for this request. |
+| `Body` | Raw request body. |
+| `JSON` | Marshalled as the body with `application/json`. Wins over `Body`. |
+| `Impersonate` | Fingerprint target. |
+| `Timeout` | Overrides the session timeout when non-zero. |
+| `Proxy` | Overrides the session proxy when non-empty. |
 
-rsp, err := sess.Send(requests.Request{
-	Method: "GET",
-	URL:    "https://httpbun.com/get",
-	Headers: requests.Headers{
-		"Accept: application/json",
-		"X-Custom: value",
-	},
-	Impersonate: requests.Chrome146,
-})
-if err != nil {
-	panic(err)
-}
-fmt.Println(rsp.StatusCode, rsp.Text())
-```
-
-`Request` only requires `URL`; every other field falls back to the session when
-it is left empty. The same request works as options, which is the shorter form
-for a one-off:
+The same request works as options, which is shorter when nothing is reused:
 
 ```go
 sess := requests.NewSession(requests.WithImpersonate(requests.DefaultFirefox))
