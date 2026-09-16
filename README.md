@@ -36,13 +36,28 @@ func main() {
 }
 ```
 
-A one-off request needs no session and no `Request` value:
+A one-off request needs no session at all. The module-level `Send` takes a
+`Request` value, so the shortest form is one word and the literal:
+
+```go
+rsp, err := Send(Request{
+	URL:         "https://tls.browserleaks.com/json",
+	Impersonate: DefaultChrome,
+})
+```
+
+and, for a request without a body of options to set, `Get` and its siblings go
+straight to the URL:
 
 ```go
 rsp, err := Get("https://tls.browserleaks.com/json",
 	WithImpersonate(DefaultChrome),
 )
 ```
+
+`sess.Send(req)` is the same call when the session must be reused. Go's method
+values shorten it further, if you want the word on its own: `send := sess.Send`
+then `send(req)`.
 
 ```sh
 gocurlffi get https://tls.browserleaks.com/json --impersonate chrome

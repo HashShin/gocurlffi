@@ -157,3 +157,70 @@ func TestSendBodyAndJSONPrecedence(t *testing.T) {
 		t.Errorf("Body = %q, want the JSON to win", both.Body)
 	}
 }
+
+// The module-level Send takes a Request value, so a one-off request built as a
+// value needs no Session. It mirrors Get(url, opts...) for the struct form.
+func TestPackageLevelSend(t *testing.T) {
+	srv := newTestServer()
+	defer srv.Close()
+
+	rsp, err := Send(Request{
+		Method: "POST",
+		URL:    srv.URL + "/post",
+		JSON:   map[string]any{"hello": "world"},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var out struct {
+		Body   string `json:"body"`
+		Method string `json:"method"`
+	}
+	if err := rsp.JSON(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Body != `{"hello":"world"}` {
+		t.Errorf("body = %q", out.Body)
+	}
+	if out.Method != "POST" {
+		t.Errorf("method = %q, want POST", out.Method)
+	}
+}
+
+// It builds a throwaway session, so nothing carries over between calls, which
+// is the same contract as the other module-level helpers.
+func TestPackageLevelSendSharesNothing(t *testing.T) {
+	srv := newTestServer()
+	defer srv.Close()
+
+	if _, err := Send(Request{URL: srv.URL + "/setcookie"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	rsp, err := Send(Request{URL: srv.URL + "/echo-cookie"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := rsp.Text(); strings.Contains(got, "abc") {
+		t.Errorf("a cookie carried over between throwaway sessions: %q", got)
+	}
+}
+
+// An empty Method still means GET through the package-level helper.
+func TestPackageLevelSendDefaultsToGet(t *testing.T) {
+	srv := newTestServer()
+	defer srv.Close()
+
+	rsp, err := Send(Request{URL: srv.URL + "/get"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var out struct {
+		Method string `json:"method"`
+	}
+	if err := rsp.JSON(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Method != "GET" {
+		t.Errorf("method = %q, want GET", out.Method)
+	}
+}

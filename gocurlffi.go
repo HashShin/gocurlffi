@@ -99,6 +99,7 @@ var (
 	Patch               = requests.Patch
 	Post                = requests.Post
 	Put                 = requests.Put
+	Send                = requests.Send
 	Trace               = requests.Trace
 )
 

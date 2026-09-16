@@ -114,7 +114,8 @@ TLS verification, HTTP version, interface and client certificate, so requests
 that share those values reuse connections.
 
 `Send` takes the struct form, which is useful when a request is built from
-configuration or stored rather than written out at the call site:
+configuration or stored rather than written out at the call site. There is a
+module-level `Send(Request)` too, for a one-off that needs no session:
 
 ```go
 rsp, err := sess.Send(requests.Request{

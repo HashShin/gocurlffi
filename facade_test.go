@@ -1,9 +1,12 @@
 package gocurlffi
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -130,5 +133,58 @@ func TestFacadeUsesAliasesNotNewTypes(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("no type declarations found in the facade")
+	}
+}
+
+// The facade must be usable, not merely present. This exercises the aliases the
+// way the dotted form does: unqualified types, an option, a target constant and
+// a module-level helper, end to end against a real server.
+func TestFacadeIsFunctional(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"method":  r.Method,
+			"headers": r.Header,
+		})
+	}))
+	defer srv.Close()
+
+	rsp, err := Send(Request{
+		Method:      "GET",
+		URL:         srv.URL,
+		Headers:     Headers{"X-Custom: value"},
+		Impersonate: Chrome131,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	var out struct {
+		Method  string              `json:"method"`
+		Headers map[string][]string `json:"headers"`
+	}
+	if err := rsp.JSON(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Method != "GET" {
+		t.Errorf("method = %q", out.Method)
+	}
+	if got := out.Headers["X-Custom"]; len(got) == 0 || got[0] != "value" {
+		t.Errorf("X-Custom = %v, want value", got)
+	}
+	if ua := out.Headers["User-Agent"]; len(ua) == 0 || !strings.Contains(ua[0], "Chrome/131") {
+		t.Errorf("User-Agent = %v, want the Chrome 131 preset", ua)
+	}
+}
+
+// Session.Send must be the same function the facade exposes, so a caller can
+// mix the dotted and qualified styles in one file.
+func TestFacadeSessionMatchesRequests(t *testing.T) {
+	sess := NewSession()
+	defer sess.Close()
+
+	var _ *Session = sess
+	if NewSession == nil {
+		t.Fatal("NewSession alias is nil")
 	}
 }

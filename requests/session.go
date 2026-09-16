@@ -531,6 +531,24 @@ func Do(method, rawURL string, opts ...Option) (*Response, error) {
 	return oneShot(method, rawURL, opts...)
 }
 
+// Send performs req in a throwaway session, so a Request built as a value can
+// be sent without a Session of its own:
+//
+//	rsp, err := Send(Request{
+//		Method:      "GET",
+//		URL:         "https://httpbun.com/get",
+//		Impersonate: Chrome146,
+//	})
+//
+// It reads the whole body before returning, like the other helpers here. Use
+// Session.Send instead when cookies and connections should be reused across
+// requests.
+func Send(req Request) (*Response, error) {
+	s := NewSession()
+	defer s.Close()
+	return s.Send(req)
+}
+
 // Get sends a GET request in a throwaway session.
 func Get(rawURL string, opts ...Option) (*Response, error) { return oneShot("GET", rawURL, opts...) }
 
