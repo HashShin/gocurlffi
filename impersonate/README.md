@@ -129,11 +129,11 @@ usable anywhere a string is, including the `Impersonate` field of a
 `requests.Request`. The `Default...` constants above are the better choice when
 any recent version of a family will do; these name one exact version.
 
-These constants are also re-exported by the `requests` package, so a caller who
-only builds a `requests.Request` needs one import rather than two and can write
-`requests.Chrome146`. The re-exports are aliases of these constants, not a second
-copy of the values, and a test in that package checks the two lists cover the
-same targets.
+These constants are also re-exported by the `requests` package, by `browser`, and
+by the module root, so a caller who only builds a request or drives a browser
+needs one import rather than two. Every re-export is an alias of these constants,
+not a second copy of the values, and a test in each package checks that its list
+covers the same targets.
 
 `TestTargetConstantsResolve` checks the list in both directions: every constant
 must name a real preset, and every preset must have a constant, so adding a

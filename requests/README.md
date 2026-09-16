@@ -58,10 +58,11 @@ defaults follow the current preset of each family, the exact targets are
 lists them all. `native`, `none`, `go` or an empty name select Go's own stack,
 and `curl` reproduces the system curl.
 
-To drop the qualifier at a call site, alias the constant in your own package
-(`const chrome = requests.DefaultChrome`); Go cannot export a name that is used
-unqualified, and a dot import would put all 49 constants and every type in this
-package into the importing file. `staticcheck` rejects dot imports as `ST1001`.
+To drop the qualifier at a call site, import the module root instead. It
+re-exports this package, the targets and the options, so `Request`, `Headers` and
+`Chrome146` need no prefix; see the root README. A dot import is what
+`staticcheck` reports as `ST1001`, so silence it deliberately if your setup runs
+staticcheck.
 
 ## Module-level helpers
 

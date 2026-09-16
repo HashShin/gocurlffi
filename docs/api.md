@@ -106,31 +106,11 @@ are named, for example `Chrome146`, `Safari260`, `Firefox147`, `Edge101`,
 `Tor145` and `Chrome131Android`, and the family defaults such as `DefaultChrome`
 follow the current version of each family rather than pinning one.
 
+A dot import is what `staticcheck` reports as `ST1001`. Silence it for the
+file with `//lint:file-ignore ST1001 <reason>` if your setup runs staticcheck.
+
 `Headers` is a slice of `"Name: Value"` lines, so it can also be built from a
 `map[string]string`, a `[]HeaderPair`, or an existing `*Headers`.
-
-### If you would rather have prefixes
-
-Every one of those names is also in the `requests` package, so importing it
-normally gives `requests.Request`, `requests.Headers`, `requests.Chrome146` and
-so on, and puts nothing else in scope:
-
-```go
-import "github.com/HashShin/gocurlffi/requests"
-
-sess := requests.NewSession()
-rsp, err := sess.Send(requests.Request{
-	URL:         url,
-	Headers:     requests.Headers{"Accept: application/json"},
-	Impersonate: requests.Chrome146,
-})
-```
-
-Import that one instead if any of the unqualified names collide with a name
-already in your file; `Get`, `Head`, `Options`, `Timeout` and `Cookie` are the
-likely ones. A dot import is what `staticcheck` reports as `ST1001`, so to keep
-it deliberately, silence it for the file with a `//lint:file-ignore ST1001
-<reason>` comment, or exclude ST1001 in `staticcheck.conf`.
 
 Options include `WithParams`, `WithData`, `WithContent`, `WithJSON`,
 `WithHeaders`, `WithHeader`, `WithCookies`, `WithAuth`, `WithTimeout`,
