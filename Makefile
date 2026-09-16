@@ -2,7 +2,7 @@
 
 BIN := bin/gocurlffi
 
-.PHONY: all build preprocess gen fmt vet test test-browser test-race test-live sites capture lint clean
+.PHONY: all build fmt vet test test-browser test-race test-live sites capture lint clean
 
 all: build
 
@@ -16,12 +16,6 @@ LDFLAGS := -X main.version=$(VERSION)
 # headless browser, and serve/mcp/targets share the same file. See browser/README.md.
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gocurlffi
-
-# Regenerate impersonate/presets_gen.go from the vendored curl-impersonate
-# source. Pure Go, no Python.
-preprocess: gen
-gen:
-	go run ./internal/genpresets
 
 fmt:
 	gofmt -w .

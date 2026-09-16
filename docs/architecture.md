@@ -48,13 +48,15 @@ and makes no extra request.
 | `impersonate` | Fingerprint presets, name/alias resolution, and the mapping from a preset to a TLS/HTTP2/HTTP3 profile. |
 | `browser` | The pure-Go headless browser: DOM, JavaScript, CSS cascade, layout, extraction and rendering. |
 | `server` | CDP, WebDriver BiDi and MCP front ends over a `browser.Browser`. |
-| `internal/genpresets` | Generates `impersonate/presets_gen.go` from the vendored curl-impersonate source. |
 | `internal/capturehello` | Captures and parses a TLS ClientHello from any external command, for comparing fingerprints. |
 | `tools/cssdiff` | Development-only comparison of this browser's CSS cascade and geometry against a real Chromium. A separate Go module. |
 | `gsearch` | A standalone tool that drives a real Chromium to scrape search results. A separate Go module; see below. |
 
-`impersonate/upstream/impersonate.c` is the only non-Go build input. It is
-vendored so that a checkout regenerates its presets offline.
+The project is pure Go. It contains no C and uses no cgo, so it cross-compiles
+and builds with nothing but the Go toolchain. The preset table in
+`impersonate/presets.go` is ordinary Go source, transcribed from
+curl-impersonate's `lib/impersonate.c`; the MIT license for that data is at
+`impersonate/upstream/LICENSE.curl-impersonate`.
 
 ### Why `gsearch` is a separate module
 

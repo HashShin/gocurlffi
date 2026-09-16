@@ -2,10 +2,10 @@
 // curl-impersonate (https://github.com/lexiforest/curl-impersonate), the native
 // engine behind the Python curl_cffi project.
 //
-// The preset list, aliases and header sets are generated from curl-impersonate's
-// lib/impersonate.c (see impersonate/upstream/impersonate.c and internal/genpresets). The
-// actual TLS/HTTP2/HTTP3 handshake is performed by the transport layer in the
-// requests package.
+// The preset list, aliases and header sets are transcribed from
+// curl-impersonate's lib/impersonate.c into presets.go and are part of this
+// package. The actual TLS/HTTP2/HTTP3 handshake is performed by the transport
+// layer in the requests package.
 package impersonate
 
 import (
@@ -21,8 +21,6 @@ type Header struct {
 	Name  string
 	Value string
 }
-
-//go:generate go run ../internal/genpresets -root ..
 
 // Preset mirrors a single struct impersonate_opts entry from curl-impersonate.
 // Slices are pre-split from the colon/comma separated C strings for convenience.

@@ -59,7 +59,7 @@ embedded at build time and `go run` will not have it.
 
 ## Fidelity
 
-The fingerprint presets are generated from curl-impersonate's
+The fingerprint presets are transcribed from curl-impersonate's
 `lib/impersonate.c`, the same source curl_cffi uses. For every preset, the TLS
 ClientHello (cipher suites, supported groups, signature algorithms, extension
 set and order, GREASE, ALPS, cert compression, record size limit, key shares),
@@ -71,7 +71,7 @@ and extension sets, curves, Akamai HTTP/2 hash and, via `tls.peet.ws`, the full
 HTTP/2 header order:
 
 ```
-41/41 presets: exact match (0 mismatches)
+42/42 recorded targets: exact match (0 mismatches)
 ```
 
 `make test-live` runs `TestLiveFingerprintBaseline`, which compares this port's
@@ -243,21 +243,28 @@ Observed results, where marriott is the discriminating site:
 that stayed 200 on marriott across repeated runs, while a plain browser
 fingerprint is challenged there.
 
-## Regenerating the presets
+## Checking the presets
 
-The vendored upstream source lives in `impersonate/upstream/impersonate.c`. To
-refresh the generated Go data:
+The preset table lives in `impersonate/presets.go`, transcribed from
+curl-impersonate's `lib/impersonate.c`. It is ordinary Go source, not a build
+product: there is no code generation step and nothing outside Go is needed to
+build or test the project.
 
 ```sh
-make preprocess   # internal/genpresets: parse impersonate.c -> presets_gen.go
-make test         # unit tests
+make test         # unit tests, including the preset invariants
 make test-live    # live fingerprints vs the recorded curl_cffi baseline
 make capture      # capture a ClientHello with internal/capturehello
 ```
 
-Everything in the build and test path is Go. The only optional non-Go pieces are
-`scripts/check_sites.sh` (bash) and the one-off recording of the fingerprint
-baseline, which used the Python curl_cffi as the reference.
+`make test-live` is the strong check: it compares live handshakes against
+`requests/testdata/fingerprint_baseline.json`, a baseline recorded from the
+Python curl_cffi. To re-check a preset against its origin, clone
+[curl-impersonate](https://github.com/lexiforest/curl-impersonate) and compare
+`lib/impersonate.c`.
+
+The only optional non-Go pieces are `scripts/check_sites.sh` (bash) and the
+one-off recording of the fingerprint baseline, which used the Python curl_cffi
+as the reference.
 
 ## Limitations
 
