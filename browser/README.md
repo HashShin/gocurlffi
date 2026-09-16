@@ -732,8 +732,12 @@ it is enough.
 - One `Browser` may be used from several goroutines: the session and its
   cookie jar are synchronized, so pages can be crawled in parallel. A single
   `Page` is not safe for concurrent use. The race detector is unavailable on
-  android/arm64, so this is covered by construction plus a concurrency test
-  (`TestConcurrentPages`) run repeatedly, not by `-race`.
+  android/arm64, so the Termux workflow covers this by construction plus a
+  concurrency test (`TestConcurrentPages`) run repeatedly. Where the detector
+  does work, `make test-race` runs the whole suite under it and is clean. It
+  is worth running after touching the WebSocket or worker code: a reader
+  goroutine used to schedule the close event onto the page's timer queue while
+  the page was draining it.
 - The parity features are opt-in and lazy, so they do not slow the plain
   `Open` -> extract path: geometry, XPath and the actions only run when called
   (and a geometry layout is cached until the DOM changes); interception, proxy,

@@ -112,6 +112,57 @@ func (e *jsEnv) tagObject(o *goja.Object, tag string) {
 		goja.FLAG_FALSE, goja.FLAG_TRUE, goja.FLAG_FALSE)
 }
 
+// tagHost tags a host object and links it to its interface constructor, so
+// `o instanceof Name` answers true. The tag alone is not enough: instanceof
+// walks the prototype chain, so without the link `new Blob([]) instanceof Blob`
+// was false even though the object already reported "[object Blob]". Pages
+// feature-detect with instanceof, and taking the wrong branch is silent.
+//
+// It does nothing when the interface is not a global constructor, which is the
+// case for interfaces a browser does not expose (MutationRecord,
+// IntersectionObserverEntry, ReadableStreamDefaultReader and others). Only
+// constructors this environment already publishes are linked, so no global is
+// invented.
+func (e *jsEnv) tagHost(o *goja.Object, name string) {
+	if o == nil {
+		return
+	}
+	e.tagObject(o, name)
+	ctor, ok := e.vm.Get(name).(*goja.Object)
+	if !ok {
+		return
+	}
+	proto, ok := ctor.Get("prototype").(*goja.Object)
+	if !ok || proto == nil {
+		return
+	}
+	_ = o.SetPrototype(proto)
+}
+
+// linkPrototype makes one interface extend another, which is what instanceof
+// walks. File extends Blob in the specification, so File.prototype's own
+// prototype has to be Blob.prototype or `new File([], "a") instanceof Blob` is
+// false. Both names must already be published as globals.
+func (e *jsEnv) linkPrototype(child, parent string) {
+	childCtor, ok := e.vm.Get(child).(*goja.Object)
+	if !ok {
+		return
+	}
+	parentCtor, ok := e.vm.Get(parent).(*goja.Object)
+	if !ok {
+		return
+	}
+	childProto, ok := childCtor.Get("prototype").(*goja.Object)
+	if !ok || childProto == nil {
+		return
+	}
+	parentProto, ok := parentCtor.Get("prototype").(*goja.Object)
+	if !ok || parentProto == nil {
+		return
+	}
+	_ = childProto.SetPrototype(parentProto)
+}
+
 // tagDynamicProto makes a prototype report a tag computed from its node, so a
 // div answers HTMLDivElement and an img answers HTMLImageElement.
 func (e *jsEnv) tagDynamicProto(proto *goja.Object) {

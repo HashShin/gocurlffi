@@ -25,6 +25,10 @@ type pageWebSocket struct {
 	mu     sync.Mutex
 	queue  []wsIncoming
 	closed bool
+	// closePending records that the peer closed the connection and the close
+	// event has not been delivered yet. The reader goroutine only sets it;
+	// drain, on the page's own goroutine, delivers it.
+	closePending bool
 
 	state    int // 0 connecting, 1 open, 2 closing, 3 closed
 	handlers map[string][]goja.Callable
@@ -146,10 +150,13 @@ func (ws *pageWebSocket) readLoop() {
 			wasClosed := ws.closed
 			ws.closed = true
 			ws.state = 3
-			ws.mu.Unlock()
 			if !wasClosed {
-				ws.e.schedule(func() { ws.fire("close", nil) })
+				// Only record it. Firing or scheduling from this goroutine
+				// would touch the page's timer queue and event handlers
+				// concurrently with the goroutine that owns them.
+				ws.closePending = true
 			}
+			ws.mu.Unlock()
 			return
 		}
 		ws.mu.Lock()
@@ -178,19 +185,24 @@ func (ws *pageWebSocket) close() {
 	ws.mu.Lock()
 	ws.state = 3
 	ws.closed = true
+	// An explicit close reports the event itself, so the reader's pending one
+	// is dropped rather than delivered twice.
+	ws.closePending = false
 	ws.mu.Unlock()
 	ws.e.schedule(func() { ws.fire("close", nil) })
 }
 
 // drain dispatches queued messages as message events. It runs while the page's
 // timer queue is drained, so a message handler that arrived a moment ago runs.
+// It is also where a close the peer initiated is reported, because this is the
+// page's own goroutine.
 func (ws *pageWebSocket) drain() bool {
 	any := false
 	for {
 		ws.mu.Lock()
 		if len(ws.queue) == 0 {
 			ws.mu.Unlock()
-			return any
+			break
 		}
 		any = true
 		msg := ws.queue[0]
@@ -200,13 +212,33 @@ func (ws *pageWebSocket) drain() bool {
 		ev := ws.e.vm.NewObject()
 		_ = ev.Set("type", "message")
 		_ = ev.Set("target", ws.obj)
-		if msg.isBinary {
-			_ = ev.Set("data", ws.e.vm.ToValue(string(msg.data)))
-		} else {
-			_ = ev.Set("data", ws.e.vm.ToValue(string(msg.data)))
-		}
+		_ = ev.Set("data", ws.messageData(msg))
 		ws.deliver("message", ev)
 	}
+
+	ws.mu.Lock()
+	closePending := ws.closePending
+	ws.closePending = false
+	ws.mu.Unlock()
+	if closePending {
+		ws.fire("close", nil)
+		any = true
+	}
+	return any
+}
+
+// messageData renders a frame the way a browser does: a text frame arrives as a
+// string, and a binary frame as an ArrayBuffer or a Blob according to
+// binaryType. Delivering a string for a binary frame would leave a page that
+// asked for one of those with the wrong type.
+func (ws *pageWebSocket) messageData(msg wsIncoming) goja.Value {
+	if !msg.isBinary {
+		return ws.e.vm.ToValue(string(msg.data))
+	}
+	if ws.binary {
+		return ws.e.vm.ToValue(ws.e.vm.NewArrayBuffer(append([]byte(nil), msg.data...)))
+	}
+	return ws.e.newBlobObject(&jsBlobData{data: msg.data})
 }
 
 func (ws *pageWebSocket) fire(typ string, ev *goja.Object) {

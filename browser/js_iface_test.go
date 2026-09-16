@@ -28,6 +28,38 @@ func TestInterfaceTagsMatchBrowser(t *testing.T) {
 	})
 }
 
+// A tag is not a type: instanceof walks the prototype chain, so tagging alone
+// left `new Blob([]) instanceof Blob` false while toString said "[object
+// Blob]". Real pages branch on instanceof, and the wrong branch fails quietly.
+func TestHostObjectsAnswerInstanceof(t *testing.T) {
+	p := flexPage(t, `<html><body></body></html>`)
+	checkAll(t, p, []struct{ expr, want string }{
+		{`new Blob([]) instanceof Blob`, "true"},
+		{`new File([], "a") instanceof File`, "true"},
+		{`new File([], "a") instanceof Blob`, "true"},
+		{`new Headers() instanceof Headers`, "true"},
+		{`new FormData() instanceof FormData`, "true"},
+		{`new Request("https://x.test/") instanceof Request`, "true"},
+		{`new Response("x") instanceof Response`, "true"},
+		{`new ReadableStream() instanceof ReadableStream`, "true"},
+		{`new WritableStream() instanceof WritableStream`, "true"},
+		{`new TransformStream() instanceof TransformStream`, "true"},
+		{`new AbortController().signal instanceof AbortSignal`, "true"},
+		{`new AbortController() instanceof AbortController`, "true"},
+		{`new DOMParser() instanceof DOMParser`, "true"},
+		{`new MutationObserver(function(){}) instanceof MutationObserver`, "true"},
+		{`new ResizeObserver(function(){}) instanceof ResizeObserver`, "true"},
+		{`new IntersectionObserver(function(){}) instanceof IntersectionObserver`, "true"},
+		{`new AudioContext() instanceof AudioContext`, "true"},
+		// The element interfaces were already linked and must stay so.
+		{`document.createElement("div") instanceof HTMLDivElement`, "true"},
+		{`document.createElement("div") instanceof Element`, "true"},
+		{`document.createElement("div") instanceof Node`, "true"},
+		// A plain object is still not a host object.
+		{`({}) instanceof Blob`, "false"},
+	})
+}
+
 func TestConstructorNamesMatchBrowser(t *testing.T) {
 	p := flexPage(t, `<html><body></body></html>`)
 	checkAll(t, p, []struct{ expr, want string }{

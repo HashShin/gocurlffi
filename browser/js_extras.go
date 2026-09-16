@@ -66,7 +66,7 @@ func (e *jsEnv) audioNode(iface string, inputs, outputs int) *goja.Object {
 	_ = o.Set("connect", func(call goja.FunctionCall) goja.Value { return call.Argument(0) })
 	_ = o.Set("disconnect", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	_ = o.Set("context", goja.Null())
-	e.tagObject(o, iface)
+	e.tagHost(o, iface)
 	_ = o.DefineDataProperty("constructor", e.namedConstructor(iface, nil),
 		goja.FLAG_TRUE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	return o
@@ -146,13 +146,13 @@ func (e *jsEnv) audioContextObject() *goja.Object {
 		_ = b.Set("sampleRate", int(call.Argument(2).ToInteger()))
 		_ = b.Set("duration", 0)
 		_ = b.Set("getChannelData", func(goja.FunctionCall) goja.Value { return e.newUint8Array(nil) })
-		e.tagObject(b, "AudioBuffer")
+		e.tagHost(b, "AudioBuffer")
 		return b
 	})
 	for _, m := range []string{"close", "resume", "suspend"} {
 		_ = o.Set(m, func(goja.FunctionCall) goja.Value { return e.resolvedPromise(goja.Undefined()) })
 	}
-	e.tagObject(o, "AudioContext")
+	e.tagHost(o, "AudioContext")
 	_ = o.DefineDataProperty("constructor", e.namedConstructor("AudioContext", nil),
 		goja.FLAG_TRUE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	return o
@@ -169,7 +169,7 @@ func (e *jsEnv) audioParam(value float64) *goja.Object {
 		"exponentialRampToValueAtTime", "setTargetAtTime", "cancelScheduledValues"} {
 		_ = o.Set(m, func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	}
-	e.tagObject(o, "AudioParam")
+	e.tagHost(o, "AudioParam")
 	return o
 }
 

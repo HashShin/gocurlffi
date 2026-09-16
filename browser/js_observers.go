@@ -65,7 +65,7 @@ type jsMutationObserver struct {
 
 func (e *jsEnv) newMutationObserver(cbValue goja.Value) *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "MutationObserver")
+	e.tagHost(o, "MutationObserver")
 	m := &jsMutationObserver{e: e, obj: o}
 	if fn, ok := goja.AssertFunction(cbValue); ok {
 		m.cb = fn
@@ -273,7 +273,7 @@ func (e *jsEnv) mutationRecordObject(r mutationRecordData) *goja.Object {
 // which is the notification a lazy component waits for.
 func (e *jsEnv) newResizeObserver(cbValue goja.Value) *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "ResizeObserver")
+	e.tagHost(o, "ResizeObserver")
 	cb, _ := goja.AssertFunction(cbValue)
 	var targets []*html.Node
 	nudge := func() {

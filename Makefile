@@ -2,7 +2,7 @@
 
 BIN := bin/gocurlffi
 
-.PHONY: all build preprocess gen fmt vet test test-browser test-live sites capture lint clean
+.PHONY: all build preprocess gen fmt vet test test-browser test-race test-live sites capture lint clean
 
 all: build
 
@@ -35,6 +35,13 @@ test:
 # Unit tests for the pure-Go browser and the CLI (no network).
 test-browser:
 	go test ./browser/ ./internal/cli/ -count=1
+
+# The same suite under the race detector. It needs a platform that supports it
+# (linux/amd64, darwin); it is unavailable on android/arm64, so run this when
+# working on a desktop. It caught a reader goroutine mutating the page's timer
+# queue in the WebSocket code.
+test-race:
+	go test -race ./... -count=1
 
 # Live fingerprint check against the recorded curl_cffi baseline (network).
 test-live:

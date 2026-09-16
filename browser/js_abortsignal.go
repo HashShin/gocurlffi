@@ -40,7 +40,7 @@ func (e *jsEnv) abortError(message string) goja.Value {
 
 func (e *jsEnv) newAbortSignalState() *jsAbortSignal {
 	o := e.vm.NewObject()
-	e.tagObject(o, "AbortSignal")
+	e.tagHost(o, "AbortSignal")
 	s := &jsAbortSignal{e: e, obj: o, reason: goja.Undefined()}
 	// The state rides on the object as a non-enumerable private property, the
 	// same way Blob, Headers and Response carry theirs.
@@ -126,7 +126,7 @@ func (s *jsAbortSignal) abort(reason goja.Value) {
 
 func (e *jsEnv) newAbortController() *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "AbortController")
+	e.tagHost(o, "AbortController")
 	s := e.newAbortSignalState()
 	_ = o.Set("signal", s.obj)
 	_ = o.Set("abort", func(call goja.FunctionCall) goja.Value {

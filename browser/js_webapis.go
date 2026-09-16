@@ -68,7 +68,7 @@ func (e *jsEnv) newBlobObject(b *jsBlobData) *goja.Object {
 	if b.name != "" || b.lastModified != 0 {
 		name = "File"
 	}
-	e.tagObject(o, name)
+	e.tagHost(o, name)
 	_ = o.Set("size", len(b.data))
 	_ = o.Set("type", b.typ)
 	if b.name != "" || b.lastModified != 0 {
@@ -190,7 +190,7 @@ func blobOf(v goja.Value) *jsBlobData {
 
 func (e *jsEnv) newFileReader() *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "FileReader")
+	e.tagHost(o, "FileReader")
 	_ = o.Set("EMPTY", 0)
 	_ = o.Set("LOADING", 1)
 	_ = o.Set("DONE", 2)
@@ -347,7 +347,7 @@ func (h *headersData) pairs() map[string]string {
 func (e *jsEnv) newHeadersObject(h *headersData) *goja.Object {
 	o := e.vm.NewObject()
 	e.mark(o, headersMark, h)
-	e.tagObject(o, "Headers")
+	e.tagHost(o, "Headers")
 	_ = o.Set("append", func(call goja.FunctionCall) goja.Value {
 		h.append(argString(call.Argument(0)), argString(call.Argument(1)))
 		return goja.Undefined()
@@ -462,7 +462,7 @@ type formData struct {
 func (e *jsEnv) newFormDataObject(fd *formData) *goja.Object {
 	o := e.vm.NewObject()
 	e.mark(o, formDataMark, fd)
-	e.tagObject(o, "FormData")
+	e.tagHost(o, "FormData")
 
 	valueOf := func(v goja.Value) formEntry {
 		if b := blobOf(v); b != nil {
@@ -750,7 +750,7 @@ type jsResponseData struct {
 func (e *jsEnv) newResponseObject(d *jsResponseData) *goja.Object {
 	o := e.vm.NewObject()
 	e.mark(o, responseMark, d)
-	e.tagObject(o, "Response")
+	e.tagHost(o, "Response")
 	if d.typ == "" {
 		d.typ = "default"
 	}
@@ -864,7 +864,7 @@ func (e *jsEnv) newRequestObject(input string, init *goja.Object) *goja.Object {
 	}
 	o := e.vm.NewObject()
 	e.mark(o, requestMark, d)
-	e.tagObject(o, "Request")
+	e.tagHost(o, "Request")
 	_ = o.Set("url", d.url)
 	_ = o.Set("method", method)
 	_ = o.Set("headers", e.newHeadersObject(d.headers))
@@ -1028,7 +1028,7 @@ type jsReadableStream struct {
 func (e *jsEnv) newReadableStream() *jsReadableStream {
 	s := &jsReadableStream{e: e}
 	o := e.vm.NewObject()
-	e.tagObject(o, "ReadableStream")
+	e.tagHost(o, "ReadableStream")
 	s.obj = o
 	e.mark(o, streamMark, s)
 	_ = o.Set("locked", false)
@@ -1221,7 +1221,7 @@ func (e *jsEnv) newReadableStreamCtor(src goja.Value) *goja.Object {
 
 func (e *jsEnv) newWritableStreamCtor(src goja.Value) *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "WritableStream")
+	e.tagHost(o, "WritableStream")
 	var writeFn, closeFn, abortFn goja.Callable
 	if so, ok := src.(*goja.Object); ok {
 		if v := so.Get("write"); v != nil {
@@ -1339,7 +1339,7 @@ func (e *jsEnv) newTransformStreamCtor(src goja.Value) *goja.Object {
 	_ = wo.Set("locked", true)
 
 	out := e.vm.NewObject()
-	e.tagObject(out, "TransformStream")
+	e.tagHost(out, "TransformStream")
 	_ = out.Set("readable", readable.obj)
 	_ = out.Set("writable", wo)
 	return out
@@ -1359,6 +1359,8 @@ func (e *jsEnv) setupBodies() {
 		opts, _ := call.Argument(2).(*goja.Object)
 		return e.newFile(call.Argument(0), argString(call.Argument(1)), opts)
 	})
+	// File extends Blob, so a File has to answer instanceof Blob too.
+	e.linkPrototype("File", "Blob")
 	_ = rt.Set("FileReader", func(goja.ConstructorCall) *goja.Object {
 		return e.newFileReader()
 	})

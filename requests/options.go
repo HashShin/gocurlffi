@@ -320,6 +320,12 @@ func WithQuote(v any) Option { return func(c *config) { c.quote = v } }
 // honour, with the reason for each. Every entry here is a curl_cffi option
 // kept for API compatibility; reporting them is what stops a caller believing
 // a fingerprint was applied when it was dropped.
+//
+// Implementing WithAkamai or WithExtraFP is not just a matter of passing the
+// value to the transport: clientKey (transport.go) does not include them, so a
+// session that changed one between requests would silently reuse a connection
+// already negotiated with the previous fingerprint. Add them to clientKey in
+// the same change, or the option will look implemented and still be wrong.
 func (c *config) unsupportedOptions() []string {
 	var out []string
 	add := func(name, why string) { out = append(out, name+": "+why) }
@@ -328,7 +334,7 @@ func (c *config) unsupportedOptions() []string {
 		add("WithJA3", "a JA3 string lists extension ids and not their contents, so the transport cannot build a ClientHello from it")
 	}
 	if c.akamai != "" {
-		add("WithAkamai", "not wired to the HTTP/2 profile the session already negotiated")
+		add("WithAkamai", "not wired to the HTTP/2 profile")
 	}
 	if c.extraFP != nil {
 		add("WithExtraFP", "not wired to the TLS or HTTP/2 profile")

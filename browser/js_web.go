@@ -86,7 +86,7 @@ func (e *jsEnv) setupWeb() {
 // XMLDocument, anything else is HTML.
 func (e *jsEnv) newDOMParser() *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "DOMParser")
+	e.tagHost(o, "DOMParser")
 	_ = o.Set("parseFromString", func(call goja.FunctionCall) goja.Value {
 		source := argString(call.Argument(0))
 		if isXMLType(argString(call.Argument(1))) {
@@ -470,7 +470,7 @@ type jsIntersectionObserver struct {
 
 func (e *jsEnv) newIntersectionObserver(cbValue goja.Value) *goja.Object {
 	o := e.vm.NewObject()
-	e.tagObject(o, "IntersectionObserver")
+	e.tagHost(o, "IntersectionObserver")
 	obs := &jsIntersectionObserver{obj: o}
 	if fn, ok := goja.AssertFunction(cbValue); ok {
 		obs.cb = fn
