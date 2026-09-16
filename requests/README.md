@@ -104,10 +104,16 @@ rsp, err := sess.Send(requests.Request{
 	Method:      "GET",
 	URL:         "https://httpbun.com/get",
 	Headers:     requests.Headers{"Accept: application/json"},
-	Impersonate: impersonate.Chrome146,
+	Impersonate: requests.Chrome146, // same package: no second import
 	Timeout:     10 * time.Second,
 })
 ```
+
+`Impersonate` is a string, so `"chrome146"` also works, but the constants are
+re-exported here from the impersonate package so a request needs one import
+rather than two. A misspelt constant does not compile; a misspelt string fails
+when the request is made, as an `*ImpersonateError`. `impersonate.Targets()`
+lists every target.
 
 Only `URL` is required. `Method` empty means GET, and a zero `Timeout` or empty
 `Proxy` leaves the session's setting in place rather than overriding it with an

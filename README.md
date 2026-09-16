@@ -182,7 +182,7 @@ rsp, err := sess.Send(requests.Request{
 		"Accept: application/json",
 		"X-Custom: value",
 	},
-	Impersonate: impersonate.Chrome146,
+	Impersonate: requests.Chrome146,
 })
 if err != nil {
 	panic(err)
@@ -204,13 +204,18 @@ rsp, err := sess.Post("https://httpbin.org/post",
 )
 ```
 
-Targets are named constants, so a typo is a compile error rather than a request
-that quietly uses the wrong browser:
+The target can be written three ways, in decreasing order of safety:
 
 ```go
-impersonate.Chrome146   impersonate.Safari260   impersonate.Firefox147
-impersonate.Edge101     impersonate.Tor145      impersonate.Chrome131Android
+Impersonate: requests.Chrome146   // a constant, re-exported where the field is
+Impersonate: impersonate.Chrome146 // the same constant, from its own package
+Impersonate: "chrome146"          // a plain string: the field is a string
 ```
+
+Prefer a constant: a misspelt one does not compile, whereas a misspelt string
+fails only when the request is made, as an `*ImpersonateError`. All 40 targets
+are named, for example `Chrome146`, `Safari260`, `Firefox147`, `Edge101`,
+`Tor145` and `Chrome131Android`.
 
 `Headers` is a slice of `"Name: Value"` lines, so it can also be built from a
 `map[string]string`, a `[]requests.HeaderPair`, or an existing `*Headers`.
