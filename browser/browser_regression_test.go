@@ -137,8 +137,21 @@ func TestInterruptBusyLoop(t *testing.T) {
 
 // Runaway recursion through Function.prototype.apply used to spin forever
 // because goja's call stack was unbounded. It must now fail fast.
+//
+// This test has two timing dependencies that both scale with the machine, and
+// it used to carry neither, so it failed under the race detector and on a
+// contended host for reasons unrelated to what it checks:
+//
+//   - the recursion itself has to hit the interpreter's limit, which is CPU
+//     bound (about 21s here, and roughly double that under -race);
+//   - the load budget has to outlast that, because the assertion is that the
+//     script *after* the runaway one still runs. A load whose budget is spent
+//     skips the remaining scripts by design, so a 30s budget meant the second
+//     script was skipped and the attribute was never set.
 func TestRunawayRecursionIsBounded(t *testing.T) {
-	b := newTestBrowser(t)
+	b := New(Options{LoadTimeout: recursionBudget + 30*time.Second})
+	t.Cleanup(b.Close)
+
 	p := b.NewPage("https://example.test/")
 	done := make(chan struct{})
 	go func() {
@@ -153,7 +166,7 @@ func TestRunawayRecursionIsBounded(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(recursionBudget):
 		t.Fatal("runaway recursion did not terminate")
 	}
 	if Attr(p.Query("#o"), "data-after") != "1" {

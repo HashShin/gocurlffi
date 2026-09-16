@@ -40,13 +40,12 @@ import (
     "github.com/HashShin/gocurlffi/impersonate"
 )
 
-b := browser.New(browser.Options{Impersonate: impersonate.Chrome131})
-defer b.Close()
-
-p, err := b.Open("https://quotes.toscrape.com/js/") // scripts run during load
+// One page, one call. Get gives the page a Browser of its own.
+p, err := browser.Get("https://quotes.toscrape.com/js/", impersonate.Chrome131)
 if err != nil {
     panic(err)
 }
+defer p.Close()
 
 fmt.Println(p.Title())
 fmt.Println(p.Text())     // the rendered text, not the raw HTML

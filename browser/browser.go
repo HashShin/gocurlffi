@@ -160,6 +160,33 @@ func New(opts Options) *Browser {
 // Close releases the underlying HTTP session.
 func (b *Browser) Close() { b.sess.Close() }
 
+// Get opens one page in a Browser of its own, so a single page takes one call
+// rather than a Browser and an Open:
+//
+//	p, err := browser.Get("https://example.com/", impersonate.Chrome131)
+//	if err != nil {
+//		panic(err)
+//	}
+//	defer p.Close()
+//
+// The target is optional; without it the default impersonation is used. Close
+// the page when done, which closes the Browser behind it. Use New and Open
+// instead when several pages should share cookies, or when more than the
+// impersonation target has to be set.
+func Get(rawURL string, target ...string) (*Page, error) {
+	var imp string
+	if len(target) > 0 {
+		imp = target[0]
+	}
+	b := New(Options{Impersonate: imp})
+	p, err := b.Open(rawURL)
+	if err != nil {
+		b.Close()
+		return nil, err
+	}
+	return p, nil
+}
+
 // Options returns a copy of the browser options.
 func (b *Browser) Options() Options { return b.opts }
 

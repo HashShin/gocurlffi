@@ -283,15 +283,13 @@ import (
 )
 
 func main() {
-	b := browser.New(browser.Options{Impersonate: impersonate.Chrome131})
-	defer b.Close()
-
-	// Open fetches through the same impersonating transport the fast path
+	// Get fetches through the same impersonating transport the fast path
 	// uses, then runs the page's scripts.
-	p, err := b.Open("https://quotes.toscrape.com/js/")
+	p, err := browser.Get("https://quotes.toscrape.com/js/", impersonate.Chrome131)
 	if err != nil {
 		panic(err)
 	}
+	defer p.Close()
 
 	fmt.Println(p.Title())
 	fmt.Println(p.Text())     // the rendered text, not the raw HTML
@@ -300,6 +298,17 @@ func main() {
 		fmt.Println(l.Href, l.Text)
 	}
 }
+```
+
+`browser.Get` opens one page in a `Browser` of its own, so a single page needs
+one call. When several pages should share cookies, or more than the target has
+to be set, use the longer form:
+
+```go
+b := browser.New(browser.Options{Impersonate: impersonate.Chrome131, Proxy: proxy})
+defer b.Close()
+
+p, err := b.Open(url)
 ```
 
 A `Page` renders and drives as well as reads:

@@ -197,7 +197,16 @@ func platformForUserAgent(ua string) string {
 	return "Linux armv8l"
 }
 
-// session returns the browser's HTTP session.
+// Close releases the Browser this page was loaded in. A page from Get owns its
+// Browser, so this is the whole cleanup a one-shot needs. A page from New
+// shares its Browser with the other pages in it, so this closes those too; use
+// Browser.Close directly when that lifetime is the clearer one.
+func (p *Page) Close() {
+	if p.browser != nil {
+		p.browser.Close()
+	}
+}
+
 // Document returns the root DOM node.
 func (p *Page) Document() *html.Node { return p.doc }
 
