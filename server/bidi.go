@@ -92,7 +92,7 @@ func (c *bidiConn) handle(data []byte) {
 func (c *bidiConn) dispatch(method string, params json.RawMessage) (any, *bidiError) {
 	switch method {
 	case "session.status":
-		return map[string]any{"ready": true, "message": "gobrowser ready"}, nil
+		return map[string]any{"ready": true, "message": "gocurlffi ready"}, nil
 	case "session.new":
 		id := randomID()
 		c.sessions[id] = true
@@ -100,7 +100,7 @@ func (c *bidiConn) dispatch(method string, params json.RawMessage) (any, *bidiEr
 			"sessionId": id,
 			"capabilities": map[string]any{
 				"acceptInsecureCerts": false,
-				"browserName":         "gobrowser",
+				"browserName":         "gocurlffi",
 				"browserVersion":      version,
 				"platformName":        "any",
 				"setWindowRect":       false,

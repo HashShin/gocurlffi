@@ -1,6 +1,19 @@
+// Package cli implements the gocurlffi command line: one binary with two
+// request paths and the servers that expose the browser to other tools.
+//
+// The fast path (RunFetch) performs a single HTTP request through the
+// impersonating transport and never constructs a JavaScript engine. The browser
+// path (RunBrowserGet) loads the same URL in the pure-Go browser and runs the
+// page's scripts. RunServe and RunMCP expose the browser over CDP, WebDriver
+// BiDi and MCP.
+//
+// Every subcommand returns an exit status instead of calling os.Exit, so the
+// whole surface stays testable and a failure is visible to a shell.
 package cli
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -17,31 +30,9 @@ var Version = "dev"
 // Semver is the command's own version, independent of the build commit.
 const Semver = "0.1.0"
 
-const rootUsage = `gocurlffi - HTTP with browser impersonation, and a pure-Go headless browser
-
-usage:
-  gocurlffi get <url> [flags]           fetch with browser TLS/JA3 impersonation
-  gocurlffi get <url> --render [flags]  the same URL through the JavaScript browser
-  gocurlffi open <url> [flags]          alias for "get --render"
-  gocurlffi serve [flags]               CDP + WebDriver BiDi server
-  gocurlffi mcp [flags]                 MCP tool server (stdio, or --port for HTTP)
-  gocurlffi list                        list impersonation targets
-  gocurlffi version                     print the version
-
-methods:
-  get, post, put, patch, delete, head, options, trace
-  --render applies to get/open only: there is no browser path for a POST body.
-
-The fast path and the browser share one binary and one impersonation target.
-"gocurlffi get" costs no JavaScript engine at run time; --render constructs one.
-
-note: -f means --form on the fast path and --format on the browser path, which
-is inherited from the two CLIs that were merged. Write --format in full when a
-command could be either. Run "gocurlffi open --help" for the browser flags.
-`
-
-// renderFlags are the spellings that switch `get` from the HTTP path to the
-// browser path.
+// renderFlags switch `get` from the HTTP path to the browser path. --js is the
+// spelling the command used before the two binaries were merged, and is kept so
+// existing scripts keep working.
 var renderFlags = map[string]bool{
 	"--render": true, "-render": true,
 	"--js": true, "-js": true,
@@ -63,68 +54,112 @@ func takeRenderFlag(args *[]string) bool {
 	return found
 }
 
+// httpMethod reports whether cmd names an HTTP method, and returns it
+// upper-cased. A bare method is accepted as a command so that
+// `gocurlffi post URL -j '{}'` works without a `get`-style verb.
+func httpMethod(cmd string) (string, bool) {
+	switch strings.ToUpper(cmd) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
+		return strings.ToUpper(cmd), true
+	}
+	return "", false
+}
+
+// helpTargets maps a command name to the subcommand whose flags explain it, so
+// `gocurlffi help post` prints the fast-path flags.
+func helpTargets(cmd string) []string {
+	switch cmd {
+	case "get", "fetch":
+		return []string{"get", "--help"}
+	case "open", "browse", "render":
+		return []string{"open", "--help"}
+	case "serve", "mcp":
+		return []string{cmd, "--help"}
+	}
+	if _, ok := httpMethod(cmd); ok {
+		return []string{"get", "--help"}
+	}
+	return nil
+}
+
 // Main runs the command line and returns the process exit status.
 func Main(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, rootUsage)
-		return 2
+		return exitUsage
 	}
-	cmd := args[0]
-	rest := args[1:]
+	cmd, rest := args[0], args[1:]
 
 	switch cmd {
 	case "get", "fetch":
 		if takeRenderFlag(&rest) {
 			if len(rest) == 0 {
 				fmt.Fprintln(os.Stderr, "error: missing URL")
-				return 2
+				return exitUsage
 			}
-			RunBrowserGet(rest)
-			return 0
+			return RunBrowserGet(rest)
 		}
-		RunFetch(append([]string{strings.ToUpper(cmd)}, rest...))
-		return 0
+		return RunFetch("GET", rest)
+
 	case "open", "browse", "render":
+		// A render switch here is redundant but not an error.
+		takeRenderFlag(&rest)
 		if len(rest) == 0 {
 			fmt.Fprintln(os.Stderr, "error: missing URL")
-			return 2
+			return exitUsage
 		}
-		RunBrowserGet(rest)
-		return 0
+		return RunBrowserGet(rest)
+
 	case "serve":
-		RunServe(rest)
-		return 0
+		return RunServe(rest)
 	case "mcp":
-		RunMCP(rest)
-		return 0
-	case "list", "targets":
+		return RunMCP(rest)
+
+	case "targets", "list":
 		for _, t := range impersonate.Targets() {
 			fmt.Println(t)
 		}
-		return 0
+		return exitOK
+
 	case "version", "--version", "-V":
 		fmt.Printf("gocurlffi %s (%s)\n", Semver, Version)
-		return 0
+		return exitOK
+
 	case "help", "--help", "-h":
+		if len(rest) > 0 {
+			if target := helpTargets(rest[0]); target != nil {
+				return Main(target)
+			}
+		}
 		fmt.Print(rootUsage)
-		return 0
+		return exitOK
 	}
 
-	// A bare HTTP method still works, so `gocurlffi post URL -j '{}'` is
-	// unchanged from before the commands were merged.
-	switch strings.ToUpper(cmd) {
-	case "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
+	// A bare HTTP method is a command for the fast path.
+	if method, ok := httpMethod(cmd); ok {
 		if takeRenderFlag(&rest) {
 			fmt.Fprintf(os.Stderr,
 				"error: --render is only available for get/open; %s has a request body\n",
 				strings.ToLower(cmd))
-			return 2
+			return exitUsage
 		}
-		RunFetch(append([]string{strings.ToUpper(cmd)}, rest...))
-		return 0
+		return RunFetch(method, rest)
 	}
 
 	fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 	fmt.Fprint(os.Stderr, rootUsage)
-	return 2
+	return exitUsage
+}
+
+// checkParse turns a flag parse error into an exit status. -h/--help is a
+// request, not a failure.
+func checkParse(err error) int {
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, flag.ErrHelp):
+		return exitOK
+	default:
+		return exitUsage
+	}
 }

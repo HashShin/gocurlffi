@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bench_browser.sh - compare gobrowser with a Chromium CLI on the same pages.
+# bench_browser.sh - compare the pure-Go browser with a Chromium CLI on the same pages.
 #
 # Both tools load the page, run its JavaScript and dump the rendered DOM, so
 # the numbers are comparable. Run it with `bash` (on Termux there is no
@@ -11,7 +11,7 @@
 #
 # Options:
 #   -n, --iterations N     runs per tool per URL (default 2)
-#   -i, --impersonate T    gobrowser target (default custom)
+#   -i, --impersonate T    impersonation target (default custom)
 #   -c, --chromium BIN     Chromium binary (default chromium-browser)
 #   -t, --timeout SECS     per-run timeout (default 90)
 #   -v, --virtual-ms MS    Chromium --virtual-time-budget (default 15000)
@@ -28,14 +28,14 @@
 #   - Chromium gets --virtual-time-budget so --dump-dom terminates on pages
 #     that never reach network idle. That budget is virtual, not wall-clock,
 #     so its time is a floor, not a full time-to-interactive.
-#   - gobrowser waits real time for timers (Options.TimerBudget, default 2s)
-#     so timer-rendered content appears. Pass --timer-budget 0s to gobrowser
-#     via GOBROWSER_ARGS to make it purely network+CPU bound.
+#   - the Go browser waits real time for timers (Options.TimerBudget, default
+#     2s) so timer-rendered content appears. Pass --timer-budget 0s via
+#     GOCURLFFI_ARGS to make it purely network+CPU bound.
 #
 # Examples:
 #   bash scripts/bench_browser.sh
 #   bash scripts/bench_browser.sh -n 3 https://react.dev/ https://example.com/
-#   GOBROWSER_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
+#   GOCURLFFI_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 
 set -u
 
@@ -53,7 +53,7 @@ CHROMIUM_BIN="chromium-browser"
 RUN_TIMEOUT=90
 VIRTUAL_MS=15000
 URLS=()
-GOBROWSER_ARGS="${GOBROWSER_ARGS:-}"
+GOCURLFFI_ARGS="${GOCURLFFI_ARGS:-}"
 
 usage() {
   awk 'NR==1 { next }
@@ -82,16 +82,16 @@ if ! command -v "$CHROMIUM_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-GOBROWSER_BIN="${GOBROWSER_BIN:-$ROOT_DIR/bin/gocurlffi}"
-if [ ! -x "$GOBROWSER_BIN" ]; then
-  echo "building gobrowser..." >&2
-  (cd "$ROOT_DIR" && go build -o bin/gobrowser ./cmd/gobrowser) || exit 1
+GOCURLFFI_BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
+if [ ! -x "$GOCURLFFI_BIN" ]; then
+  echo "building gocurlffi..." >&2
+  (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
 fi
 
-PROFILE="${CHROMIUM_PROFILE:-${TMPDIR:-$ROOT_DIR}/gobrowser-bench-profile}"
+PROFILE="${CHROMIUM_PROFILE:-${TMPDIR:-$ROOT_DIR}/gocurlffi-bench-profile}"
 mkdir -p "$PROFILE" 2>/dev/null || true
 
-TIME_FILE="${TMPDIR:-$ROOT_DIR}/gobrowser-bench.out"
+TIME_FILE="${TMPDIR:-$ROOT_DIR}/gocurlffi-bench.out"
 
 # run <label> <timeout-secs> <command...>
 run() {
@@ -112,10 +112,10 @@ run_chromium() {
     --virtual-time-budget="$VIRTUAL_MS" --user-data-dir="$PROFILE" --dump-dom "$url"
 }
 
-run_gobrowser() {
+run_gocurlffi() {
   local url="$1" tag="$2"
   # shellcheck disable=SC2086
-  run "gobrowser $tag" "$RUN_TIMEOUT" "$GOBROWSER_BIN" get "$url" -f html -i "$IMPERSONATE" $GOBROWSER_ARGS
+  run "gocurlffi $tag" "$RUN_TIMEOUT" "$GOCURLFFI_BIN" get "$url" --render -f html -i "$IMPERSONATE" $GOCURLFFI_ARGS
 }
 
 echo "warming the Chromium profile (untimed; a cold profile can take ~40s)..."
@@ -129,7 +129,7 @@ for url in "${URLS[@]}"; do
   echo "=== $url ==="
   for i in $(seq 1 "$ITERATIONS"); do
     run_chromium "$url" "run$i"
-    run_gobrowser "$url" "run$i"
+    run_gocurlffi "$url" "run$i"
   done
   echo
 done

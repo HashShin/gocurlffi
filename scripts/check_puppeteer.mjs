@@ -1,4 +1,4 @@
-// Connects a real Puppeteer client to gobrowser's CDP server and runs a small
+// Connects a real Puppeteer client to gocurlffi's CDP server and runs a small
 // flow: new page, navigate, evaluate, screenshot. This is the acceptance check
 // for the CDP server: it uses the same client that drives Chrome.
 import puppeteer from 'puppeteer-core';

@@ -187,7 +187,7 @@ func TestMCPHTTPSessionHeader(t *testing.T) {
 	if assigned == "" {
 		t.Fatal("a request without a session id was not assigned one")
 	}
-	if assigned == "gobrowser" {
+	if assigned == defaultSessionID {
 		t.Fatal("session id is still the constant placeholder")
 	}
 

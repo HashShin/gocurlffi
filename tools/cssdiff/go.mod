@@ -1,6 +1,6 @@
 module cssdiff
 
-go 1.26
+go 1.26.0
 
 require github.com/chromedp/chromedp v0.16.0
 

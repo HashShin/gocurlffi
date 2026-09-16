@@ -154,7 +154,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"Browser":              "gobrowser/" + strings.TrimSpace(version),
+			"Browser":              "gocurlffi/" + strings.TrimSpace(version),
 			"Protocol-Version":     "1.3",
 			"User-Agent":           browser.UserAgent(),
 			"V8-Version":           "goja",
@@ -209,7 +209,7 @@ var version = "dev"
 func SetVersion(v string) { version = v }
 
 // UserAgent is exposed so the server package can report the browser's UA.
-func (s *Server) browserID() string { return "gobrowser" }
+func (s *Server) browserID() string { return "gocurlffi" }
 
 func (t *target) info(host string) map[string]any {
 	t.mu.Lock()

@@ -1,5 +1,10 @@
 # Lightpanda Feature Parity Implementation Plan
 
+> Archived. Every phase below shipped; this file is kept as a record of
+> how the work was planned, not as a description of the current tree. File
+> names refer to the layout at the time. See `docs/architecture.md` for the
+> tree as it stands now.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the ten features the pure-Go `gocurlffi/browser` port is missing versus the Zig Lightpanda, without slowing the existing `Open` -> extract/render path.
@@ -32,9 +37,9 @@ Features that legitimately add work on the pages that use them, to be stated hon
 - `browser/xpath.go` — XPath navigator over `*html.Node`, `document.evaluate`.
 - `browser/actions.go` — `Click`, `Type`, `Fill`, `Select`, `Check`, `Press`, `Scroll` on `Page`.
 - `browser/frame.go` — `Frame` type, frame tree, iframe loading and per-frame document.
-- `browser/intercept.go` — request hook type and dispatch, `--block`/`--proxy` plumbing.
-- `browser/robots.go` — robots.txt fetch, cache and matcher.
-- `browser/cors.go` — CORS enforcement for fetch/XHR.
+- `browser/net_intercept.go` — request hook type and dispatch, `--block`/`--proxy` plumbing.
+- `browser/net_robots.go` — robots.txt fetch, cache and matcher.
+- `browser/net_cors.go` — CORS enforcement for fetch/XHR.
 - `browser/module.go` — ESM loader, import-map support, specifier resolution.
 - `server/` (package `cdp`) — `server/server.go`, `server/router.go`, `server/domains_page.go`, `server/domains_runtime.go`, `server/domains_dom.go`, `server/domains_network.go`, `server/domains_input.go`, `server/target.go`.
 - `server/bidi/` — BiDi session, command router, `browsingContext`, `script`, `input`.
@@ -45,7 +50,7 @@ Features that legitimately add work on the pages that use them, to be stated hon
 - `browser/page.go` — frame-aware `run()`, module script branch, keep `doc` on a frame.
 - `browser/js.go` — register geometry, XPath, modules, actions.
 - `browser/jsdom.go:548` — replace zeroed `getBoundingClientRect`/`offset*` with the real geometry API.
-- `browser/jsnet.go` — CORS enforcement in fetch/XHR.
+- `browser/js_net.go` — CORS enforcement in fetch/XHR.
 - `cmd/gobrowser/main.go` — `serve` command and new flags.
 - `README.md` — status tables, new flags, performance note.
 
@@ -261,7 +266,7 @@ func TestIframeDocumentIsLoaded(t *testing.T) {
 
 ### Task 5.1: Expose the proxy
 
-**Files:** Modify `browser/browser.go`; Test `browser/proxy_test.go`.
+**Files:** Modify `browser/browser.go`; Test `browser/net_proxy_test.go`.
 
 - [ ] **Step 1: Failing test** — `Options{Proxy: srv.URL}` routes a request through the proxy handler (assert the handler saw the absolute URL).
 - [ ] **Step 2: Implement** `Proxy string` on `Options`; append `requests.WithProxy(opts.Proxy)` in `New`.
@@ -270,7 +275,7 @@ func TestIframeDocumentIsLoaded(t *testing.T) {
 
 ### Task 5.2: A request hook
 
-**Files:** Create `browser/intercept.go`; Modify `browser/browser.go`, `browser/page.go`; Test `browser/intercept_test.go`.
+**Files:** Create `browser/net_intercept.go`; Modify `browser/browser.go`, `browser/page.go`; Test `browser/net_intercept_test.go`.
 
 - [ ] **Step 1: Failing test**
 
@@ -323,7 +328,7 @@ func Fulfill(status int, contentType string, body []byte) *Response
 
 ## Phase 6 — robots.txt (#8)
 
-**Files:** Create `browser/robots.go`; Modify `browser/browser.go`, `browser/page.go`; Test `browser/robots_test.go`.
+**Files:** Create `browser/net_robots.go`; Modify `browser/browser.go`, `browser/page.go`; Test `browser/net_robots_test.go`.
 
 - [ ] **Step 1: Failing test** — a page linking `/private` is skipped when `Options{ObeyRobots: true}` and the server's `/robots.txt` disallows it; with the option off it is fetched.
 - [ ] **Step 2: Implement** `Robots` cache keyed by scheme+host: fetch `/robots.txt` once per origin through `browser.get` (resourceType `other`, not itself subject to robots), parse `User-agent`/`Allow`/`Disallow` groups, choose the group matching our UA (fallback `*`), longest-match wins with `$` support.
@@ -335,7 +340,7 @@ func Fulfill(status int, contentType string, body []byte) *Response
 
 ## Phase 7 — CORS (#11)
 
-**Files:** Create `browser/cors.go`; Modify `browser/jsnet.go`, `browser/browser.go`; Test `browser/cors_test.go`.
+**Files:** Create `browser/net_cors.go`; Modify `browser/js_net.go`, `browser/browser.go`; Test `browser/net_cors_test.go`.
 
 - [ ] **Step 1: Failing test** — with `Options{CORS: true}`, a `fetch()` to a cross-origin URL whose response lacks `Access-Control-Allow-Origin` is rejected with a `TypeError`; with the header present it resolves; with `CORS: false` (default) it resolves as today.
 - [ ] **Step 2: Implement** an origin check for `fetch`/XHR: attach `Origin` to cross-origin requests, evaluate simple vs preflighted (custom method/headers), send an `OPTIONS` preflight when needed, and reject responses that fail `Access-Control-Allow-Origin` (including `*` rules and `credentials`).

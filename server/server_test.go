@@ -108,7 +108,7 @@ func TestJSONVersion(t *testing.T) {
 
 func TestBrowserGetVersionOverWS(t *testing.T) {
 	httpSrv, _ := newTestServer(t)
-	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gobrowser"))
+	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gocurlffi"))
 	res := c.call("", "Browser.getVersion", nil)
 	if res["product"] == nil {
 		t.Fatalf("Browser.getVersion returned %v", res)
@@ -117,7 +117,7 @@ func TestBrowserGetVersionOverWS(t *testing.T) {
 
 func TestCreateTargetNavigateEvaluate(t *testing.T) {
 	httpSrv, page := newTestServer(t)
-	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gobrowser"))
+	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gocurlffi"))
 
 	created := c.call("", "Target.createTarget", map[string]any{"url": "about:blank"})
 	targetID, _ := created["targetId"].(string)
@@ -143,7 +143,7 @@ func TestCreateTargetNavigateEvaluate(t *testing.T) {
 
 func TestScreenshotOverCDP(t *testing.T) {
 	httpSrv, page := newTestServer(t)
-	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gobrowser"))
+	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gocurlffi"))
 	created := c.call("", "Target.createTarget", map[string]any{"url": page.URL})
 	targetID, _ := created["targetId"].(string)
 	attached := c.call("", "Target.attachToTarget", map[string]any{"targetId": targetID, "flatten": true})
@@ -158,7 +158,7 @@ func TestScreenshotOverCDP(t *testing.T) {
 
 func TestDOMQueryAndEvaluateNode(t *testing.T) {
 	httpSrv, page := newTestServer(t)
-	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gobrowser"))
+	c := dial(t, wsURL(httpSrv.URL, "/devtools/browser/gocurlffi"))
 	created := c.call("", "Target.createTarget", map[string]any{"url": page.URL})
 	targetID, _ := created["targetId"].(string)
 	attached := c.call("", "Target.attachToTarget", map[string]any{"targetId": targetID, "flatten": true})

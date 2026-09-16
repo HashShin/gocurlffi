@@ -7,6 +7,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,41 +15,11 @@ import (
 	"strings"
 	"syscall"
 
-	"gocurlffi/impersonate"
 	"gocurlffi/requests"
 )
 
-const fetchUsage = `gocurlffi get - HTTP client with browser impersonation (Go port of curl_cffi)
-
-Usage:
-  gocurlffi <method> <url> [flags]
-  gocurlffi list            list impersonation targets
-
-Methods:
-  get, post, put, patch, delete, head, options, trace
-
-Flags:
-  -i, --impersonate NAME   browser to impersonate, or "native"/"curl" (default: native)
-  -H, --header "K: V"      add a request header (repeatable)
-  -P, --param "k=v"        add a query parameter (repeatable)
-  -d, --data BODY          request body (string, @file, or key=value pairs)
-  -j, --json JSON          JSON request body
-  -f, --form               send --data as form fields
-      --cookie "k=v"       add a cookie (repeatable)
-      --auth user:pass     HTTP basic auth
-      --proxy URL          proxy URL
-  -t, --timeout SECONDS    request timeout (default 30)
-      --follow             follow redirects (default true)
-      --max-redirects N    maximum redirects (default 30)
-      --verify             verify TLS certificates (default true)
-      --http-version V     v1, v2 or v3
-  -o, --output FILE        write the response body to FILE
-      --headers            print response headers only
-      --body               print the response body only (default)
-  -v, --verbose            print response status, headers and body
-      --version            print version
-`
-
+// output modes. body is the default; the other two are selected by --headers
+// and -v, which are mutually exclusive with the last one winning.
 type mode int
 
 const (
@@ -57,41 +28,57 @@ const (
 	modeVerbose
 )
 
+// fetchFlags is the parsed fast-path command line. The URL stays a positional
+// argument; everything else is collected here.
+type fetchFlags struct {
+	impersonate  string
+	headers      stringList
+	params       stringList
+	cookies      stringList
+	data         string
+	jsonBody     string
+	form         bool
+	auth         string
+	proxy        string
+	timeout      float64
+	follow       bool
+	maxRedirects int
+	verify       bool
+	httpVersion  string
+	method       string
+	output       string
+	stream       bool
+	headersOnly  bool
+	verbose      bool
+}
+
 // RunFetch is the fast path: one request through the impersonating transport,
-// with no JavaScript engine involved. args[0] is the HTTP method.
-func RunFetch(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, fetchUsage)
-		return 1
+// with no JavaScript engine involved. method is the upper-case HTTP verb.
+func RunFetch(method string, args []string) int {
+	fs := newFlagSet("get", "gocurlffi "+strings.ToLower(method)+" <url> [flags]",
+		"gocurlffi get - HTTP client with browser impersonation (Go port of curl_cffi)")
+	f := &fetchFlags{}
+	f.register(fs)
+
+	if err := parse(fs, args); err != nil {
+		return checkParse(err)
+	}
+	rawURL := fs.Arg(0)
+	if rawURL == "" {
+		fmt.Fprintln(os.Stderr, "error: missing URL")
+		fs.Usage()
+		return exitUsage
+	}
+	if f.method != "" {
+		method = strings.ToUpper(f.method)
 	}
 
 	signal.Ignore(os.Interrupt, syscall.SIGPIPE)
 
-	switch args[0] {
-	case "list", "targets":
-		for _, t := range impersonate.Targets() {
-			fmt.Println(t)
-		}
-		return 0
-	case "version", "--version", "-V":
-		fmt.Printf("gocurlffi %s (%s)\n", Semver, Version)
-		return 0
-	case "help", "--help", "-h":
-		fmt.Print(fetchUsage)
-		return 0
-	}
-
-	method := strings.ToUpper(args[0])
-	rest := args[1:]
-	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "error: missing URL")
-		return 2
-	}
-	rawURL := rest[0]
-	opts, m, outPath, err := parseFetchFlags(rest[1:])
+	opts, err := f.options()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		return 2
+		return exitUsage
 	}
 
 	sess := requests.NewSession(opts...)
@@ -100,185 +87,155 @@ func RunFetch(args []string) int {
 	rsp, err := sess.Request(method, rawURL)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+		return exitError
 	}
 
-	if err := fetchOutput(rsp, os.Stdout, m, outPath); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+	m := modeBody
+	switch {
+	case f.verbose:
+		m = modeVerbose
+	case f.headersOnly:
+		m = modeHeaders
 	}
-	return 0
+	if err := fetchOutput(rsp, os.Stdout, m, f.output); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return exitError
+	}
+	return exitOK
 }
 
-func parseFetchFlags(args []string) ([]requests.Option, mode, string, error) {
+// register declares the fast-path flags. -f is deliberately not a short form of
+// --form: it means --format on the browser path, and one letter with two
+// meanings across one binary is worse than a longer spelling here.
+func (f *fetchFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&f.impersonate, "i", "", "browser to impersonate, or native/curl/custom (default: native)")
+	fs.StringVar(&f.impersonate, "impersonate", "", "alias for -i")
+	fs.Var(&f.headers, "H", "add a request header as \"Name: Value\" (repeatable)")
+	fs.Var(&f.headers, "header", "alias for -H")
+	fs.Var(&f.params, "P", "add a query parameter as \"key=value\" (repeatable)")
+	fs.Var(&f.params, "param", "alias for -P")
+	fs.Var(&f.cookies, "cookie", "add a cookie as \"key=value\" (repeatable)")
+	fs.StringVar(&f.data, "d", "", "request body: a string, @file, or key=value pairs")
+	fs.StringVar(&f.data, "data", "", "alias for -d")
+	fs.StringVar(&f.jsonBody, "j", "", "JSON request body")
+	fs.StringVar(&f.jsonBody, "json", "", "alias for -j")
+	fs.BoolVar(&f.form, "form", false, "send --data as form fields even without key=value pairs")
+	fs.StringVar(&f.auth, "auth", "", "HTTP basic auth as user:pass")
+	fs.StringVar(&f.proxy, "proxy", "", "proxy URL")
+	fs.Float64Var(&f.timeout, "t", 30, "request timeout in seconds")
+	fs.Float64Var(&f.timeout, "timeout", 30, "alias for -t")
+	fs.BoolVar(&f.follow, "follow", true, "follow redirects (use -follow=false to stop)")
+	fs.IntVar(&f.maxRedirects, "max-redirects", 30, "maximum number of redirects")
+	fs.BoolVar(&f.verify, "verify", true, "verify TLS certificates (use -verify=false to skip)")
+	fs.StringVar(&f.httpVersion, "http-version", "", "force an HTTP version: v1, v2 or v3")
+	fs.StringVar(&f.method, "X", "", "HTTP method, overriding the command (get, post, ...)")
+	fs.StringVar(&f.method, "method", "", "alias for -X")
+	fs.BoolVar(&f.stream, "stream", false, "stream the body instead of buffering it")
+	fs.StringVar(&f.output, "o", "", "write the response body to this file")
+	fs.StringVar(&f.output, "output", "", "alias for -o")
+	fs.BoolVar(&f.headersOnly, "headers", false, "print the response headers only")
+	fs.BoolVar(&f.verbose, "v", false, "print the status, headers and body")
+	fs.BoolVar(&f.verbose, "verbose", false, "alias for -v")
+}
+
+// options turns the parsed flags into requests options, reporting a bad
+// combination before any network call is made.
+func (f *fetchFlags) options() ([]requests.Option, error) {
 	var opts []requests.Option
-	headers := requests.NewHeaders(nil)
-	var params requests.Params
-	cookies := requests.NewCookies(nil)
 
-	var bodyArg string
-	formMode := false
-	var jsonArg string
-	var outputFile string
-	m := modeBody
-
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		next := func() (string, error) {
-			if i+1 >= len(args) {
-				return "", fmt.Errorf("flag %s requires a value", a)
-			}
-			i++
-			return args[i], nil
-		}
-		switch a {
-		case "-i", "--impersonate":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			opts = append(opts, requests.WithImpersonate(v))
-		case "-H", "--header":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			name, val, ok := splitHeader(v)
-			if !ok {
-				return nil, modeBody, "", fmt.Errorf("invalid header %q, want 'Name: Value'", v)
-			}
-			headers.Set(name, val)
-		case "-P", "--param":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			k, val, _ := strings.Cut(v, "=")
-			params = append(params, requests.Param{Key: k, Value: val})
-		case "-d", "--data":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			bodyArg = v
-		case "-j", "--json":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			jsonArg = v
-			_ = jsonArg
-		case "-f", "--form":
-			formMode = true
-		case "--cookie":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			k, val, _ := strings.Cut(v, "=")
-			cookies.Set(k, val)
-		case "--auth":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			user, pass, _ := strings.Cut(v, ":")
-			opts = append(opts, requests.WithAuth(user, pass))
-		case "--proxy":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			opts = append(opts, requests.WithProxy(v))
-		case "-t", "--timeout":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			var secs float64
-			if _, err := fmt.Sscanf(v, "%f", &secs); err != nil {
-				return nil, modeBody, "", fmt.Errorf("invalid timeout %q", v)
-			}
-			opts = append(opts, requests.WithTimeoutSeconds(secs))
-		case "--follow":
-			opts = append(opts, requests.WithAllowRedirects(true))
-		case "--no-follow":
-			opts = append(opts, requests.WithAllowRedirects(false))
-		case "--max-redirects":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			var n int
-			if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-				return nil, modeBody, "", fmt.Errorf("invalid max-redirects %q", v)
-			}
-			opts = append(opts, requests.WithMaxRedirects(n))
-		case "--verify":
-			opts = append(opts, requests.WithVerify(true))
-		case "--no-verify":
-			opts = append(opts, requests.WithVerify(false))
-		case "--http-version":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			opts = append(opts, requests.WithHTTPVersion(v))
-		case "-o", "--output":
-			v, err := next()
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			outputFile = v
-		case "--headers":
-			m = modeHeaders
-		case "--body":
-			m = modeBody
-		case "-v", "--verbose":
-			m = modeVerbose
-		case "--stream":
-			opts = append(opts, requests.WithStream(true))
-		default:
-			if strings.HasPrefix(a, "-") {
-				return nil, modeBody, "", fmt.Errorf("unknown flag %q", a)
-			}
-		}
+	if f.impersonate != "" {
+		opts = append(opts, requests.WithImpersonate(f.impersonate))
 	}
-
-	if headers.Len() > 0 {
+	if len(f.headers) > 0 {
+		headers := requests.NewHeaders(nil)
+		for _, h := range f.headers {
+			name, value, ok := splitHeader(h)
+			if !ok {
+				return nil, fmt.Errorf("invalid header %q, want 'Name: Value'", h)
+			}
+			headers.Set(name, value)
+		}
 		opts = append(opts, requests.WithHeaders(headers))
 	}
-	if len(params) > 0 {
+	if len(f.params) > 0 {
+		var params requests.Params
+		for _, p := range f.params {
+			k, v, _ := strings.Cut(p, "=")
+			params = append(params, requests.Param{Key: k, Value: v})
+		}
 		opts = append(opts, requests.WithParams(params))
 	}
-	if cookies.Len() > 0 {
+	if len(f.cookies) > 0 {
+		cookies := requests.NewCookies(nil)
+		for _, c := range f.cookies {
+			k, v, _ := strings.Cut(c, "=")
+			cookies.Set(k, v)
+		}
 		opts = append(opts, requests.WithCookies(cookies))
 	}
-	if jsonArg != "" {
-		var v any
-		if err := json.Unmarshal([]byte(jsonArg), &v); err != nil {
-			return nil, modeBody, "", fmt.Errorf("invalid json: %w", err)
-		}
-		opts = append(opts, requests.WithJSON(v))
-	} else if bodyArg != "" {
-		if strings.HasPrefix(bodyArg, "@") {
-			data, err := os.ReadFile(bodyArg[1:])
-			if err != nil {
-				return nil, modeBody, "", err
-			}
-			opts = append(opts, requests.WithData(data))
-		} else if formMode || strings.Contains(bodyArg, "=") {
-			vals := requests.Params{}
-			for _, pair := range strings.Split(bodyArg, "&") {
-				k, v, _ := strings.Cut(pair, "=")
-				vals = append(vals, requests.Param{Key: k, Value: v})
-			}
-			opts = append(opts, requests.WithData(vals))
-		} else {
-			opts = append(opts, requests.WithData(bodyArg))
-		}
+	if f.auth != "" {
+		user, pass, _ := strings.Cut(f.auth, ":")
+		opts = append(opts, requests.WithAuth(user, pass))
 	}
-	return opts, m, outputFile, nil
+	if f.proxy != "" {
+		opts = append(opts, requests.WithProxy(f.proxy))
+	}
+	if f.timeout > 0 {
+		opts = append(opts, requests.WithTimeoutSeconds(f.timeout))
+	}
+	opts = append(opts,
+		requests.WithAllowRedirects(f.follow),
+		requests.WithMaxRedirects(f.maxRedirects),
+		requests.WithVerify(f.verify),
+	)
+	if f.httpVersion != "" {
+		opts = append(opts, requests.WithHTTPVersion(f.httpVersion))
+	}
+	if f.stream {
+		opts = append(opts, requests.WithStream(true))
+	}
+
+	body, err := f.body()
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		opts = append(opts, body)
+	}
+	return opts, nil
+}
+
+// body resolves -j/--json and -d/--data into one request body option. JSON
+// wins when both are given, matching curl_cffi's `json=` argument.
+func (f *fetchFlags) body() (requests.Option, error) {
+	if f.jsonBody != "" {
+		var v any
+		if err := json.Unmarshal([]byte(f.jsonBody), &v); err != nil {
+			return nil, fmt.Errorf("invalid json: %w", err)
+		}
+		return requests.WithJSON(v), nil
+	}
+	if f.data == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(f.data, "@") {
+		data, err := os.ReadFile(f.data[1:])
+		if err != nil {
+			return nil, err
+		}
+		return requests.WithData(data), nil
+	}
+	// "a=1&b=2" is form-encoded; --form forces the same for a single bare
+	// value that contains no "=" yet is not meant to be a raw string body.
+	if f.form || strings.Contains(f.data, "=") {
+		var vals requests.Params
+		for _, pair := range strings.Split(f.data, "&") {
+			k, v, _ := strings.Cut(pair, "=")
+			vals = append(vals, requests.Param{Key: k, Value: v})
+		}
+		return requests.WithData(vals), nil
+	}
+	return requests.WithData(f.data), nil
 }
 
 func splitHeader(s string) (string, string, bool) {
@@ -326,9 +283,12 @@ func fetchOutput(rsp *requests.Response, w io.Writer, m mode, outPath string) er
 		return nil
 	}
 
-	switch m {
-	case modeHeaders, modeVerbose:
-		fmt.Fprintf(w, "HTTP/%d %d %s\n", max(rsp.HTTPVersion, 1), rsp.StatusCode, rsp.Reason)
+	if m == modeHeaders || m == modeVerbose {
+		version := rsp.HTTPVersion
+		if version < 1 {
+			version = 1
+		}
+		fmt.Fprintf(w, "HTTP/%d %d %s\n", version, rsp.StatusCode, rsp.Reason)
 		for _, h := range rsp.Headers.MultiItems() {
 			fmt.Fprintf(w, "%s: %s\n", h.Name, h.Value)
 		}
@@ -344,16 +304,11 @@ func fetchOutput(rsp *requests.Response, w io.Writer, m mode, outPath string) er
 		return err
 	}
 	warnJSGate(os.Stderr, rsp.URL, data)
-	_, err = w.Write(data)
-	if err == nil && m == modeVerbose && len(data) > 0 && data[len(data)-1] != '\n' {
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	if m == modeVerbose && len(data) > 0 && data[len(data)-1] != '\n' {
 		fmt.Fprintln(w)
 	}
-	return err
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return nil
 }

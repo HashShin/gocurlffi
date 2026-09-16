@@ -244,7 +244,7 @@ func (s *MCP) dispatch(sess *mcpSession, method string, params json.RawMessage) 
 		return map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "gobrowser", "version": version},
+			"serverInfo":      map[string]any{"name": "gocurlffi", "version": version},
 		}, nil
 	case "ping":
 		return map[string]any{}, nil

@@ -16,8 +16,8 @@
 #       --all-targets    use every target from `gocurlffi list`
 #   -t, --timeout SECS   per-request timeout (default 30)
 #   -m, --method METHOD  HTTP method (default GET)
-#   -B, --browser        use the pure-Go headless browser (gobrowser) and run
-#                        page JavaScript; cells show status/rendered-size
+#   -B, --browser        use the pure-Go headless browser ("get --render") and
+#                        run page JavaScript; cells show status/rendered-size
 #   -b, --best           after the matrix, print the first working target per site
 #   -o, --only-ok        only show targets that returned a 2xx/3xx status
 #   -H, --header "K: V"  extra header to send (repeatable)
@@ -27,8 +27,6 @@
 # Environment:
 #   GOCURLFFI_BIN   path to the gocurlffi binary (default: <repo>/bin/gocurlffi,
 #                   built automatically if missing)
-#   GOBROWSER_BIN   path to the gobrowser binary used by -B (default:
-#                   <repo>/bin/gobrowser, built automatically if missing)
 #
 # Examples:
 #   scripts/check_sites.sh
@@ -92,20 +90,12 @@ while [ $# -gt 0 ]; do
 done
 
 # --- locate or build the binary -------------------------------------------
-if [ "$BROWSER" -eq 1 ]; then
-  BIN="${GOBROWSER_BIN:-$ROOT_DIR/bin/gobrowser}"
-  if [ ! -x "$BIN" ]; then
-    echo "building gobrowser..." >&2
-    (cd "$ROOT_DIR" && go build -o bin/gobrowser ./cmd/gobrowser) || exit 1
-    BIN="$ROOT_DIR/bin/gobrowser"
-  fi
-else
-  BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
-  if [ ! -x "$BIN" ]; then
-    echo "building gocurlffi..." >&2
-    (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
-    BIN="$ROOT_DIR/bin/gocurlffi"
-  fi
+# Both modes use the one binary; -B only changes the flags it is called with.
+BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
+if [ ! -x "$BIN" ]; then
+  echo "building gocurlffi..." >&2
+  (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
+  BIN="$ROOT_DIR/bin/gocurlffi"
 fi
 
 # A hard wall-clock guard for browser mode, where a page loads many
@@ -150,7 +140,7 @@ for s in "${SITES[@]}"; do
     if [ "$QUIET" -eq 0 ] && [ -t 2 ]; then printf "." >&2; fi
     if [ "$BROWSER" -eq 1 ]; then
       tmpout="$(mktemp)"; tmperr="$(mktemp)"
-      bargs=(get "$s" -i "$t" --status --timeout "${TIMEOUT}s" -o "$tmpout")
+      bargs=(get "$s" --render -i "$t" --status --timeout "${TIMEOUT}s" -o "$tmpout")
       for h in "${HEADERS[@]:-}"; do
         [ -n "$h" ] && bargs+=(-H "$h")
       done

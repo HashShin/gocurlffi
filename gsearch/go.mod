@@ -1,6 +1,6 @@
 module scraper
 
-go 1.26
+go 1.26.0
 
 require github.com/gobwas/ws v1.4.0
 

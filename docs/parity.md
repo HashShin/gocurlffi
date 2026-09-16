@@ -1,15 +1,18 @@
 # Lightpanda parity: what remains
 
-The Zig [Lightpanda](https://github.com/lightpanda-io/browser) checkout under
-`browser/browser/` is the reference this port is measured against. It is
-gitignored and can be restored at any time with `make ref`
-(`scripts/fetch-lightpanda.sh`).
+The Zig [Lightpanda](https://github.com/lightpanda-io/browser) project is the
+reference this port is measured against. No checkout is kept in this repository;
+clone it yourself if you want to re-run the probe:
 
-This file records the measured difference so the checkout is not needed to plan
+```sh
+git clone --depth 1 https://github.com/lightpanda-io/browser /tmp/lightpanda
+```
+
+This file records the measured difference, so the checkout is not needed to plan
 the remaining work. It was produced by probing every interface Lightpanda
 implements (`src/browser/webapi/`) against this browser: **112 of 211 probed
-interfaces were missing or threw.** Re-run the probe after `make ref` if a newer
-Lightpanda has moved.
+interfaces were missing or threw.** Re-run the probe against a fresh clone when
+you want to know whether a newer Lightpanda has moved.
 
 The three groups below are deliberately separated, because they are not
 comparable work. Group A is bookkeeping. Group B is a genuine but bounded

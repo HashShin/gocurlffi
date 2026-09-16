@@ -22,136 +22,106 @@ import (
 	"gocurlffi/server"
 )
 
-func browserUsage() {
-	fmt.Fprint(os.Stderr, `browser flags (gocurlffi get --render, or gocurlffi open):
-
-usage:
-  gocurlffi get <url> --render [flags]
-  gocurlffi open <url> [flags]
-  gocurlffi serve [--host 127.0.0.1] [--port 9222]
-  gocurlffi mcp [--port 9223]
-
-flags:
-  -i, --impersonate NAME   TLS/HTTP fingerprint target (chrome, chrome131, custom, ...)
-  -o, --output FILE        write output to FILE instead of stdout
-  -f, --format FORMAT      html (default), markdown, text, links
-      --eval JS            evaluate JS after load and print the result
-      --wait SELECTOR      wait for a selector before extracting
-      --wait-timeout DUR   timeout for --wait and --wait-script (default 10s)
-  --wait-until MODE    load (default), domcontentloaded or networkidle0
-  --wait-ms DUR        keep running the page's timers for this long after load
-  --wait-script JS     evaluate JS repeatedly until it returns a truthy value
-      --timeout DUR        per-request timeout (default 30s)
-      --load-timeout DUR   script-loading budget per page (default 30s)
-      --timer-budget DUR   wait for pending timers after load (default 2s)
-      --screenshot FILE    render the page to a PNG (text layout, no images)
-      --width N            screenshot layout width (default 1280)
-      --scale F            screenshot scale factor (default 1)
-      --max-height N       screenshot height cap (default 20000)
-      --no-images          do not draw the page's pictures (faster, text only)
-      --no-js              disable JavaScript execution
-      --console            print page console output to stderr
-      --status             print HTTP status to stderr
-      --sheets             report the page's own stylesheets on stderr (keeps going)
-      --xpath EXPR         evaluate an XPath expression and print matched text
-      --proxy URL          route requests through a proxy
-      --obey-robots        honour robots.txt
-      --block GLOB         block requests matching GLOB (repeatable)
-      --click SELECTOR     click the matching element (repeatable)
-      --type SEL=TEXT      type text into a control (repeatable)
-      --fill SEL=VALUE     set a control's value (repeatable)
-      --select SEL=VALUE   choose an option (repeatable)
-      --pdf FILE           render the page to a PDF file
-      --adblock            block ads and trackers
-      -f structured        print the page's JSON-LD structured data
-      --debug              log page-load phases to stderr
-  -H, --header "K: V"      extra header to send (repeatable)
-`)
+// browserFlags are the page-loading options every browser subcommand shares, so
+// serve, mcp and get --render cannot drift apart. Register one of these on a
+// flag set rather than declaring the options again.
+type browserFlags struct {
+	impersonate string
+	proxy       string
+	noJS        bool
+	obeyRobots  bool
+	adblock     bool
+	debug       bool
 }
 
-// runServe starts the CDP server so Puppeteer, Playwright or chromedp can drive
-// the browser over ws://host:port.
-func RunServe(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+func (b *browserFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&b.impersonate, "i", "", "TLS/HTTP fingerprint target (default: native)")
+	fs.StringVar(&b.impersonate, "impersonate", "", "alias for -i")
+	fs.StringVar(&b.proxy, "proxy", "", "route requests through this proxy URL")
+	fs.BoolVar(&b.noJS, "no-js", false, "do not run the page's JavaScript")
+	fs.BoolVar(&b.obeyRobots, "obey-robots", false, "honour robots.txt")
+	fs.BoolVar(&b.adblock, "adblock", false, "block ads and trackers")
+	fs.BoolVar(&b.debug, "debug", false, "log page-load phases to stderr")
+}
+
+// apply fills the load options the browser path always shares. Timeouts are set
+// by the caller, which owns the flags for them.
+func (b *browserFlags) apply(opts *browser.Options) {
+	runScripts := !b.noJS
+	opts.Impersonate = b.impersonate
+	opts.Proxy = b.proxy
+	opts.RunScripts = &runScripts
+	opts.ObeyRobots = b.obeyRobots
+	opts.Adblock = b.adblock
+	opts.Debug = b.debug
+}
+
+// RunServe starts the CDP server so Puppeteer, Playwright or chromedp can drive
+// the browser over ws://host:port. Chrome DevTools Protocol and WebDriver BiDi
+// are always served on the same port.
+func RunServe(args []string) int {
+	fs := newFlagSet("serve", "gocurlffi serve [flags]",
+		"gocurlffi serve - drive the browser over CDP and WebDriver BiDi")
 	var (
-		host         = fs.String("host", "127.0.0.1", "bind host")
-		port         = fs.Int("port", 9222, "bind port")
-		impersonate  = fs.String("i", "", "impersonate target")
-		impersonateL = fs.String("impersonate", "", "impersonate target")
-		noJS         = fs.Bool("no-js", false, "disable JavaScript")
-		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
-		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
-		adblock      = fs.Bool("adblock", false, "block ads and trackers")
-		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
+		host = fs.String("host", "127.0.0.1", "interface to bind")
+		port = fs.Int("port", 9222, "port to listen on")
 	)
-	// --protocol is accepted for parity with the original. Both CDP (at
-	// /devtools/browser and /devtools/page) and WebDriver BiDi (at /session) are
-	// always served on the same port.
-	protocol := fs.String("protocol", "cdp", "protocol: cdp, webdriver, or both")
-	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
-	_ = protocol
-	if *impersonate == "" {
-		*impersonate = *impersonateL
+	bf := &browserFlags{}
+	bf.register(fs)
+
+	if err := parse(fs, args); err != nil {
+		return checkParse(err)
 	}
-	runScripts := !*noJS
-	opts := browser.Options{
-		Impersonate: *impersonate,
-		Proxy:       *proxy,
-		ObeyRobots:  *obeyRobots,
-		Adblock:     *adblock,
-		RunScripts:  &runScripts,
-		Debug:       *debug,
-	}
+
+	opts := browser.Options{}
+	bf.apply(&opts)
 	b := browser.New(opts)
 	defer b.Close()
+
 	server.SetVersion(Version)
 	srv := server.New(server.Config{Browser: b})
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
 	fmt.Fprintf(os.Stderr, "CDP server listening on ws://%s:%d\n", *host, *port)
 	if err := srv.ListenAndServe(ctx, *host, *port); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
-		os.Exit(1)
+		return exitError
 	}
+	return exitOK
 }
 
-// runMCP starts the MCP tool server, over stdio by default or HTTP with --port.
-func RunMCP(args []string) {
-	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+// RunMCP starts the MCP tool server, over stdio by default or HTTP with --port.
+func RunMCP(args []string) int {
+	fs := newFlagSet("mcp", "gocurlffi mcp [flags]",
+		"gocurlffi mcp - expose the browser as Model Context Protocol tools")
 	var (
-		host         = fs.String("host", "127.0.0.1", "bind host for the HTTP transport")
-		port         = fs.Int("port", 0, "serve over HTTP on this port (0 = stdio)")
-		impersonate  = fs.String("i", "", "impersonate target")
-		impersonateL = fs.String("impersonate", "", "impersonate target")
-		noJS         = fs.Bool("no-js", false, "disable JavaScript")
-		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
-		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
-		adblock      = fs.Bool("adblock", false, "block ads and trackers")
-		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
+		host = fs.String("host", "127.0.0.1", "interface to bind for the HTTP transport")
+		port = fs.Int("port", 0, "serve over HTTP on this port (0 = stdio)")
 	)
-	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
-	if *impersonate == "" {
-		*impersonate = *impersonateL
+	bf := &browserFlags{}
+	bf.register(fs)
+
+	if err := parse(fs, args); err != nil {
+		return checkParse(err)
 	}
-	runScripts := !*noJS
-	b := browser.New(browser.Options{
-		Impersonate: *impersonate,
-		Proxy:       *proxy,
-		ObeyRobots:  *obeyRobots,
-		Adblock:     *adblock,
-		RunScripts:  &runScripts,
-		Debug:       *debug,
-	})
+
+	opts := browser.Options{}
+	bf.apply(&opts)
+	b := browser.New(opts)
 	defer b.Close()
+
 	server.SetVersion(Version)
 	s := server.NewMCP(b)
+
 	if *port == 0 {
 		if err := s.ServeStdio(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "mcp: %v\n", err)
-			os.Exit(1)
+			return exitError
 		}
-		return
+		return exitOK
 	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.ServeHTTP)
 	mux.HandleFunc("/mcp/", s.ServeHTTP)
@@ -159,97 +129,155 @@ func RunMCP(args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go func() { <-ctx.Done(); _ = srv.Close() }()
+
 	fmt.Fprintf(os.Stderr, "MCP server listening on http://%s:%d/mcp\n", *host, *port)
 	if err := srv.ListenAndServe(); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
-		os.Exit(1)
+		return exitError
 	}
+	return exitOK
 }
 
-func RunBrowserGet(args []string) {
-	fs := flag.NewFlagSet("get --render", flag.ExitOnError)
-	var (
-		impersonate  = fs.String("i", "", "impersonate target")
-		impersonateL = fs.String("impersonate", "", "impersonate target")
-		output       = fs.String("o", "", "output file")
-		outputL      = fs.String("output", "", "output file")
-		format       = fs.String("f", "html", "output format")
-		formatL      = fs.String("format", "html", "output format")
-		eval         = fs.String("eval", "", "JS to evaluate after load")
-		wait         = fs.String("wait", "", "selector to wait for")
-		waitTimeout  = fs.Duration("wait-timeout", 10*time.Second, "timeout for --wait and --wait-script")
-		waitUntil    = fs.String("wait-until", "load", "how far the load goes: load, domcontentloaded or networkidle0")
-		waitMs       = fs.Duration("wait-ms", 0, "keep running the page's timers for this long after load")
-		waitScript   = fs.String("wait-script", "", "evaluate JS repeatedly until it returns a truthy value")
-		timeout      = fs.Duration("timeout", 30*time.Second, "request timeout")
-		loadTimeout  = fs.Duration("load-timeout", 30*time.Second, "script-loading budget")
-		timerBudget  = fs.Duration("timer-budget", 2*time.Second, "wait for pending timers after load")
-		screenshot   = fs.String("screenshot", "", "render the page to a PNG file")
-		pdfOut       = fs.String("pdf", "", "render the page to a PDF file")
-		width        = fs.Int("width", 1280, "screenshot layout width in px")
-		scale        = fs.Float64("scale", 1, "screenshot scale factor")
-		maxHeight    = fs.Int("max-height", 20000, "screenshot height cap in px")
-		noJS         = fs.Bool("no-js", false, "disable JavaScript")
-		showConsole  = fs.Bool("console", false, "print console output")
-		showStatus   = fs.Bool("status", false, "print HTTP status")
-		listSheets   = fs.Bool("sheets", false, "report the page's stylesheets")
-		noImages     = fs.Bool("no-images", false, "do not draw the page's pictures")
-		debug        = fs.Bool("debug", false, "log page-load phases to stderr")
-		proxy        = fs.String("proxy", "", "route requests through a proxy URL")
-		obeyRobots   = fs.Bool("obey-robots", false, "honour robots.txt")
-		adblock      = fs.Bool("adblock", false, "block ads and trackers")
-		xpath        = fs.String("xpath", "", "evaluate an XPath expression and print matched text")
-	)
-	var headers headerList
-	fs.Var(&headers, "H", "extra header \"K: V\" (repeatable)")
-	var blocks stringList
-	fs.Var(&blocks, "block", "block requests matching a glob (repeatable)")
-	var clicks stringList
-	fs.Var(&clicks, "click", "click the element matching a selector (repeatable)")
-	var types stringList
-	fs.Var(&types, "type", "type text into a control as \"selector=text\" (repeatable)")
-	var fills stringList
-	fs.Var(&fills, "fill", "set a control's value as \"selector=value\" (repeatable)")
-	var selects stringList
-	fs.Var(&selects, "select", "choose an option as \"selector=value\" (repeatable)")
-	_ = fs.Parse(reorderFlags(args, boolFlagNames(fs)))
+// browserGetFlags is the extra command line for a one-shot page load. The
+// browserFlags above are embedded so the load options are shared, and the rest
+// cover extraction, screenshots and page interaction.
+type browserGetFlags struct {
+	browserFlags
+
+	output      string
+	format      string
+	eval        string
+	xpath       string
+	wait        string
+	waitTimeout time.Duration
+	waitUntil   string
+	waitMs      time.Duration
+	waitScript  string
+	timeout     time.Duration
+	loadTimeout time.Duration
+	timerBudget time.Duration
+	screenshot  string
+	pdfOut      string
+	width       int
+	scale       float64
+	maxHeight   int
+	showConsole bool
+	showStatus  bool
+	listSheets  bool
+	noImages    bool
+
+	headers stringList
+	blocks  stringList
+	clicks  stringList
+	types   stringList
+	fills   stringList
+	selects stringList
+}
+
+// RunBrowserGet loads one URL in the browser and prints the result.
+func RunBrowserGet(args []string) int {
+	fs := newFlagSet("get --render", "gocurlffi get <url> --render [flags]",
+		"gocurlffi open - load a URL in the pure-Go browser and extract from it")
+	g := &browserGetFlags{}
+	g.register(fs)
+
+	if err := parse(fs, args); err != nil {
+		return checkParse(err)
+	}
 
 	target := fs.Arg(0)
 	if target == "" {
-		fmt.Fprintln(os.Stderr, "error: url required")
-		os.Exit(2)
+		fmt.Fprintln(os.Stderr, "error: missing URL")
+		fs.Usage()
+		return exitUsage
 	}
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		target = "https://" + target
 	}
-	if *impersonate == "" {
-		*impersonate = *impersonateL
+
+	opts := browser.Options{
+		Timeout:     g.timeout,
+		LoadTimeout: g.loadTimeout,
+		TimerBudget: g.timerBudget,
+		WaitUntil:   g.waitUntil,
 	}
-	if *output == "" {
-		*output = *outputL
-	}
-	if *format == "html" && *formatL != "html" {
-		*format = *formatL
+	g.apply(&opts)
+	if rc := g.finishOptions(&opts); rc != exitOK {
+		return rc
 	}
 
-	if *debug {
-		fmt.Fprintf(os.Stderr, "gocurlffi %s\n", Version)
+	b := browser.New(opts)
+	defer b.Close()
+
+	p, err := b.Open(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitError
 	}
-	runScripts := !*noJS
-	opts := browser.Options{
-		Impersonate: *impersonate,
-		Timeout:     *timeout,
-		LoadTimeout: *loadTimeout,
-		TimerBudget: *timerBudget,
-		RunScripts:  &runScripts,
-		Debug:       *debug,
-		Proxy:       *proxy,
-		ObeyRobots:  *obeyRobots,
-		Adblock:     *adblock,
-		WaitUntil:   *waitUntil,
+	if g.showStatus && p.Response() != nil {
+		fmt.Fprintf(os.Stderr, "status: %d %s\n", p.Response().StatusCode, p.Response().Reason)
 	}
-	if len(blocks) > 0 {
-		patterns := append([]string(nil), blocks...)
+
+	// --wait-until networkidle0 drains what the load left pending. It is a
+	// separate step rather than a load mode because the load already ran.
+	if strings.EqualFold(g.waitUntil, "networkidle0") || strings.EqualFold(g.waitUntil, "networkidle") {
+		p.WaitForNetworkIdle(500*time.Millisecond, g.timeout)
+	}
+	if rc := g.waitFor(p); rc != exitOK {
+		return rc
+	}
+	if rc := g.drive(p); rc != exitOK {
+		return rc
+	}
+	if g.listSheets {
+		reportStyleSheets(p, float64(g.width))
+	}
+	if done, rc := g.writeArtifacts(p); done {
+		return rc
+	}
+	return g.extract(p)
+}
+
+func (g *browserGetFlags) register(fs *flag.FlagSet) {
+	g.browserFlags.register(fs)
+
+	fs.StringVar(&g.output, "o", "", "write the output to this file")
+	fs.StringVar(&g.output, "output", "", "alias for -o")
+	fs.StringVar(&g.format, "f", "html", "output format: html, markdown, text, links or structured")
+	fs.StringVar(&g.format, "format", "html", "alias for -f")
+	fs.StringVar(&g.eval, "eval", "", "evaluate this JavaScript after load and print the result")
+	fs.StringVar(&g.xpath, "xpath", "", "evaluate this XPath expression and print the matched text")
+	fs.StringVar(&g.wait, "wait", "", "wait for this selector before extracting")
+	fs.DurationVar(&g.waitTimeout, "wait-timeout", 10*time.Second, "timeout for --wait and --wait-script")
+	fs.StringVar(&g.waitUntil, "wait-until", "load", "how far the load goes: load, domcontentloaded or networkidle0")
+	fs.DurationVar(&g.waitMs, "wait-ms", 0, "keep running the page's timers for this long after load")
+	fs.StringVar(&g.waitScript, "wait-script", "", "evaluate this JavaScript repeatedly until it is truthy")
+	fs.DurationVar(&g.timeout, "timeout", 30*time.Second, "per-request timeout")
+	fs.DurationVar(&g.loadTimeout, "load-timeout", 30*time.Second, "script-loading budget per page")
+	fs.DurationVar(&g.timerBudget, "timer-budget", 2*time.Second, "wait for pending timers after load")
+	fs.StringVar(&g.screenshot, "screenshot", "", "render the page to a PNG at this path")
+	fs.StringVar(&g.pdfOut, "pdf", "", "render the page to a PDF at this path")
+	fs.IntVar(&g.width, "width", 1280, "screenshot layout width in pixels")
+	fs.Float64Var(&g.scale, "scale", 1, "screenshot scale factor")
+	fs.IntVar(&g.maxHeight, "max-height", 20000, "screenshot height cap in pixels")
+	fs.BoolVar(&g.noImages, "no-images", false, "do not draw the page's images (faster, text only)")
+	fs.BoolVar(&g.showConsole, "console", false, "print page console output to stderr")
+	fs.BoolVar(&g.showStatus, "status", false, "print the HTTP status to stderr")
+	fs.BoolVar(&g.listSheets, "sheets", false, "report the page's own stylesheets on stderr")
+	fs.Var(&g.headers, "H", "extra request header as \"Name: Value\" (repeatable)")
+	fs.Var(&g.headers, "header", "alias for -H")
+	fs.Var(&g.blocks, "block", "block requests matching this glob (repeatable)")
+	fs.Var(&g.clicks, "click", "click the matching element (repeatable)")
+	fs.Var(&g.types, "type", "type text into a control as \"selector=text\" (repeatable)")
+	fs.Var(&g.fills, "fill", "set a control's value as \"selector=value\" (repeatable)")
+	fs.Var(&g.selects, "select", "choose an option as \"selector=value\" (repeatable)")
+}
+
+// finishOptions adds the options that come from repeatable flags or need
+// validation. It returns a non-zero status when an argument is malformed.
+func (g *browserGetFlags) finishOptions(opts *browser.Options) int {
+	if len(g.blocks) > 0 {
+		patterns := append([]string(nil), g.blocks...)
 		opts.Intercept = func(r *browser.Request) *browser.Response {
 			for _, pat := range patterns {
 				if ok, _ := path.Match(pat, r.URL); ok {
@@ -264,186 +292,147 @@ func RunBrowserGet(args []string) {
 			return nil
 		}
 	}
-	if len(headers) > 0 {
-		opts.Headers = map[string]string{}
-		for _, h := range headers {
+	if len(g.headers) > 0 {
+		opts.Headers = make(map[string]string, len(g.headers))
+		for _, h := range g.headers {
 			k, v, ok := strings.Cut(h, ":")
 			if !ok {
 				fmt.Fprintf(os.Stderr, "error: bad header %q, want \"K: V\"\n", h)
-				os.Exit(2)
+				return exitUsage
 			}
 			opts.Headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 	}
-	if *showConsole {
+	if g.showConsole {
 		opts.Console = func(level, message string) {
 			fmt.Fprintf(os.Stderr, "[console.%s] %s\n", level, message)
 		}
 	}
+	return exitOK
+}
 
-	b := browser.New(opts)
-	defer b.Close()
-
-	p, err := b.Open(target)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+// waitFor runs the waits in the order they are most useful: let timers settle,
+// then poll for the page's own readiness signal, then for a specific element.
+func (g *browserGetFlags) waitFor(p *browser.Page) int {
+	if g.waitMs > 0 {
+		p.WaitForTime(g.waitMs)
 	}
-	if *showStatus && p.Response() != nil {
-		fmt.Fprintf(os.Stderr, "status: %d %s\n", p.Response().StatusCode, p.Response().Reason)
-	}
-	// --wait-until networkidle0 drains what the load left pending. It is a
-	// separate step rather than a load mode because the load already ran.
-	if strings.EqualFold(*waitUntil, "networkidle0") || strings.EqualFold(*waitUntil, "networkidle") {
-		p.WaitForNetworkIdle(500*time.Millisecond, *timeout)
-	}
-	// The waits run in the order they are most useful: let timers settle, then
-	// poll for the page's own readiness signal, then for a specific element.
-	if *waitMs > 0 {
-		p.WaitForTime(*waitMs)
-	}
-	if *waitScript != "" {
-		if err := p.WaitForScript(*waitScript, *waitTimeout); err != nil {
+	if g.waitScript != "" {
+		if err := p.WaitForScript(g.waitScript, g.waitTimeout); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 	}
-	if *wait != "" {
-		if p.WaitForSelector(*wait, *waitTimeout) == nil {
-			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", *wait, *waitTimeout)
+	if g.wait != "" {
+		if p.WaitForSelector(g.wait, g.waitTimeout) == nil {
+			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", g.wait, g.waitTimeout)
 		}
 	}
+	return exitOK
+}
 
-	// Drive the page before extracting: click, type, fill and select run in
-	// the order their flags appear, so a flow can be scripted from the CLI.
-	for _, sel := range clicks {
+// drive performs the scripted interactions, in the order the flags appear, so a
+// flow can be scripted from the command line.
+func (g *browserGetFlags) drive(p *browser.Page) int {
+	for _, sel := range g.clicks {
 		if err := p.Click(sel); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: click %s: %v\n", sel, err)
 		}
 	}
-	for _, kv := range types {
-		sel, text, ok := strings.Cut(kv, "=")
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: --type wants \"selector=text\", got %q\n", kv)
-			os.Exit(2)
-		}
-		if err := p.Type(sel, text); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: type %s: %v\n", sel, err)
-		}
+	sets := []struct {
+		flag  string
+		items stringList
+		set   func(sel, value string) error
+	}{
+		{"type", g.types, p.Type},
+		{"fill", g.fills, p.Fill},
+		{"select", g.selects, p.Select},
 	}
-	for _, kv := range fills {
-		sel, value, ok := strings.Cut(kv, "=")
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: --fill wants \"selector=value\", got %q\n", kv)
-			os.Exit(2)
-		}
-		if err := p.Fill(sel, value); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: fill %s: %v\n", sel, err)
-		}
-	}
-	for _, kv := range selects {
-		sel, value, ok := strings.Cut(kv, "=")
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: --select wants \"selector=value\", got %q\n", kv)
-			os.Exit(2)
-		}
-		if err := p.Select(sel, value); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: select %s: %v\n", sel, err)
-		}
-	}
-
-	// --sheets is diagnostic, so it reports on stderr and does not stop the
-	// rest of the command: "get URL --screenshot page.png --sheets" writes the
-	// PNG and lists the stylesheets it was rendered with.
-	if *listSheets {
-		sheets := p.StyleSheetsAt(float64(*width))
-		if len(sheets) == 0 {
-			fmt.Fprintln(os.Stderr, "this page declares no stylesheets")
-		} else {
-			// Rule counts depend on the width, since @media is evaluated while
-			// parsing; say which width these were counted at.
-			fmt.Fprintf(os.Stderr, "stylesheets (rule counts at width %g):\n", sheets[0].Width)
-		}
-		for _, s := range sheets {
-			url := s.Href
-			if url == "" {
-				url = "inline <style>"
+	for _, s := range sets {
+		for _, kv := range s.items {
+			sel, value, ok := strings.Cut(kv, "=")
+			if !ok {
+				fmt.Fprintf(os.Stderr, "error: --%s wants \"selector=value\", got %q\n", s.flag, kv)
+				return exitUsage
 			}
-			if s.Err != "" {
-				fmt.Fprintf(os.Stderr, "NOT APPLIED  %-60s %s\n", url, s.Err)
-				continue
+			if err := s.set(sel, value); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s %s: %v\n", s.flag, sel, err)
 			}
-			fmt.Fprintf(os.Stderr, "applied      %-60s %d rules, %d font faces, %d bytes\n", url, s.Rules, s.Fonts, s.Bytes)
 		}
 	}
+	return exitOK
+}
 
-	if *pdfOut != "" {
-		pdfBytes, err := p.PDF(browser.ScreenshotOptions{
-			Width: *width, Scale: *scale, MaxHeight: *maxHeight, NoImages: *noImages,
-		})
+// writeArtifacts handles --pdf and --screenshot. Each ends the command because
+// the file is the output, so done reports that the caller should stop. Without
+// one of those flags it writes nothing and leaves the exit status alone.
+func (g *browserGetFlags) writeArtifacts(p *browser.Page) (done bool, code int) {
+	shots := browser.ScreenshotOptions{
+		Width: g.width, Scale: g.scale, MaxHeight: g.maxHeight, NoImages: g.noImages,
+	}
+	if g.pdfOut != "" {
+		data, err := p.PDF(shots)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pdf error: %v\n", err)
-			os.Exit(1)
+			return true, exitError
 		}
-		if err := os.WriteFile(*pdfOut, pdfBytes, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *pdfOut, err)
-			os.Exit(1)
+		if err := os.WriteFile(g.pdfOut, data, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", g.pdfOut, err)
+			return true, exitError
 		}
-		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(pdfBytes), *pdfOut)
-		return
+		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(data), g.pdfOut)
+		return true, exitOK
 	}
-
-	if *screenshot != "" {
-		png, err := p.Screenshot(browser.ScreenshotOptions{
-			Width:     *width,
-			Scale:     *scale,
-			MaxHeight: *maxHeight,
-			NoImages:  *noImages,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "screenshot error: %v\n", err)
-			os.Exit(1)
-		}
-		if *output == "" {
-			*output = *screenshot
-		}
-		if err := os.WriteFile(*output, png, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *output, err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(png), *output)
-		if *debug {
-			// The layout this render used, to compare against a browser's
-			// getBoundingClientRect (tools/cssdiff/geom).
-			if outline, err := p.RenderOutline(browser.ScreenshotOptions{
-				Width: *width, Scale: *scale, MaxHeight: *maxHeight, NoImages: *noImages,
-			}, 5000); err == nil {
-				for _, ln := range outline {
-					fmt.Fprintln(os.Stderr, "[layout] "+ln)
-				}
+	if g.screenshot == "" {
+		return false, exitOK
+	}
+	png, err := p.Screenshot(shots)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "screenshot error: %v\n", err)
+		return true, exitError
+	}
+	if g.output == "" {
+		g.output = g.screenshot
+	}
+	if err := os.WriteFile(g.output, png, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", g.output, err)
+		return true, exitError
+	}
+	fmt.Fprintf(os.Stderr, "wrote %d bytes to %s\n", len(png), g.output)
+	if g.debug {
+		// The layout this render used, to compare against a browser's
+		// getBoundingClientRect (tools/cssdiff/geom).
+		if outline, err := p.RenderOutline(shots, 5000); err == nil {
+			for _, ln := range outline {
+				fmt.Fprintln(os.Stderr, "[layout] "+ln)
 			}
 		}
-		return
 	}
+	return true, exitOK
+}
 
+// extract prints the selected representation of the page, or writes it to
+// --output. --eval and --xpath take precedence over --format.
+func (g *browserGetFlags) extract(p *browser.Page) int {
 	var out string
-	if *eval != "" {
-		v, err := p.Eval(*eval)
+	switch {
+	case g.eval != "":
+		v, err := p.Eval(g.eval)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "eval error: %v\n", err)
-			os.Exit(1)
+			return exitError
 		}
-		if v != nil && !isUndefined(v.Export()) {
+		if v != nil && v.Export() != nil {
 			out = fmt.Sprintf("%v", v.Export())
 		}
-	} else if *xpath != "" {
+	case g.xpath != "":
 		var sb strings.Builder
-		for _, n := range p.QueryXPath(*xpath) {
+		for _, n := range p.QueryXPath(g.xpath) {
 			sb.WriteString(p.TextOf(n))
 			sb.WriteByte('\n')
 		}
 		out = sb.String()
-	} else {
-		switch *format {
+	default:
+		switch g.format {
 		case "markdown", "md":
 			out = p.Markdown()
 		case "text", "txt":
@@ -469,63 +458,39 @@ func RunBrowserGet(args []string) {
 	if !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
-	if *output != "" {
-		if err := os.WriteFile(*output, []byte(out), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", *output, err)
-			os.Exit(1)
+	if g.output != "" {
+		if err := os.WriteFile(g.output, []byte(out), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", g.output, err)
+			return exitError
 		}
-		return
+		return exitOK
 	}
 	fmt.Print(out)
+	return exitOK
 }
 
-func isUndefined(v any) bool { return v == nil }
-
-// headerList collects repeatable -H "K: V" flags.
-type headerList []string
-
-// stringList is a repeatable string flag; the value is used verbatim.
-type stringList = headerList
-
-func (h *headerList) String() string { return strings.Join(*h, ", ") }
-
-func (h *headerList) Set(v string) error {
-	*h = append(*h, v)
-	return nil
-}
-
-// boolFlagNames reports the flags that take no value, read from the flag set
-// itself so a new boolean option never has to be registered twice. Without it,
-// reorderFlags would treat the argument after a boolean flag as its value:
-// "get URL --sheets -f text" tried to fetch the host "text".
-func boolFlagNames(fs *flag.FlagSet) map[string]bool {
-	names := map[string]bool{}
-	fs.VisitAll(func(f *flag.Flag) {
-		switch f.Value.String() {
-		case "true", "false":
-			names["-"+f.Name] = true
-			names["--"+f.Name] = true
+// reportStyleSheets is diagnostic, so it writes to stderr and does not stop the
+// rest of the command: "get URL --screenshot page.png --sheets" writes the PNG
+// and lists the stylesheets it was rendered with.
+func reportStyleSheets(p *browser.Page, width float64) {
+	sheets := p.StyleSheetsAt(width)
+	if len(sheets) == 0 {
+		fmt.Fprintln(os.Stderr, "this page declares no stylesheets")
+		return
+	}
+	// Rule counts depend on the width, since @media is evaluated while
+	// parsing; say which width these were counted at.
+	fmt.Fprintf(os.Stderr, "stylesheets (rule counts at width %g):\n", sheets[0].Width)
+	for _, s := range sheets {
+		url := s.Href
+		if url == "" {
+			url = "inline <style>"
 		}
-	})
-	return names
-}
-
-// reorderFlags moves options ahead of positional arguments so the standard
-// flag package (which stops at the first non-flag) sees them, allowing
-// "gobrowser get URL -f text". boolFlags holds the options that take no value.
-func reorderFlags(args []string, boolFlags map[string]bool) []string {
-	var flags, positional []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") && a != "-" {
-			flags = append(flags, a)
-			if !strings.Contains(a, "=") && !boolFlags[a] && i+1 < len(args) {
-				i++
-				flags = append(flags, args[i])
-			}
+		if s.Err != "" {
+			fmt.Fprintf(os.Stderr, "NOT APPLIED  %-60s %s\n", url, s.Err)
 			continue
 		}
-		positional = append(positional, a)
+		fmt.Fprintf(os.Stderr, "applied      %-60s %d rules, %d font faces, %d bytes\n",
+			url, s.Rules, s.Fonts, s.Bytes)
 	}
-	return append(flags, positional...)
 }

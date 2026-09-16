@@ -1,9 +1,9 @@
 // Package browser is a pure-Go, dependency-light headless browser for
 // scraping and automation.
 //
-// It is a Go answer to the Zig Lightpanda browser (./browser/browser), but
-// deliberately built only from portable, pure-Go parts so it cross-compiles
-// and runs everywhere Go does, including Android/Termux and musl systems:
+// It is a Go answer to the Zig Lightpanda browser, but deliberately built only
+// from portable, pure-Go parts so it cross-compiles and runs everywhere Go
+// does, including Android/Termux and musl systems:
 //
 //   - HTML5 parsing + serialization: golang.org/x/net/html
 //   - CSS selectors: github.com/andybalholm/cascadia

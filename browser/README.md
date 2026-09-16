@@ -1,9 +1,10 @@
 # browser - a pure-Go headless browser
 
 `gocurlffi/browser` is a headless browser for scraping and automation, written
-entirely in Go. It is the Go answer to the Zig [Lightpanda
-browser](https://github.com/lightpanda-io/browser) checked out in
-`browser/browser/` as a reference.
+entirely in Go. It is the Go answer to the Zig
+[Lightpanda browser](https://github.com/lightpanda-io/browser); how much of
+Lightpanda's web API surface it covers is measured in
+[`../docs/parity.md`](../docs/parity.md).
 
 The point of the port is portability. Lightpanda embeds V8, BoringSSL, curl,
 brotli, nghttp2, sqlite and PCRE2, so it needs a Zig toolchain and per-platform
@@ -60,10 +61,13 @@ CLI:
 
 ```sh
 make build
-./bin/gocurlffi get --render https://react.dev/ -f markdown -i chrome131
-./bin/gocurlffi get --render https://quotes.toscrape.com/js/ --eval 'document.title'
-./bin/gocurlffi get --render https://example.com/ -f text --status
+./bin/gocurlffi get https://react.dev/ --render -f markdown -i chrome131
+./bin/gocurlffi get https://quotes.toscrape.com/js/ --render --eval 'document.title'
+./bin/gocurlffi open https://example.com/ -f text --status
 ```
+
+`open` is shorthand for `get --render`. Every flag is listed in
+[`../docs/cli.md`](../docs/cli.md), or run `gocurlffi help open`.
 
 ## What works
 
@@ -393,7 +397,7 @@ Caveats, so the numbers are not over-read:
 ```sh
 bash scripts/bench_browser.sh -n 3
 bash scripts/bench_browser.sh https://your-site.example/
-GOBROWSER_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
+GOCURLFFI_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 ```
 
 ## Screenshots
@@ -432,7 +436,7 @@ and so on, all overridable by author CSS through the cascade. Vertical margins
 do not stack: adjacent margins collapse to the larger of the two, and padding
 never collapses, as in a browser.
 
-### Checking the cascade against a browser
+## Checking the cascade against a browser
 
 `tools/cssdiff` compares this package's computed styles with a real Chromium,
 element by element, on the same page: Chromium answers over CDP, the Go browser
@@ -576,7 +580,7 @@ is behind a `sync.Once`, faces are built lazily and nothing runs unless
 milliseconds; a tall 900x3500 page takes ~115 ms, most of it PNG encoding and
 pixel work rather than layout.
 
-### Measuring layout against a live page
+## Measuring layout against a live page
 
 Computed styles are half of it; where a box ends is the other half, and both
 engines have to be asked the same question.
@@ -646,11 +650,11 @@ is silently dropped does not fail - it just runs unpatched.
 WebDriver BiDi is served on the same port at `/session`, sharing the target and
 page layer: `session.new`/`status`, `browsingContext.create`/`navigate`/`getTree`/
 `close`/`captureScreenshot`, `script.evaluate`/`callFunction` and
-`input.performActions`. Both protocols are always available; `--protocol` is
-accepted for parity with the original.
+`input.performActions`. Both protocols are always served together.
 
 The server only costs anything when it runs. A plain `Open` and extract never
-touches it.
+touches it. The routes, the implemented domains and the MCP tools are documented
+in [`../server/README.md`](../server/README.md).
 
 Verified against a real client: `scripts/check_puppeteer.sh` starts the server
 and a local page, then runs `scripts/check_puppeteer.mjs`, which connects with
@@ -706,14 +710,10 @@ it is enough.
 
 ## Notes
 
-- `browser/browser/` is the reference Lightpanda checkout and is gitignored. It
-  is the source material for behaviour, not a build input. Run
-  `make ref` (or `scripts/fetch-lightpanda.sh`) to fetch it; the script also
-  writes a `go.mod` stub there, because the Zig project ships a few generated Go
-  files under `src/data/` that `go test ./...` would otherwise try to compile.
-  `docs/lightpanda-parity.md` records what is still missing from it, so the
-  checkout is not needed to plan the remaining work and can be deleted at any
-  time without losing the list.
+- No Lightpanda checkout is kept in this repository. `../docs/parity.md` records
+  what is still missing from it, measured by probing, so the reference is not
+  needed in-tree to plan the remaining work. Clone it yourself if you want to
+  re-run the probe; the instructions are at the top of that file.
 - Scripts run in the same goroutine as `Open`. A runaway script is bounded by
   `Options.JavaScriptTimeout` (default 10s); the whole script-loading phase is
   bounded by `Options.LoadTimeout` (default 30s). After `DOMContentLoaded` and
@@ -726,8 +726,9 @@ it is enough.
   required: they are the same binary, so the fast path is a flag away, but
   linking the browser is what makes the binary about 37 MB instead of 18 MB.
 - All network traffic, including `fetch`, `XMLHttpRequest` and external
-  scripts, goes through one shared session, so a browser-like flow works
-  across hosts (see the note on the ClientHello fix in the repository README).
+  scripts, goes through one shared session, so a browser-like flow works across
+  hosts. Every request carries the impersonation target selected at `New`, not
+  just the first one.
 - One `Browser` may be used from several goroutines: the session and its
   cookie jar are synchronized, so pages can be crawled in parallel. A single
   `Page` is not safe for concurrent use. The race detector is unavailable on
@@ -739,7 +740,7 @@ it is enough.
   robots and CORS only act when their option is set; `serve` only costs while
   it runs; iframes and ES modules only cost on pages that contain them.
 
-### Waiting for a page
+## Waiting for a page
 
 A load runs scripts, fires `DOMContentLoaded` and `load`, then waits up to
 `--timer-budget` (default 2s) for pending timers. That covers most pages, and
@@ -763,53 +764,29 @@ the waits below are for the rest:
 The same primitives are on `Page`: `WaitForTime`, `WaitForScript`,
 `WaitForNetworkIdle` and `WaitForSelector`.
 
-### CLI flags
+## CLI flags
+
+Every flag is documented in [`../docs/cli.md`](../docs/cli.md). The generated
+list is the source of truth:
 
 ```sh
-gocurlffi get URL --render \
-  -i chrome131          # impersonation target
-  -f html|text|markdown|links
-  -o FILE               # write output to FILE
-  --eval 'JS'           # evaluate JS and print the result
-  --wait SELECTOR       # wait for a selector before extracting
-  --wait-until MODE     # load (default), domcontentloaded or networkidle0
-  --wait-ms 500ms       # keep running the page's timers for this long
-  --wait-script JS      # poll JS until it returns a truthy value
-  --timeout 30s         # per-request timeout
-  --load-timeout 30s    # script-loading budget per page
-  --timer-budget 2s     # wait for pending timers after load (lower = faster)
-  --screenshot FILE     # render the page to a PNG
-  --width 1280          # screenshot layout width
-  --scale 1             # screenshot scale factor
-  --max-height 20000    # screenshot height cap
-  --no-js               # disable JavaScript
-  --console             # print console.* to stderr
-  --status              # print HTTP status to stderr
-  --sheets              # report the page's own stylesheets on stderr
-  --debug               # log page-load phases to stderr
-  --proxy URL           # route requests through a proxy
-  --obey-robots         # honour robots.txt
-  --xpath EXPR          # evaluate XPath and print matched text
-  --block GLOB          # block requests matching GLOB (repeatable)
-  --click SELECTOR      # click the matching element (repeatable)
-  --type SEL=TEXT       # type text into a control (repeatable)
-  --fill SEL=VALUE      # set a control's value (repeatable)
-  --select SEL=VALUE    # choose an option (repeatable)
-  --pdf FILE            # render the page to a PDF file
-  --adblock             # block ads and trackers
-  -f structured         # print the page's JSON-LD structured data
-  -H 'K: V'             # extra header (repeatable)
-
-gocurlffi mcp \
-  --port 9223 \         # serve over HTTP (omit for stdio)
-  -i chrome131          # impersonation target
-
-gocurlffi serve \
-  --host 127.0.0.1 \    # CDP/BiDi bind host
-  --port 9222 \         # bind port
-  -i chrome131 \        # impersonation target
-  --proxy URL \         # route requests through a proxy
-  --obey-robots \       # honour robots.txt
-  --no-js \             # disable JavaScript
-  --debug               # log page-load phases to stderr
+gocurlffi help open     # the browser path
+gocurlffi help get      # the fast path
+gocurlffi help serve    # CDP + WebDriver BiDi
+gocurlffi help mcp      # MCP
 ```
+
+The flags most specific to this package, in one place:
+
+| Flag | Effect |
+| --- | --- |
+| `--wait-until MODE` | Stop the load after `load` (default), `domcontentloaded` or `networkidle0`. |
+| `--wait-ms D` | Keep running the page's clock for `D`, so timer callbacks fire. |
+| `--wait-script JS` | Poll an expression until it is truthy. |
+| `--wait SELECTOR` | Wait for an element before extracting. |
+| `--timer-budget D` | How long a load waits for pending timers. Lower is faster. |
+| `--screenshot FILE` | Render the page to a PNG. `--width`, `--scale`, `--max-height`, `--no-images` control it. |
+| `--pdf FILE` | Render the page to a PDF. |
+| `--sheets` | Report the page's own stylesheets, and whether each was applied. |
+| `--block GLOB` | Block requests matching a glob. Repeatable. |
+| `--click`, `--type`, `--fill`, `--select` | Drive the page. Repeatable, and applied in the order given. |

@@ -2,7 +2,7 @@
 
 BIN := bin/gocurlffi
 
-.PHONY: all build ref preprocess gen fmt vet test test-browser test-live sites capture lint clean
+.PHONY: all build preprocess gen fmt vet test test-browser test-live sites capture lint clean
 
 all: build
 
@@ -13,14 +13,9 @@ LDFLAGS := -X main.version=$(VERSION)
 
 # One binary for both paths: "gocurlffi get" is the fast HTTP client with
 # TLS/JA3 impersonation, "gocurlffi get --render" (or "open") is the pure-Go
-# headless browser, and serve/mcp/list share the same file. See browser/README.md.
+# headless browser, and serve/mcp/targets share the same file. See browser/README.md.
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gocurlffi
-
-# Fetch the Zig Lightpanda checkout kept as the parity reference, and mark it as
-# its own Go module so `go test ./...` does not compile it.
-ref:
-	bash scripts/fetch-lightpanda.sh
 
 # Regenerate impersonate/presets_gen.go from the vendored curl-impersonate
 # source. Pure Go, no Python.
