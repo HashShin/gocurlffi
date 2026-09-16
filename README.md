@@ -19,7 +19,7 @@ import (
 
 func main() {
 	rsp, err := requests.Get("https://tls.browserleaks.com/json",
-		requests.WithImpersonate("chrome"),
+		requests.WithImpersonate(requests.DefaultChrome),
 	)
 	if err != nil {
 		panic(err)
@@ -195,7 +195,7 @@ it is left empty. The same request works as options, which is the shorter form
 for a one-off:
 
 ```go
-sess := requests.NewSession(requests.WithImpersonate("firefox"))
+sess := requests.NewSession(requests.WithImpersonate(requests.DefaultFirefox))
 defer sess.Close()
 
 rsp, err := sess.Post("https://httpbin.org/post",

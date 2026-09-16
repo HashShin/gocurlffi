@@ -106,3 +106,19 @@ var allTargets = []string{
 	Safari260Ios,
 	Tor145,
 }
+
+// The family defaults: the target each short alias resolves to, so "chrome"
+// resolves to DefaultChrome. These are the better choice for an example or a
+// default setting, because they follow the family as the presets are updated,
+// where naming an exact version pins a browser that will age.
+const (
+	DefaultChrome        = impersonate.DefaultChrome
+	DefaultEdge          = impersonate.DefaultEdge
+	DefaultSafari        = impersonate.DefaultSafari
+	DefaultSafariIOS     = impersonate.DefaultSafariIOS
+	DefaultSafariBeta    = impersonate.DefaultSafariBeta
+	DefaultSafariIOSBeta = impersonate.DefaultSafariIOSBeta
+	DefaultChromeAndroid = impersonate.DefaultChromeAndroid
+	DefaultFirefox       = impersonate.DefaultFirefox
+	DefaultTor           = impersonate.DefaultTor
+)

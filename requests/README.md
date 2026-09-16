@@ -20,7 +20,7 @@ import (
 
 func main() {
 	s := requests.NewSession(
-		requests.WithImpersonate("chrome"),
+		requests.WithImpersonate(requests.DefaultChrome),
 		requests.WithTimeoutSeconds(15),
 	)
 	defer s.Close()
@@ -39,12 +39,21 @@ A one-off request needs no session:
 
 ```go
 rsp, err := requests.Get("https://tls.browserleaks.com/json",
-	requests.WithImpersonate("chrome"),
+	requests.WithImpersonate(requests.DefaultChrome),
 )
 ```
 
-`WithImpersonate` accepts a browser name or alias (see the `impersonate`
-package); `native`, `none`, `go` or an empty name select Go's own stack.
+`DefaultChrome` follows the current Chrome preset; `requests.Chrome150` pins
+that exact version. Either is a compile-checked name, where `"chrome"` is only
+checked when the request is made.
+
+`WithImpersonate` takes a target name. A constant is preferred, because a
+misspelt one does not compile: `requests.DefaultChrome` and the other family
+defaults follow the current preset of each family, the exact targets are
+`requests.Chrome150` and its siblings, and both are re-exported from the
+`impersonate` package, which is where they are defined and where `Targets()`
+lists them all. `native`, `none`, `go` or an empty name select Go's own stack,
+and `curl` reproduces the system curl.
 
 ## Module-level helpers
 

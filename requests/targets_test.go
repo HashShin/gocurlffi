@@ -101,3 +101,74 @@ func TestUnknownImpersonationTargetIsAnError(t *testing.T) {
 		t.Errorf("err = %T (%v), want *ImpersonateError", err, err)
 	}
 }
+
+// The family defaults are re-exported too, so an example or a default setting
+// can name one without importing impersonate. They must resolve like any other
+// target, and must be the same values the impersonate package uses, so a
+// default moving there reaches here.
+func TestReExportedDefaultsResolve(t *testing.T) {
+	defaults := []struct {
+		name  string
+		value string
+	}{
+		{"DefaultChrome", DefaultChrome},
+		{"DefaultEdge", DefaultEdge},
+		{"DefaultSafari", DefaultSafari},
+		{"DefaultSafariIOS", DefaultSafariIOS},
+		{"DefaultSafariBeta", DefaultSafariBeta},
+		{"DefaultSafariIOSBeta", DefaultSafariIOSBeta},
+		{"DefaultChromeAndroid", DefaultChromeAndroid},
+		{"DefaultFirefox", DefaultFirefox},
+		{"DefaultTor", DefaultTor},
+	}
+	for _, d := range defaults {
+		if _, err := impersonate.Get(d.value); err != nil {
+			t.Errorf("requests.%s = %q does not resolve: %v", d.name, d.value, err)
+		}
+	}
+
+	for _, c := range []struct{ got, want string }{
+		{DefaultChrome, impersonate.DefaultChrome},
+		{DefaultEdge, impersonate.DefaultEdge},
+		{DefaultSafari, impersonate.DefaultSafari},
+		{DefaultSafariIOS, impersonate.DefaultSafariIOS},
+		{DefaultSafariBeta, impersonate.DefaultSafariBeta},
+		{DefaultSafariIOSBeta, impersonate.DefaultSafariIOSBeta},
+		{DefaultChromeAndroid, impersonate.DefaultChromeAndroid},
+		{DefaultFirefox, impersonate.DefaultFirefox},
+		{DefaultTor, impersonate.DefaultTor},
+	} {
+		if c.got != c.want {
+			t.Errorf("default re-export drifted: requests has %q, impersonate has %q",
+				c.got, c.want)
+		}
+	}
+}
+
+// A family default must be usable straight from the requests package, which is
+// the whole point of re-exporting it.
+func TestSendWithDefaultConstant(t *testing.T) {
+	srv := newTestServer()
+	defer srv.Close()
+
+	s := NewSession()
+	defer s.Close()
+
+	rsp, err := s.Send(Request{URL: srv.URL + "/get", Impersonate: DefaultFirefox})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var out struct {
+		Headers map[string][]string `json:"headers"`
+	}
+	if err := rsp.JSON(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var ua string
+	if v := out.Headers["User-Agent"]; len(v) > 0 {
+		ua = v[0]
+	}
+	if !strings.Contains(ua, "Firefox/") {
+		t.Errorf("User-Agent = %q, want the Firefox preset", ua)
+	}
+}
