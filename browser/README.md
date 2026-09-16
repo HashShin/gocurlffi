@@ -32,16 +32,19 @@ TLS/JA3, HTTP/2 fingerprint and default headers.
 
 ## Usage
 
+One page takes one call. The package re-exports the impersonation targets, so a
+caller who only drives the browser needs a single import, and importing it
+dotted needs no prefix either:
+
 ```go
 import (
     "fmt"
 
-    "github.com/HashShin/gocurlffi/browser"
-    "github.com/HashShin/gocurlffi/impersonate"
+    . "github.com/HashShin/gocurlffi/browser"
 )
 
-// One page, one call. Get gives the page a Browser of its own.
-p, err := browser.Get("https://quotes.toscrape.com/js/", impersonate.Chrome131)
+// Get gives the page a Browser of its own, which Close releases.
+p, err := Get("https://quotes.toscrape.com/js/", Chrome131)
 if err != nil {
     panic(err)
 }
@@ -54,6 +57,10 @@ for _, l := range p.Links() {
     fmt.Println(l.Href, l.Text)
 }
 ```
+
+The rest of this page writes the package name out, `browser.New` and
+`browser.Page`, because it is documenting that package rather than a caller.
+Either spelling works; see the root README for the dotted form.
 
 Lower-level control, for a page you already have or one you want to drive:
 
