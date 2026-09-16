@@ -53,6 +53,7 @@ gocurlffi get https://tls.browserleaks.com/json --impersonate chrome
 | Document | Contents |
 | --- | --- |
 | [`docs/cli.md`](docs/cli.md) | Every command and flag, and the two request paths. |
+| [`gocurlffi.go`](gocurlffi.go) | The dotted form: the whole API re-exported at the module root. |
 | [`docs/architecture.md`](docs/architecture.md) | How the packages fit together and how to read the `browser` tree. |
 | [`docs/parity.md`](docs/parity.md) | What the browser is still missing against Lightpanda, measured. |
 | [`docs/botguard.md`](docs/botguard.md) | Why Google search is refused, with the measurements. |
@@ -201,6 +202,61 @@ back to the session when it is left empty, so a zero `Timeout` or an empty
 | `Impersonate` | Fingerprint target. |
 | `Timeout` | Overrides the session timeout when non-zero. |
 | `Proxy` | Overrides the session proxy when non-empty. |
+
+### The dotted form
+
+Every name is also available unqualified, from the module root, so a request
+can be written without prefixes at all. This is the shortest spelling the
+library offers:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	. "github.com/HashShin/gocurlffi"
+)
+
+func main() {
+	sess := NewSession()
+	defer sess.Close()
+
+	rsp, err := sess.Send(Request{
+		Method: "GET",
+		URL:    "https://httpbun.com/get",
+		Headers: Headers{
+			"Accept: application/json",
+			"X-Custom: value",
+		},
+		Impersonate: Chrome146,
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(rsp.StatusCode, rsp.Text())
+}
+```
+
+and the one-liner goes further, since the options are unqualified too:
+
+```go
+rsp, err := Get("https://httpbun.com/get",
+	WithImpersonate(Chrome146),
+	WithTimeout(10*time.Second),
+)
+```
+
+Everything the root exports is an alias of the same name in `requests`, so the
+dotted form and the qualified one are the same values and functions and the two
+can be mixed in one file. Import `requests` normally instead if any of the 32
+types, 52 functions or 49 constants collide with a name already in your file -
+`Get`, `Head`, `Options`, `Timeout` and `Cookie` are the likely ones.
+
+A dot import is a real trade and the tooling says so: `staticcheck` reports it
+as `ST1001`. To keep it deliberately, silence the check for the file with a
+`//lint:file-ignore ST1001 <reason>` comment, or exclude ST1001 in
+`staticcheck.conf`.
 
 The same request works as options, which is shorter when nothing is reused:
 
