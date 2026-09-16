@@ -128,7 +128,7 @@ func (l *moduleLoader) load(url, inline string) (*module, error) {
 		return nil, err
 	}
 	m.source = body
-	for spec, _ := range staticImports {
+	for spec := range staticImports {
 		resolved, ok := l.resolve(url, spec)
 		if !ok {
 			l.page.debugf("module: unresolved specifier %q in %s", spec, url)

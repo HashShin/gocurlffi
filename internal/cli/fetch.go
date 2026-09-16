@@ -61,7 +61,7 @@ func RunFetch(method string, args []string) int {
 	f.register(fs)
 
 	if err := parse(fs, args); err != nil {
-		return checkParse(err)
+		return parseStatus(err)
 	}
 	rawURL := fs.Arg(0)
 	if rawURL == "" {

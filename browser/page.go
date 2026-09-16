@@ -198,8 +198,6 @@ func platformForUserAgent(ua string) string {
 }
 
 // session returns the browser's HTTP session.
-func (b *Browser) session() *requests.Session { return b.sess }
-
 // Document returns the root DOM node.
 func (p *Page) Document() *html.Node { return p.doc }
 

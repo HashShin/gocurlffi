@@ -188,14 +188,6 @@ func (e *jsEnv) noteAttr(n *html.Node, name, old string, hadOld bool) {
 	})
 }
 
-// noteText records a characterData change.
-func (e *jsEnv) noteText(n *html.Node, old string) {
-	if len(e.mutations) == 0 || n == nil {
-		return
-	}
-	e.queueMutation(mutationRecordData{typ: "characterData", target: n, oldValue: old, hasOld: true})
-}
-
 // setAttrNoted is setAttribute with the mutation recorded.
 func (e *jsEnv) setAttrNoted(n *html.Node, name, value string) {
 	if n == nil {

@@ -72,7 +72,6 @@ type config struct {
 
 	discardCookies    bool
 	raiseForStatus    bool
-	dohURL            string
 	debug             bool
 	acceptEncodingSet bool
 

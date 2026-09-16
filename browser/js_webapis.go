@@ -846,15 +846,6 @@ func (e *jsEnv) rejectedPromiseValue(v goja.Value) goja.Value {
 	return e.vm.ToValue(p)
 }
 
-func responseOf(v goja.Value) *jsResponseData {
-	o, ok := v.(*goja.Object)
-	if !ok {
-		return nil
-	}
-	d, _ := marked[*jsResponseData](o, responseMark)
-	return d
-}
-
 // newRequestObject builds a Request. Its body is buffered, so it is also
 // usable as a Response-shaped source for fetch(input) to clone.
 func (e *jsEnv) newRequestObject(input string, init *goja.Object) *goja.Object {

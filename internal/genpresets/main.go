@@ -24,13 +24,7 @@ import (
 	"strings"
 )
 
-type field struct {
-	name  string
-	value string // raw value text
-}
-
 type preset struct {
-	fields []field
 	// values populated after parsing
 	strings map[string]string
 	bools   map[string]bool

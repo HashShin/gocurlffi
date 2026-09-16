@@ -225,8 +225,6 @@ func (t *target) info(host string) map[string]any {
 	}
 }
 
-const wsBufSize = 1 << 20
-
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, fixed *target) {
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
@@ -248,7 +246,6 @@ type conn struct {
 	page     *target
 	mu       sync.Mutex
 	sessions map[string]*target
-	mode     string // "browser" or "page"
 	// autoAttach, when set by Target.setAutoAttach, makes a newly created
 	// target attach to this connection automatically, which is how Puppeteer
 	// discovers pages.

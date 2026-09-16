@@ -151,15 +151,12 @@ func Main(args []string) int {
 	return exitUsage
 }
 
-// checkParse turns a flag parse error into an exit status. -h/--help is a
-// request, not a failure.
-func checkParse(err error) int {
-	switch {
-	case err == nil:
+// parseStatus turns a failed flag parse into an exit status. -h/--help is a
+// request for information, not a failure, and the flags themselves have already
+// been printed by the flag package.
+func parseStatus(err error) int {
+	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
-	case errors.Is(err, flag.ErrHelp):
-		return exitOK
-	default:
-		return exitUsage
 	}
+	return exitUsage
 }

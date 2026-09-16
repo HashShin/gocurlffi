@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/dop251/goja"
@@ -356,23 +355,5 @@ func (e *jsEnv) installShadow() {
 	})
 }
 
-// slotAssignment reports the light children a slot renders, for pages that ask.
-func slotAssignedNodes(host *html.Node) []*html.Node {
-	if host == nil {
-		return nil
-	}
-	return childNodes(host)
-}
-
 // shadowCount is a small helper for diagnostics and tests.
 func (p *Page) shadowCount() int { return len(p.shadows) }
-
-// shadowDebug renders the shadow tree membership, used by --debug output.
-func (p *Page) shadowDebug() []string {
-	var out []string
-	for _, sr := range p.ShadowRoots() {
-		out = append(out, "shadow "+sr.mode+" on <"+nodeNameOf(sr.host)+">: "+
-			strconv.Itoa(len(childNodes(sr.content)))+" child node(s)")
-	}
-	return out
-}

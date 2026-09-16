@@ -1486,13 +1486,6 @@ func (e *styleEngine) mediumSize(parent *computedStyle) float64 {
 	return e.baseSize
 }
 
-var styleInherited = map[string]bool{
-	"color": true, "font-family": true, "font-size": true, "font-weight": true,
-	"font-style": true, "line-height": true, "text-align": true,
-	"visibility": true, "white-space": true, "list-style-type": true,
-	"text-transform": true, "letter-spacing": true,
-}
-
 func (e *styleEngine) compute(n *html.Node) *computedStyle {
 	if n == nil {
 		return nil

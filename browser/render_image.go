@@ -42,9 +42,6 @@ type pageImage struct {
 	size image.Point // natural size, from the header
 }
 
-// imageError marks a source that must not be retried.
-type imageError struct{}
-
 // imageFor walks an <img> (or a <picture>'s <img>) and returns the best source
 // the page offers: the largest srcset candidate, else src. An empty string means
 // there is nothing to fetch.

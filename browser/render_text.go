@@ -210,11 +210,10 @@ type drawLine struct {
 	quote    int
 	indent   float64
 
-	bg        color.RGBA
-	hasBG     bool
-	bgX       float64
-	bgW       float64
-	underline bool // draw a rule under the whole line (blockquote bar reuses this shape)
+	bg    color.RGBA
+	hasBG bool
+	bgX   float64
+	bgW   float64
 
 	// A uniform box border drawn around a rectangle.
 	border   bool
@@ -324,7 +323,7 @@ func drawScaledImage(dst *image.RGBA, pic *pageImage, x, y, w, h, scale float64)
 // rgba(255,255,255,0.08) surface as opaque white; color.NRGBA carries the
 // non-premultiplied intent.
 func cssUniform(c color.RGBA) image.Image {
-	return image.NewUniform(color.NRGBA{R: c.R, G: c.G, B: c.B, A: c.A})
+	return image.NewUniform(color.NRGBA(c))
 }
 
 func fillRect(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
@@ -800,7 +799,6 @@ type renderBlock struct {
 	// Out-of-flow children (position:absolute/fixed) placed relative to this
 	// block's content box, and the offset from position:relative.
 	abs   []absChild
-	relDx float64
 	relDy float64
 	// box-shadow, drawn behind the box background.
 	shadowX, shadowY         float64
@@ -857,11 +855,11 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	var absLines []drawLine
 	var absBoxes []drawBox
 	type boxAcc struct {
-		dx           drawBox
-		top, bottom  float64
-		has, started bool
-		radiusPx     [4]float64
-		radiusPct    [4]float64
+		dx          drawBox
+		top, bottom float64
+		started     bool
+		radiusPx    [4]float64
+		radiusPct   [4]float64
 	}
 	accs := map[int]*boxAcc{}
 	var boxOrder []int
@@ -1045,7 +1043,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			own := b.boxLeft == b.sizeLeft
 			switch {
 			case own:
-				bb, edge, contentW, extra = obb, oedge, oContent, oExtra
+				bb, edge, contentW = obb, oedge, oContent
 				shift = oShift
 				inner = b.textX - b.sizeLeft
 				boxX = colX + b.sizeBoxLeft + shift
@@ -2355,26 +2353,11 @@ func lineImageHeight(line []renderSpan, limit float64) float64 {
 	return h
 }
 
-func joinSpanText(spans []renderSpan) string {
-	var b strings.Builder
-	for _, s := range spans {
-		if s.pic == nil {
-			b.WriteString(s.text)
-		}
-	}
-	return b.String()
-}
-
-// wrapSpans greedily fills lines, breaking between words. Every line is a
-// sequence of spans, so an inline replaced box (an icon) can sit between text
-// runs on the same line.
-func wrapSpans(spans []renderSpan, limit float64) [][]renderSpan {
-	return wrapSpansWidth(spans, func(int) float64 { return limit })
-}
-
-// wrapSpansWidth is wrapSpans with a width that can change from line to line,
-// which is how a paragraph wraps around a float and then fills the column
-// again once the float has passed.
+// wrapSpansWidth greedily fills lines, breaking between words, with a width
+// that can change from line to line. That is how a paragraph wraps around a
+// float and then fills the column again once the float has passed. Every line
+// is a sequence of spans, so an inline replaced box (an icon) can sit between
+// text runs on the same line.
 func wrapSpansWidth(spans []renderSpan, limitAt func(line int) float64) [][]renderSpan {
 	type item struct {
 		span renderSpan

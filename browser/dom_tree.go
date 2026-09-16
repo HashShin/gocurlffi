@@ -201,14 +201,6 @@ func hasClass(n *html.Node, c string) bool {
 	return false
 }
 
-// tagName returns the uppercase tag name a DOM element exposes.
-func tagName(n *html.Node) string {
-	if n == nil {
-		return ""
-	}
-	return strings.ToUpper(n.Data)
-}
-
 // textContent returns the concatenated text of a subtree.
 func textContent(n *html.Node) string {
 	if n == nil {

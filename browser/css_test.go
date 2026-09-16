@@ -300,7 +300,7 @@ func TestDocumentWriteInsertsAtScript(t *testing.T) {
 		t.Fatalf("lost content: %q", out)
 	}
 	order := func(a, b string) bool {
-		return strings.Index(out, a) >= 0 && strings.Index(out, a) < strings.Index(out, b)
+		return strings.Contains(out, a) && strings.Index(out, a) < strings.Index(out, b)
 	}
 	if !order("head", "one") || !order("one", "two") || !order("two", "tail") {
 		t.Fatalf("document.write landed in the wrong place: %q", out)

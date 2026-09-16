@@ -70,7 +70,7 @@ func RunServe(args []string) int {
 	bf.register(fs)
 
 	if err := parse(fs, args); err != nil {
-		return checkParse(err)
+		return parseStatus(err)
 	}
 
 	opts := browser.Options{}
@@ -103,7 +103,7 @@ func RunMCP(args []string) int {
 	bf.register(fs)
 
 	if err := parse(fs, args); err != nil {
-		return checkParse(err)
+		return parseStatus(err)
 	}
 
 	opts := browser.Options{}
@@ -151,7 +151,7 @@ type browserGetFlags struct {
 	wait        string
 	waitTimeout time.Duration
 	waitUntil   string
-	waitMs      time.Duration
+	waitTimers  time.Duration
 	waitScript  string
 	timeout     time.Duration
 	loadTimeout time.Duration
@@ -182,7 +182,7 @@ func RunBrowserGet(args []string) int {
 	g.register(fs)
 
 	if err := parse(fs, args); err != nil {
-		return checkParse(err)
+		return parseStatus(err)
 	}
 
 	target := fs.Arg(0)
@@ -223,9 +223,7 @@ func RunBrowserGet(args []string) int {
 	if strings.EqualFold(g.waitUntil, "networkidle0") || strings.EqualFold(g.waitUntil, "networkidle") {
 		p.WaitForNetworkIdle(500*time.Millisecond, g.timeout)
 	}
-	if rc := g.waitFor(p); rc != exitOK {
-		return rc
-	}
+	g.waitFor(p)
 	if rc := g.drive(p); rc != exitOK {
 		return rc
 	}
@@ -250,7 +248,7 @@ func (g *browserGetFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&g.wait, "wait", "", "wait for this selector before extracting")
 	fs.DurationVar(&g.waitTimeout, "wait-timeout", 10*time.Second, "timeout for --wait and --wait-script")
 	fs.StringVar(&g.waitUntil, "wait-until", "load", "how far the load goes: load, domcontentloaded or networkidle0")
-	fs.DurationVar(&g.waitMs, "wait-ms", 0, "keep running the page's timers for this long after load")
+	fs.DurationVar(&g.waitTimers, "wait-ms", 0, "keep running the page's timers for this long after load")
 	fs.StringVar(&g.waitScript, "wait-script", "", "evaluate this JavaScript repeatedly until it is truthy")
 	fs.DurationVar(&g.timeout, "timeout", 30*time.Second, "per-request timeout")
 	fs.DurationVar(&g.loadTimeout, "load-timeout", 30*time.Second, "script-loading budget per page")
@@ -313,9 +311,11 @@ func (g *browserGetFlags) finishOptions(opts *browser.Options) int {
 
 // waitFor runs the waits in the order they are most useful: let timers settle,
 // then poll for the page's own readiness signal, then for a specific element.
-func (g *browserGetFlags) waitFor(p *browser.Page) int {
-	if g.waitMs > 0 {
-		p.WaitForTime(g.waitMs)
+// A wait that times out is a warning rather than a failure: the page is still
+// extracted, so the caller can see what did load.
+func (g *browserGetFlags) waitFor(p *browser.Page) {
+	if g.waitTimers > 0 {
+		p.WaitForTime(g.waitTimers)
 	}
 	if g.waitScript != "" {
 		if err := p.WaitForScript(g.waitScript, g.waitTimeout); err != nil {
@@ -327,7 +327,6 @@ func (g *browserGetFlags) waitFor(p *browser.Page) int {
 			fmt.Fprintf(os.Stderr, "warning: selector %q not found within %s\n", g.wait, g.waitTimeout)
 		}
 	}
-	return exitOK
 }
 
 // drive performs the scripted interactions, in the order the flags appear, so a
