@@ -77,23 +77,6 @@ As a library:
 go get github.com/HashShin/gocurlffi
 ```
 
-## Docs
-
-| | |
-| --- | --- |
-| [`docs/api.md`](docs/api.md) | `Request`, options, impersonation targets |
-| [`docs/cli.md`](docs/cli.md) | Commands and flags |
-| [`docs/browser.md`](docs/browser.md) | The browser, from Go and from the shell |
-| [`docs/fidelity.md`](docs/fidelity.md) | What the fingerprints reproduce, and how that is checked |
-| [`docs/limitations.md`](docs/limitations.md) | What it does not do, with the measurements |
-| [`docs/architecture.md`](docs/architecture.md) | Package layout |
-| [`browser/README.md`](browser/README.md) | The browser in depth |
-| [`server/README.md`](server/README.md) | CDP, WebDriver BiDi, MCP |
-| [`docs/parity.md`](docs/parity.md) | Remaining gap against Lightpanda |
-| [`docs/botguard.md`](docs/botguard.md) | Why Google search is refused |
-| [`gsearch/README.md`](gsearch/README.md) | The separate Chromium search scraper |
-| [`AGENTS.md`](AGENTS.md) | Working on this repository |
-
 ## Limitations
 
 - The browser has no CSS box model and no WebAssembly. It is a document

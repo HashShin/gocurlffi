@@ -84,8 +84,9 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
 - **Nothing outside Go is a build input.** Three bash scripts, one `.mjs` and one
   `.py` live in `scripts/` as development tools; none is needed to build or test.
 - **Documentation lives in `docs/`, not the README.** The README is a landing
-  page. If you add detail, it belongs in a `docs/` page and a row in the README's
-  table.
+  page and carries no index of them; detail belongs in a `docs/` page, and the
+  README links to one only where the text needs it, as it does for the
+  limitations.
 
 ## Adding things
 
