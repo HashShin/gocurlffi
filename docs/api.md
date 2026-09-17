@@ -102,6 +102,17 @@ sess.Send("https://example.com/", WithImpersonate(DefaultChrome))   // impersona
 sess.Browse("https://example.com/", WithImpersonate(DefaultChrome)) // the same URL, rendered
 ```
 
+Both take every option the request has - headers, params, cookies, body, JSON,
+timeout, proxy - so a URL and options is a complete request:
+
+```go
+rsp, err := Send("https://httpbun.com/post",
+	WithImpersonate(DefaultChrome),
+	WithHeaders(Headers{"Accept: application/json"}),
+	WithJSON(map[string]any{"hello": "world"}),
+)
+```
+
 Options are applied after the request's own fields, so one wins over the field
 it names: `Send(Request{...}, WithTimeout(5*time.Second))` is that request with
 a shorter timeout.

@@ -14,23 +14,42 @@ import (
 )
 
 func main() {
-	rsp, err := Send("https://tls.browserleaks.com/json", WithImpersonate(DefaultChrome))
+	rsp, err := Send("https://httpbun.com/get",
+		WithImpersonate(DefaultChrome), // the TLS and HTTP/2 fingerprint
+		WithHeaders(Headers{
+			"Accept: application/json",
+			"X-Custom: value",
+		}),
+		WithParams(map[string]string{"q": "go"}),
+		WithTimeoutSeconds(15),
+	)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(rsp.Text())
+	fmt.Println(rsp.StatusCode, rsp.Text())
 }
 ```
 
-`Send` takes a URL and options. A `Request` value does the same job when
-several fields are set at once, and `Get`, `Post` and the rest are the same
-call under the method's name:
+`Send` takes a URL and options: impersonation, headers, query parameters,
+cookies, a body or JSON, a timeout, a proxy. The same request can be written as
+a value, which is what to reach for when it is built in one place and sent in
+another:
 
 ```go
-req := Request{URL: url, Impersonate: DefaultChrome, Timeout: 15 * time.Second}
-rsp, err := Send(req)                 // a request as a value
-rsp, err = sess.Send(req, WithProxy(p)) // ...and an option on top of it
+req := Request{
+	URL:         "https://httpbun.com/get",
+	Impersonate: DefaultChrome,
+	Headers:     Headers{"Accept: application/json"},
+	Params:      map[string]string{"q": "go"},
+	Timeout:     15 * time.Second,
+}
+
+rsp, err := Send(req)                                         // as a value
+rsp, err = sess.Send(req, WithProxy("http://127.0.0.1:8080")) // with an option on top
 ```
+
+`Get`, `Post` and the rest are the same call under the method's name, and
+`docs/api.md` lists every field and option.
 
 Reuse a session to keep cookies and connections:
 
