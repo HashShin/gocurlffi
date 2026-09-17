@@ -171,5 +171,4 @@ blocks or answers requests - go on the browser from `New`.
 
 ## License
 
-MIT. The preset data is transcribed from curl-impersonate, which is MIT
-licensed; see `impersonate/upstream/LICENSE.curl-impersonate`.
+MIT.
