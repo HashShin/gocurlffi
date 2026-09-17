@@ -42,7 +42,6 @@ func main() {
 	rsp, err := Send(Request{
 		URL:         "https://httpbun.com/get",
 		Impersonate: DefaultChrome,
-		Headers:     Headers{"Accept: application/json"},
 	})
 	if err != nil {
 		panic(err)
@@ -61,15 +60,32 @@ The same request without the literal:
 ```go
 rsp, err := Send("https://httpbun.com/get",
 	WithImpersonate(DefaultChrome),
-	WithHeaders(Headers{"Accept: application/json"}),
 	WithParams(map[string]string{"q": "go"}),
 	WithTimeoutSeconds(15),
+	WithProxy("socks5://127.0.0.1:1080"),
 )
 ```
 
 Options are applied after the request's own fields, so a later option wins over
-the field it names: `Send(req, WithProxy(proxy))` is that request through the
-proxy.
+the field it names: `Send(req, WithTimeout(5*time.Second))` is that request with
+a shorter timeout.
+
+### Headers
+
+```go
+WithHeader("Accept", "application/json")             // one
+WithHeaders(map[string]string{"X-Custom": "value"})  // or several
+```
+
+As a value, a struct literal names the type of every field it sets, so the field
+and its type are both written:
+
+```go
+req := Request{
+	URL:     "https://httpbun.com/get",
+	Headers: Headers{"Accept: application/json", "X-Custom: value"},
+}
+```
 
 ### One-shot, no session
 
