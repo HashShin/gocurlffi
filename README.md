@@ -56,6 +56,28 @@ func main() {
 Every other sample is a fragment of that program: the same import, then the
 lines that differ.
 
+### URL and options
+
+The same request, without the literal:
+
+```go
+rsp, err := Send(url,
+	WithImpersonate(DefaultChrome),
+	WithHeaders(Headers{
+		"Accept: application/json",
+		"X-Custom: value",
+	}),
+	WithParams(map[string]string{"q": "go"}),
+	WithTimeoutSeconds(15),
+	WithProxy("socks5://127.0.0.1:1080"),
+)
+```
+
+`WithHeader("Accept", "application/json")` sets one and repeats; `WithHeaders`
+also takes a `map[string]string`, a `[]string` or a `[]HeaderPair`. Options are
+applied after the request's own fields, so a later option wins over the field it
+names.
+
 ### One request, sent more than once
 
 ```go
@@ -67,24 +89,7 @@ rsp, err = sess.Browse(req)          // or rendered, same request
 ```
 
 A request is a value, so it can be built in one place, logged, queued, and sent
-either way. Options work on top of it, and a later option wins over the field it
-names.
-
-### Headers, params, timeout, proxy
-
-```go
-rsp, err := Send(url,
-	WithImpersonate(DefaultChrome),
-	WithHeader("Accept", "application/json"),
-	WithParams(map[string]string{"q": "go"}),
-	WithTimeoutSeconds(15),
-	WithProxy("socks5://127.0.0.1:1080"),
-)
-```
-
-`WithHeaders` takes a map, `[]string`, `[]HeaderPair` or `Headers`. A struct
-literal has to name each field's type, so it writes both words:
-`Headers: Headers{"Accept: application/json"}`.
+either way.
 
 ### One-shot, no session
 
