@@ -575,6 +575,10 @@ type collector struct {
 	elSeq int
 	elID  int
 	depth int
+	// padLeft is the left padding and border of the element being walked: a
+	// block's left is its content edge, and the box around it starts this far
+	// further left.
+	padLeft float64
 	// elGeomID is the geometry id of the element being walked, so a box it
 	// declares can be recorded for it even when it produces no block.
 	elGeomID int
@@ -602,7 +606,7 @@ func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 		b := renderBlock{
 			kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
 			ownsSizing: c.declaresSizing, ownerSeq: c.elID, depth: c.depth,
-			ownerGeomID: c.elGeomID,
+			ownerGeomID: c.elGeomID, padLeft: c.padLeft,
 		}
 		c.stampRight(&b)
 		c.blocks = append(c.blocks, b)
@@ -733,6 +737,30 @@ func (c *collector) assignBox(start int, cs *computedStyle) {
 // a row is inline-level. Such a box is one atomic item on a line: it shrinks to
 // its content and the containing block's text-align places it, instead of
 // filling the line and stacking its items at the left.
+// flexItem reports whether the element is one item of a flex or grid row, which
+// decides its width rather than the line it sits on.
+func (c *collector) flexItem(el *html.Node) bool {
+	if el == nil || el.Parent == nil || el.Parent.Type != html.ElementNode {
+		return false
+	}
+	pcs := c.engine.compute(el.Parent)
+	return pcs != nil && (isFlexRowContainer(pcs) || isGridContainer(pcs))
+}
+
+// placeAlign is the text-align of an element's containing block, which is what
+// places an inline-level box on its line. An element's own text-align positions
+// its contents, not the box itself: a button centers its label on a line its
+// containing block may left-align.
+func (c *collector) placeAlign(el *html.Node) string {
+	if el == nil || el.Parent == nil || el.Parent.Type != html.ElementNode {
+		return ""
+	}
+	if pcs := c.engine.compute(el.Parent); pcs != nil {
+		return pcs.textAlign
+	}
+	return ""
+}
+
 func isInlineFlexDisplay(d string) bool {
 	return d == "inline-flex" || d == "inline-grid"
 }
@@ -819,6 +847,7 @@ func (c *collector) ensure(cs *computedStyle) *renderBlock {
 			ownerSeq:    c.elID,
 			depth:       c.depth,
 			ownerGeomID: c.elGeomID,
+			padLeft:     c.padLeft,
 		}
 		c.stampRight(b)
 		if cs != nil {
@@ -933,12 +962,14 @@ func (c *collector) walkElement(el *html.Node) {
 		elID                        int
 		depth                       int
 		elGeomID                    int
+		padLeft                     float64
 	}{c.style, c.content, c.quote, c.pre, c.lineH, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
 		c.contW, c.hasContW, c.contH, c.hasContH, c.ownHeightPx, c.hasOwnHeight, c.rightInset,
 		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight,
-		c.sizeWidthIsOwn, c.declaresSizing, c.sizeInset, c.elID, c.depth, c.elGeomID}
+		c.sizeWidthIsOwn, c.declaresSizing, c.sizeInset, c.elID, c.depth, c.elGeomID,
+		c.padLeft}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -1031,6 +1062,7 @@ func (c *collector) walkElement(el *html.Node) {
 		(cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto)
 	if block {
 		c.depth++
+		c.padLeft = cs.paddingLeft + cs.borderW
 		// Box edges: margin then padding, relative to the parent's content box.
 		// The border box starts at boxLeft; the content is inside the border and
 		// then the padding.
@@ -1135,6 +1167,7 @@ func (c *collector) walkElement(el *html.Node) {
 	// would sit at the outer edge.
 	if !block && (tag == "button" || tag == "input" || tag == "select" || tag == "textarea") {
 		c.content += cs.marginLeft + cs.borderW + cs.paddingLeft
+		c.padLeft = cs.paddingLeft + cs.borderW
 	}
 	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
 	c.pre = c.pre || pre
@@ -1160,6 +1193,7 @@ func (c *collector) walkElement(el *html.Node) {
 		c.elID = saved.elID
 		c.depth = saved.depth
 		c.elGeomID = saved.elGeomID
+		c.padLeft = saved.padLeft
 	}()
 
 	// A floated element leaves the flow: its own subtree is collected as a
@@ -1267,6 +1301,16 @@ func (c *collector) walkElement(el *html.Node) {
 		}
 		applyColumnAlign(c.blocks[start:], align)
 		c.finishBlock(start, cs, boxed)
+		// A button is inline-block, so it is one atomic box on the line: it
+		// shrinks to its label unless it asks for a width. Left to fill the
+		// line, h2apk's "+ Advanced" and "+ CSS/JS" pills were drawn the width
+		// of their panel.
+		if !cs.hasWidth && !c.flexItem(el) {
+			for i := start; i < len(c.blocks); i++ {
+				c.blocks[i].inlineBox = true
+				c.blocks[i].boxAlign = c.placeAlign(el)
+			}
+		}
 		return
 	}
 
@@ -1399,6 +1443,7 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		ownerSeq:        c.elID,
 		depth:           c.depth,
 		ownerGeomID:     c.elGeomID,
+		padLeft:         c.padLeft,
 		boxDepth:        c.depth,
 		sizeInset:       c.sizeInset,
 		sizeLeft:        c.sizeLeft,
@@ -1493,7 +1538,7 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 		flexRow:       true,
 		table:         true,
 		inlineBox:     isInlineFlexDisplay(cs.display),
-		align:         cs.textAlign,
+		boxAlign:      c.placeAlign(el),
 		boxLeft:       c.content,
 		textX:         c.content,
 		quote:         c.quote,
@@ -1501,6 +1546,7 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 		ownerSeq:      c.elID,
 		depth:         c.depth,
 		ownerGeomID:   c.elGeomID,
+		padLeft:       c.padLeft,
 		gap:           spacing,
 		rowGap:        spacing,
 		justify:       cs.justifyContent,
@@ -1596,7 +1642,7 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		flexRow:       true,
 		grid:          grid,
 		inlineBox:     isInlineFlexDisplay(cs.display),
-		align:         cs.textAlign,
+		boxAlign:      c.placeAlign(el),
 		gridTmpl:      cs.grid,
 		boxLeft:       c.content,
 		textX:         c.content,
@@ -1605,6 +1651,7 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		ownerSeq:      c.elID,
 		depth:         c.depth,
 		ownerGeomID:   c.elGeomID,
+		padLeft:       c.padLeft,
 		gap:           cs.columnGap,
 		rowGap:        cs.rowGap,
 		wrap:          cs.flexWrap,

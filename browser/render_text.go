@@ -887,10 +887,19 @@ type renderBlock struct {
 	// own element, so an ancestor without blocks of its own cannot overwrite
 	// them.
 	hasRightEdges bool
-	// inlineBox marks an inline-level box that lays its children out in a row,
-	// such as "display: inline-flex". It shrink-wraps and is placed by the
-	// containing block's text-align rather than filling the line.
+	// inlineBox marks an inline-level box the renderer gives a block of its
+	// own: "display: inline-flex", or an inline-block button. It shrink-wraps
+	// and is placed by the containing block's text-align rather than filling
+	// the line.
 	inlineBox bool
+	// boxAlign is the text-align of the containing block, which is what places
+	// an inline-level box. It is not the block's own align: a button centers
+	// its label on a line its containing block may left-align.
+	boxAlign string
+	// padLeft is the block's own left padding and border. The block's left is
+	// its content edge, so this is how far its border box extends to the left
+	// of it.
+	padLeft float64
 	// ownsSizing marks the block the sizing element itself starts: the one
 	// whose left edge is the declaring element's content edge rather than a
 	// descendant's. It is what tells the layout that the sizing context's box
@@ -1368,22 +1377,32 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// stacking its items at the left. h2apk's hero centers its GitHub and
 		// Support links this way.
 		if b.inlineBox && !b.ownsSizing {
-			w := 0.0
-			for i, col := range b.children {
-				if i > 0 {
-					w += b.gap
+			w := spansIntrinsicWidth(b.spans)
+			if b.flexRow || b.grid || b.table {
+				w = 0
+				for i, col := range b.children {
+					if i > 0 {
+						w += b.gap
+					}
+					w += intrinsicColumnWidth(col, bb, baseSize)
 				}
-				w += intrinsicColumnWidth(col, bb, baseSize)
 			}
 			if w > bb {
 				w = bb
 			}
-			contentW, ownOuter = w, w+edge
-			space := bb - (contentW + edge)
+			// contentW is measured the way the branches above measure it: from
+			// the block's content edge towards the containing block's, which
+			// is what the text wrap subtracts its right edges from.
+			contentW = w + b.paddingRight + b.borderW
+			// The box's own edges surround its content, so its outer width is
+			// what the line has to hold.
+			ownOuter = w + b.padLeft + b.paddingRight + b.borderW
+			boxWidthOuter = ownOuter
+			space := bb - ownOuter
 			if space < 0 {
 				space = 0
 			}
-			switch b.align {
+			switch b.boxAlign {
 			case "center":
 				alignExtra = space / 2
 			case "right", "end":

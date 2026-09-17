@@ -2085,3 +2085,33 @@ func TestInlineFlexShrinkWrapsAndCenters(t *testing.T) {
 		t.Errorf("Support x=%g is not right of GitHub x=%g", sup[0], gh[0])
 	}
 }
+
+// A button is inline-block, so it is one atomic box on the line: it shrinks to
+// its label, which the containing block's text-align then places. Given the
+// whole line, h2apk's "+ Advanced" and "+ CSS/JS" pills were drawn the width of
+// their panel. A button that asks for a width keeps it. Chromium reports
+// 20,0 79.8x22 for this page.
+func TestButtonShrinksToItsLabel(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.panel { width: 400px; padding: 0 20px; background: #111 }
+		.adv { padding: 4px 10px; border: 1px solid #333; font-size: 11px }
+		.full { width: 100%; padding: 8px; font-size: 11px }
+	</style></head><body>
+		<div class="panel">
+			<button id="adv" class="adv">+ Advanced</button>
+			<button id="full" class="full">Build</button>
+		</div>
+	</body></html>`)
+	adv := p.ElementRect(p.GetElementByID("adv"))
+	if adv.Width > 120 {
+		t.Errorf("the button is %g wide, want it shrunk to its label", adv.Width)
+	}
+	if adv.X != 20 {
+		t.Errorf("the button starts at x=%g, want the panel's content edge (20)", adv.X)
+	}
+	full := p.ElementRect(p.GetElementByID("full"))
+	if diff(full.Width, 360) > 0.6 {
+		t.Errorf("the width:100%% button is %g wide, want the panel's 360", full.Width)
+	}
+}
