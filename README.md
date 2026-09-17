@@ -113,17 +113,39 @@ func main() {
 }
 ```
 
-`Send` is the fast path. The samples below are fragments of that program: the
-same import, then the lines that differ. The rest of the HTTP API - options,
-sessions, TLS - is in [`docs/api.md`](docs/api.md).
+`Send` is the fast path. Every other sample is a fragment of one of the two
+programs below: the same imports, then the lines that differ. The rest of the
+HTTP API - options, sessions, TLS - is in [`docs/api.md`](docs/api.md).
 
 ### Browser
 
-```go
-import _ "github.com/HashShin/gocurlffi/browser" // links the browser in
+The same request with the page's scripts run. The blank import is the only
+difference: it links the browser in.
 
-rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
-fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
+```go
+package main
+
+import (
+	"fmt"
+
+	. "github.com/HashShin/gocurlffi"
+	_ "github.com/HashShin/gocurlffi/browser" // links the browser in
+)
+
+func main() {
+	rsp, err := Browse(Request{
+		Method: "GET",
+		URL:    "https://quotes.toscrape.com/js/",
+		Headers: Headers{
+			"Accept: text/html",
+		},
+		Impersonate: DefaultChrome,
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(rsp.StatusCode, rsp.Text()) // rendered, after the scripts have run
+}
 ```
 
 The browser is a separate import on purpose: a program that only makes requests
