@@ -180,6 +180,20 @@ func (s *Session) Request(method, rawURL string, opts ...Option) (*Response, err
 			"requests: unsupported option(s): "+strings.Join(bad, "; "), 0, nil)}
 	}
 
+	if cfg.browser {
+		// The same request as a Request value: the browser path takes a URL,
+		// so the options that shape the load and not the body carry over.
+		return s.sendBrowser(Request{
+			Method:      method,
+			URL:         rawURL,
+			Headers:     cfg.headers,
+			Params:      cfg.params,
+			Impersonate: cfg.impersonate,
+			Timeout:     cfg.timeout,
+			Proxy:       effectiveProxy(&cfg),
+		})
+	}
+
 	var lastErr error
 	attempts := cfg.retry + 1
 	if attempts < 1 {

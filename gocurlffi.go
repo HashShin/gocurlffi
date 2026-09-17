@@ -125,6 +125,7 @@ var (
 // Request options.
 var (
 	WithAcceptEncoding  = requests.WithAcceptEncoding
+	WithBrowser         = requests.WithBrowser
 	WithAkamai          = requests.WithAkamai
 	WithAllowRedirects  = requests.WithAllowRedirects
 	WithAuth            = requests.WithAuth

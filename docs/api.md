@@ -117,6 +117,12 @@ import (
 A `Request` with `Browser` set, sent on a session, uses one browser per session,
 so pages and plain requests on that session share cookies.
 
+The option form is the same path:
+
+```go
+rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
+```
+
 The fingerprint target can be named two ways:
 
 ```go
@@ -137,7 +143,8 @@ file with `//lint:file-ignore ST1001 <reason>` if your setup runs staticcheck.
 `map[string]string`, a `[]HeaderPair`, or an existing `*Headers`.
 
 Options include `WithParams`, `WithData`, `WithContent`, `WithJSON`,
-`WithHeaders`, `WithHeader`, `WithCookies`, `WithAuth`, `WithTimeout`,
+`WithHeaders`, `WithHeader`, `WithCookies`, `WithAuth`, `WithBrowser`,
+`WithTimeout`,
 `WithAllowRedirects`, `WithMaxRedirects`, `WithProxy`, `WithProxies`,
 `WithProxyAuth`, `WithVerify`, `WithReferer`, `WithAcceptEncoding`,
 `WithImpersonate`, `WithJA3`, `WithAkamai`, `WithExtraFP`,

@@ -149,3 +149,24 @@ func TestBrowserRequestCarriesParamsAndHeaders(t *testing.T) {
 		t.Errorf("X-Test = %q, want the request's header", gotHeader)
 	}
 }
+
+// The option form reaches the same path as the Request field, so
+// Get(url, WithBrowser()) renders too.
+func TestWithBrowserOptionRenders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<!doctype html><html><body><p id="out">before</p>
+			<script>document.getElementById('out').textContent = 'after';</script>
+			</body></html>`))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+	rsp, err := sess.Get(srv.URL, requests.WithBrowser())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !strings.Contains(rsp.Text(), "after") {
+		t.Errorf("body = %q, want the script's output", rsp.Text())
+	}
+}

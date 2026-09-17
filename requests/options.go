@@ -70,9 +70,12 @@ type config struct {
 	proxies       map[string]string
 	proxyAuth     *BasicAuth
 
-	discardCookies    bool
-	raiseForStatus    bool
-	debug             bool
+	discardCookies bool
+	raiseForStatus bool
+	debug          bool
+	// browser loads the URL in the browser instead of the fast client, the
+	// option form of Request.Browser.
+	browser           bool
 	acceptEncodingSet bool
 
 	// per-request only
@@ -302,6 +305,12 @@ func WithBaseURL(u string) Option { return func(c *config) { c.baseURL = u } }
 // WithTrustEnv controls whether http_proxy/https_proxy environment variables are
 // honoured when no explicit proxy is configured.
 func WithTrustEnv(v bool) Option { return func(c *config) { c.trustEnv = v } }
+
+// WithBrowser loads the URL in the full browser instead of the fast client, so
+// the page's scripts run and the body is the document as it settled. It is the
+// option form of Request.Browser, and needs the browser package imported, which
+// is what installs it.
+func WithBrowser() Option { return func(c *config) { c.browser = true } }
 
 // WithDebug enables verbose transport logging.
 func WithDebug(v bool) Option { return func(c *config) { c.debug = v } }
