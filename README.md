@@ -27,8 +27,6 @@ make install PREFIX=$HOME/.local
 
 ## Usage
 
-### Request style
-
 ```go
 package main
 
@@ -39,10 +37,7 @@ import (
 )
 
 func main() {
-	rsp, err := Send(Request{
-		URL:         "https://httpbun.com/get",
-		Impersonate: DefaultChrome,
-	})
+	rsp, err := Send("https://httpbun.com/get", WithImpersonate(DefaultChrome))
 	if err != nil {
 		panic(err)
 	}
@@ -50,48 +45,40 @@ func main() {
 }
 ```
 
-`Request` is a value, so a request can be built in one place and sent in
-another, logged, or queued.
+Every other sample is a fragment of that program: the same import, then the
+lines that differ.
 
-### URL and options
-
-The same request without the literal:
+### As a value
 
 ```go
-rsp, err := Send("https://httpbun.com/get",
+rsp, err := Send(Request{URL: url, Impersonate: DefaultChrome})
+```
+
+A request can be built in one place and sent in another, logged, or queued.
+Options work on top of it, and a later option wins over the field it names:
+`Send(req, WithTimeout(5*time.Second))`.
+
+### Headers, params, timeout, proxy
+
+```go
+rsp, err := Send(url,
 	WithImpersonate(DefaultChrome),
+	WithHeader("Accept", "application/json"),
 	WithParams(map[string]string{"q": "go"}),
 	WithTimeoutSeconds(15),
 	WithProxy("socks5://127.0.0.1:1080"),
 )
 ```
 
-Options are applied after the request's own fields, so a later option wins over
-the field it names: `Send(req, WithTimeout(5*time.Second))` is that request with
-a shorter timeout.
-
-### Headers
-
-```go
-WithHeader("Accept", "application/json")             // one
-WithHeaders(map[string]string{"X-Custom": "value"})  // or several
-```
-
-As a value, a struct literal names the type of every field it sets, so the field
-and its type are both written:
-
-```go
-req := Request{
-	URL:     "https://httpbun.com/get",
-	Headers: Headers{"Accept: application/json", "X-Custom: value"},
-}
-```
+`WithHeaders` takes a map, `[]string`, `[]HeaderPair` or `Headers`. A struct
+literal has to name each field's type, so it writes both words:
+`Headers: Headers{"Accept: application/json"}`.
 
 ### One-shot, no session
 
 ```go
-rsp, err := Get("https://httpbun.com/get", WithImpersonate(DefaultChrome))
-rsp, err = Post("https://httpbun.com/post", WithJSON(map[string]any{"hello": "world"}))
+rsp, err := Get(url, WithImpersonate(DefaultChrome))
+rsp, err = Post(url, WithJSON(map[string]any{"hello": "world"}))
 ```
 
 `Put`, `Patch`, `Delete`, `Head`, `Options`, `Trace` and `Do` are the rest.
@@ -109,22 +96,10 @@ rsp, err := sess.Get("https://example.com/dashboard")
 ### Browser: the rendered page
 
 ```go
-package main
+import _ "github.com/HashShin/gocurlffi/browser" // links the browser in
 
-import (
-	"fmt"
-
-	. "github.com/HashShin/gocurlffi"
-	_ "github.com/HashShin/gocurlffi/browser" // links the browser in
-)
-
-func main() {
-	rsp, err := Browse("https://quotes.toscrape.com/js/")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
-}
+rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
+fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
 The browser is a separate import on purpose: the client does not pull a
@@ -132,24 +107,17 @@ JavaScript engine into a program that only makes requests, which would double
 its size - 17.2MB to 34.6MB for the same binary. A `Browse` without that import
 reports which one is missing.
 
-### Both paths side by side
+The two paths sit side by side on one session, and the name says which is which:
 
 ```go
-rsp, err := sess.Send("https://example.com/")  // impersonated HTTP
-rsp, err = sess.Browse("https://example.com/") // the same URL, rendered
+rsp, err := sess.Send(url)  // impersonated HTTP
+rsp, err = sess.Browse(url) // the same URL, rendered
 ```
-
-`Send` and `Browse` take a `Request`, a `*Request` or a URL, so which path a
-request takes is one name at the call site and nothing else. `Get` with
-`WithBrowser()` is the same two paths spelled the other way round.
 
 ### Browser: read the page
 
 ```go
-p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
-if err != nil {
-	panic(err)
-}
+p, _ := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
 defer p.Close()
 
 fmt.Println(p.Title())
@@ -162,7 +130,7 @@ for _, l := range p.Links() {
 ### Browser: screenshot, fill, click
 
 ```go
-png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
+png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
 os.WriteFile("page.png", png, 0o644)
 
 p.Fill("#user", "me")
@@ -170,18 +138,11 @@ p.Click("button[type=submit]")
 p.WaitForSelector("#account", 5*time.Second)
 ```
 
-### Proxy, timeout, TLS
+### TLS
 
 ```go
-rsp, err := Send(Request{
-	URL:         "https://httpbun.com/ip",
-	Impersonate: DefaultChrome,
-	Proxy:       "socks5://127.0.0.1:1080",
-	Timeout:     10 * time.Second,
-})
-
-sess := NewSession(WithVerify(false))                          // self-signed
-sess = NewSession(WithCert("cert.pem", "key.pem"))             // client certificate
+sess := NewSession(WithVerify(false))              // self-signed
+sess = NewSession(WithCert("cert.pem", "key.pem")) // client certificate
 ```
 
 ---
