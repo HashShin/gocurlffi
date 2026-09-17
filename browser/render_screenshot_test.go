@@ -1889,3 +1889,165 @@ func TestFlexRowHonoursItsOwnWidthAndAutoMargins(t *testing.T) {
 		}
 	}
 }
+
+// A container that centers itself and pads is the frame its content is
+// measured in. A child that happens to start at the container's content edge is
+// inside the box, not the box itself: treating it as the box shifted every
+// panel on h2apk.hashcode.win 24px left and made it 47px narrow. The numbers
+// are Chromium's getBoundingClientRect for the same page at 1280px.
+func TestSizedContainerFramesItsContent(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.wrap { max-width: 1200px; margin: 0 auto; padding: 51.2px 38.4px 80px }
+		.section { background: #0d0d0d; border: 1px solid #333; padding: 40px 48px }
+		.grid { display: flex; gap: 14px }
+		.grid > div { flex: 1 }
+	</style></head><body>
+		<div class="wrap">
+			<div id="hero"><h1 id="title">H2APK</h1></div>
+			<div class="section"><div class="grid" id="grid">
+				<div id="g1">One</div><div id="g2">Two</div></div></div>
+		</div>
+	</body></html>`)
+	for _, c := range []struct {
+		id   string
+		x, w float64
+	}{
+		{"hero", 78.4, 1123.2},  // the wrap's content box
+		{"title", 78.4, 1123.2}, // a child that starts at that same edge
+		{"grid", 127.4, 1025.2}, // inside the section's padding
+		{"g1", 127.4, 505.6},    // half the space, less the gap
+	} {
+		r := p.ElementRect(p.GetElementByID(c.id))
+		if diff(r.X, c.x) > 0.6 || diff(r.Width, c.w) > 0.6 {
+			t.Errorf("#%s x=%g w=%g, want x=%g w=%g", c.id, r.X, r.Width, c.x, c.w)
+		}
+	}
+}
+
+// A container's box spans its own padding, not the width of whatever block
+// happens to fill it. The panel a page puts its sections in must be as wide as
+// the section, even when the only content inside it is a fixed-width child.
+func TestContainerBoxSpansItsPadding(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.panel { padding: 10px 30px; background: #eee }
+		.inner { width: 100px; height: 10px }
+	</style></head><body>
+		<div class="panel"><div class="inner" id="inner"></div></div>
+	</body></html>`)
+	doc, _, err := p.layOut(ScreenshotOptions{Width: 400, NoImages: true})
+	if err != nil {
+		t.Fatalf("layOut: %v", err)
+	}
+	if len(doc.boxes) != 1 {
+		t.Fatalf("boxes = %d, want the panel", len(doc.boxes))
+	}
+	if panel := doc.boxes[0]; panel.x != 0 || panel.w != 400 {
+		t.Errorf("panel x=%g w=%g, want x=0 w=400", panel.x, panel.w)
+	}
+	if inner := p.ElementRect(p.GetElementByID("inner")); inner.X != 30 || inner.Width != 100 {
+		t.Errorf("inner x=%g w=%g, want x=30 w=100", inner.X, inner.Width)
+	}
+}
+
+// An inline-block control or button lays its label out inside its own padding,
+// and a "width: 100%" one fills the container it is in. A button that ignored
+// its padding started 16px left of where Chromium puts it and measured the
+// page column instead of the wrapper.
+func TestFullWidthButtonFillsItsContainer(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.wrap { max-width: 1200px; margin: 0 auto; padding: 51.2px 38.4px 80px }
+		.build { width: 100%; padding: 16px; background: #1C1C1E; border: none }
+	</style></head><body>
+		<div class="wrap"><button id="btn" class="build">Build APK</button></div>
+	</body></html>`)
+	r := p.ElementRect(p.GetElementByID("btn"))
+	// Chromium: the wrap's content box, 78.4 to 1201.6.
+	if diff(r.X, 78.4) > 0.6 || diff(r.Width, 1123.2) > 0.6 {
+		t.Errorf("button x=%g w=%g, want x=78.4 w=1123.2", r.X, r.Width)
+	}
+	pos := outlinePositions(t, p, 1280)
+	if label, ok := pos["Build APK"]; !ok {
+		t.Errorf("button label missing from outline: %v", pos)
+	} else if label[0] < 94 || label[0] > 1186 {
+		t.Errorf("button label at x=%g, outside its content box (94 to 1186)", label[0])
+	}
+}
+
+// A background paints behind its descendants. The body's box is only complete
+// once the page has been laid out, so it used to be emitted after the panels in
+// the first screen and cover them: h2apk's tab bar lost its background and its
+// right half came out black.
+func TestAncestorBackgroundStaysBehindItsContent(t *testing.T) {
+	img := screenshotOf(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { background: #000000 }
+		.wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px }
+		.switch { display: flex; background: #0d0d0d }
+		.tab { flex: 1; height: 40px; background: #202020 }
+	</style></head><body>
+		<div class="wrap"><div class="switch"><div class="tab">one</div></div></div>
+	</body></html>`, ScreenshotOptions{Width: 400, NoImages: true})
+	for _, x := range []int{100, 200, 300} {
+		r, g, b, _ := img.At(x, 20).RGBA()
+		if r>>8 != 0x20 || g>>8 != 0x20 || b>>8 != 0x20 {
+			t.Errorf("pixel (%d,20) = %d,%d,%d, want the tab's 32,32,32 over the body's black",
+				x, r>>8, g>>8, b>>8)
+		}
+	}
+	// The boxes are emitted as the layout finishes them, which is not the
+	// order they paint in: an ancestor's box is only complete once its
+	// children are, so it is emitted last and would cover them.
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { background: #000000 }
+		.wrap { max-width: 1200px; margin: 0 auto; padding: 0 40px }
+		.switch { display: flex; background: #0d0d0d; height: 40px }
+		.tab { flex: 1; background: #202020 }
+	</style></head><body>
+		<div class="wrap">
+			<div class="switch"><div class="tab">one</div></div>
+			<div class="tail">tail</div>
+		</div>
+	</body></html>`, 400)
+	for i := 1; i < len(doc.boxes); i++ {
+		prev, cur := doc.boxes[i-1], doc.boxes[i]
+		if prev.abs == cur.abs && prev.depth > cur.depth {
+			t.Errorf("box %d (depth %d) is painted before box %d (depth %d)",
+				i-1, prev.depth, i, cur.depth)
+		}
+	}
+}
+
+// A float sits against its containing block's content edge, and its percentage
+// width resolves against that same box. A row of Bootstrap columns carries
+// "margin: 0 -15px", so its content box is wider than its parent's, and a
+// column that resolved against the page column instead was 53px too wide and
+// pushed its neighbour off the row.
+func TestFloatResolvesAgainstItsContainingBlock(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.outer { width: 1200px; padding: 0 15px }
+		.row { margin: 0 -15px }
+		.col { float: left; padding: 0 15px }
+		.eight { width: 66.66666667% }
+		.four { width: 33.33333333% }
+	</style></head><body>
+		<div class="outer"><div class="row">
+			<div class="col eight" id="eight">left</div>
+			<div class="col four" id="four">right</div>
+		</div></div>
+	</body></html>`)
+	// Chromium at 1280: the row's content box is 1200 wide, so eight is 800
+	// and four starts where it ends.
+	eight := p.ElementRect(p.GetElementByID("eight"))
+	four := p.ElementRect(p.GetElementByID("four"))
+	if diff(eight.Width, 800) > 0.6 {
+		t.Errorf("the 66%% column is %g wide, want 800", eight.Width)
+	}
+	if diff(four.X, eight.X+eight.Width) > 0.6 {
+		t.Errorf("the second column starts at %g, want %g", four.X, eight.X+eight.Width)
+	}
+}

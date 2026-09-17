@@ -568,6 +568,26 @@ type collector struct {
 	// walked produces: the inset of the containing block they sit in, which is
 	// their parent's content box, not their own.
 	blockInset float64
+	// elSeq numbers the block-level elements in document order, and elID is
+	// the one being walked, so a block can be traced back to the element that
+	// produced it. depth is how many block-level elements enclose it, which
+	// is the order their backgrounds paint in.
+	elSeq int
+	elID  int
+	depth int
+	// elGeomID is the geometry id of the element being walked, so a box it
+	// declares can be recorded for it even when it produces no block.
+	elGeomID int
+	// declaresSizing records that the element being walked is the one that
+	// declares the current sizing context. The block it starts is then the
+	// block the context's box belongs to, which the layout has to know: a
+	// descendant that happens to begin at the same edge is measured inside the
+	// box, not as the box.
+	declaresSizing bool
+	// sizeInset is the right inset of the containing block the sizing context
+	// was declared in, so the context's available width can be measured from
+	// the column without a container inside it shrinking the box.
+	sizeInset float64
 }
 
 // finishBlock applies an element's box edges, sizing context and box to the
@@ -581,6 +601,8 @@ func (c *collector) finishBlock(start int, cs *computedStyle, boxed bool) {
 	if sized && len(c.blocks) == start {
 		b := renderBlock{
 			kind: blockText, boxLeft: c.content, textX: c.content, quote: c.quote,
+			ownsSizing: c.declaresSizing, ownerSeq: c.elID, depth: c.depth,
+			ownerGeomID: c.elGeomID,
 		}
 		c.stampRight(&b)
 		c.blocks = append(c.blocks, b)
@@ -632,6 +654,7 @@ func (c *collector) assignSizing(start int, cs *computedStyle, ownHeight float64
 		b.hasSizeOwner = c.hasSizeOwner
 		b.sizeBoxLeft, b.sizePadLeft = c.sizeBoxLeft, c.sizePadLeft
 		b.sizePadRight, b.sizeMarginRight = c.sizePadRight, c.sizeMarginRight
+		b.sizeInset = c.sizeInset
 		if cs != nil {
 			b.borderBox = cs.boxSizingBorderBox
 			if ownHeight > b.minHeight {
@@ -682,6 +705,16 @@ func (c *collector) assignBox(start int, cs *computedStyle) {
 		}
 		b.boxID = gid
 		b.borderLeft = left
+		b.boxPadRight = cs.paddingRight + cs.borderW
+		// The box's paint order is its owning element's, not the depth of
+		// whichever descendant block happened to carry it.
+		b.boxDepth = c.depth
+		// Only this element's own blocks are the box's own: for a descendant
+		// the box merely shows through, and its padding is beyond the
+		// descendant's edge.
+		if b.ownerSeq == c.elID {
+			b.ownsBox = true
+		}
 		b.hasBorder = cs.hasBorder
 		b.borderW = cs.borderW
 		b.borderColor = scaleAlpha(cs.borderColor, cs.opacity)
@@ -768,12 +801,16 @@ func (c *collector) stampRight(b *renderBlock) {
 func (c *collector) ensure(cs *computedStyle) *renderBlock {
 	if c.cur == nil {
 		b := &renderBlock{
-			kind:    blockText,
-			boxLeft: c.content,
-			textX:   c.content,
-			quote:   c.quote,
-			pre:     c.pre,
-			marker:  c.marker,
+			kind:        blockText,
+			boxLeft:     c.content,
+			textX:       c.content,
+			quote:       c.quote,
+			pre:         c.pre,
+			marker:      c.marker,
+			ownsSizing:  c.declaresSizing,
+			ownerSeq:    c.elID,
+			depth:       c.depth,
+			ownerGeomID: c.elGeomID,
 		}
 		c.stampRight(b)
 		if cs != nil {
@@ -883,12 +920,17 @@ func (c *collector) walkElement(el *html.Node) {
 		sizePadRight                float64
 		sizeMarginRight             float64
 		sizeWidthIsOwn              bool
+		declaresSizing              bool
+		sizeInset                   float64
+		elID                        int
+		depth                       int
+		elGeomID                    int
 	}{c.style, c.content, c.quote, c.pre, c.lineH, c.bg, c.hasBG,
 		c.sizeLeft, c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth,
 		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax, c.sizeAutoLeft, c.sizeAutoRight,
 		c.contW, c.hasContW, c.contH, c.hasContH, c.ownHeightPx, c.hasOwnHeight, c.rightInset,
 		c.hasSizeOwner, c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight,
-		c.sizeWidthIsOwn}
+		c.sizeWidthIsOwn, c.declaresSizing, c.sizeInset, c.elID, c.depth, c.elGeomID}
 
 	if cs.hasBackground {
 		c.bg = scaleAlpha(cs.background, cs.opacity)
@@ -969,13 +1011,24 @@ func (c *collector) walkElement(el *html.Node) {
 		c.geomNodes[geomID] = el
 		c.geomNode[el] = geomID
 	}
+	// The id of the element a box declared here would belong to, so the box can
+	// be recorded for it even when it produces no block of its own.
+	c.elGeomID = geomID
+	// Every element is numbered, so a block can name the element that produced
+	// it. Only a block-level element declares a sizing context, though: an
+	// inline one inherits the context it sits in without owning it.
+	c.elSeq++
+	c.elID = c.elSeq
+	c.declaresSizing = block &&
+		(cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto)
 	if block {
+		c.depth++
 		// Box edges: margin then padding, relative to the parent's content box.
 		// The border box starts at boxLeft; the content is inside the border and
 		// then the padding.
 		boxLeft := c.content + cs.marginLeft
 		c.content = boxLeft + cs.borderW + cs.paddingLeft
-		if cs.hasWidth || cs.hasMaxWidth || cs.marginLeftAuto || cs.marginRightAuto {
+		if c.declaresSizing {
 			// A percentage width resolves against the containing block's content
 			// width, which an ancestor pins either with an explicit width or a
 			// max-width that clamps its auto width. Without one it stays a
@@ -988,6 +1041,10 @@ func (c *collector) walkElement(el *html.Node) {
 			c.sizePadLeft = cs.paddingLeft + cs.borderW
 			c.sizePadRight = cs.paddingRight + cs.borderW
 			c.sizeMarginRight = cs.marginRight
+			// The inset of the frame the context is declared in, which is
+			// where its own box is measured from: the containers below it add
+			// their own insets to the blocks they produce.
+			c.sizeInset = c.rightInset
 			wPx, wPct := cs.widthPx, cs.widthPct
 			resolved := true
 			if wPct != 0 {
@@ -1049,7 +1106,27 @@ func (c *collector) walkElement(el *html.Node) {
 			// edge in from the containing block's. Without this the text inside
 			// a padded wrapper would wrap against the page, not the wrapper.
 			c.rightInset += cs.marginRight + cs.paddingRight + cs.borderW
+			if c.hasContW {
+				// Its own content width is what its children resolve a
+				// percentage against, and that is the space left after its
+				// margins, padding and border. A row of columns carries
+				// "margin: 0 -15px", so its content box is wider than the one
+				// it sits in, and its columns are as wide as that.
+				if w := c.contW - cs.marginLeft - cs.marginRight -
+					cs.paddingLeft - cs.paddingRight - 2*cs.borderW; w > 0 {
+					c.contW = w
+				} else {
+					c.hasContW = false
+				}
+			}
 		}
+	}
+	// An inline-block control or button lays its label out inside its own
+	// padding and border, but never takes the block branch that applies those
+	// edges. Without this its box would start at the padding and its label
+	// would sit at the outer edge.
+	if !block && (tag == "button" || tag == "input" || tag == "select" || tag == "textarea") {
+		c.content += cs.marginLeft + cs.borderW + cs.paddingLeft
 	}
 	pre := cs.whiteSpace == "pre" || cs.whiteSpace == "pre-wrap" || tag == "pre"
 	c.pre = c.pre || pre
@@ -1071,6 +1148,10 @@ func (c *collector) walkElement(el *html.Node) {
 		c.ownHeightPx, c.hasOwnHeight = saved.ownHeightPx, saved.hasOwnHeight
 		c.rightInset = saved.rightInset
 		c.blockInset = savedBlockInset
+		c.declaresSizing, c.sizeInset = saved.declaresSizing, saved.sizeInset
+		c.elID = saved.elID
+		c.depth = saved.depth
+		c.elGeomID = saved.elGeomID
 	}()
 
 	// A floated element leaves the flow: its own subtree is collected as a
@@ -1083,7 +1164,13 @@ func (c *collector) walkElement(el *html.Node) {
 		c.flush()
 		savedRoot := c.floatRoot
 		c.floatRoot = el
+		// The subtree is collected from its containing block's frame again, so
+		// the element's own width is resolved against the same parent as
+		// before: a "width: 66%" column must not resolve against itself.
+		curContW, curHasContW := c.contW, c.hasContW
+		c.contW, c.hasContW = saved.contW, saved.hasContW
 		blocks := c.collectNode(el)
+		c.contW, c.hasContW = curContW, curHasContW
 		c.floatRoot = savedRoot
 		if len(blocks) > 0 {
 			fb := renderBlock{
@@ -1091,9 +1178,17 @@ func (c *collector) walkElement(el *html.Node) {
 				floatSide:   side,
 				floatBlocks: blocks,
 				quote:       c.quote,
-				floatW:      cs.widthPx,
-				floatPct:    cs.widthPct,
-				hasFloatW:   cs.hasWidth,
+				// The float's own left edge, so the layout can put it against
+				// its containing block's content edge rather than the column's.
+				boxLeft: c.content - cs.borderW - cs.paddingLeft,
+				// The width the collector resolved, not the style's: a
+				// percentage resolves against the containing block it was
+				// measured in, and re-resolving it here would use the column,
+				// which is wider than the content box of a row carrying
+				// "margin: 0 -15px".
+				floatW:    c.sizeWidthPx,
+				floatPct:  c.sizeWidthPct,
+				hasFloatW: c.declaresSizing && c.hasSizeWidth,
 			}
 			c.stampRight(&fb)
 			c.blocks = append(c.blocks, fb)
@@ -1243,6 +1338,8 @@ func (c *collector) walkElement(el *html.Node) {
 	if block {
 		c.flush()
 		start := len(c.blocks)
+		// This element's own block, so a box it declares is measured from its
+		// content edge rather than from whichever descendant starts there.
 		c.ensure(cs)
 		c.cur.pre = c.pre
 		c.cur.nowrap = cs.whiteSpace == "nowrap"
@@ -1290,6 +1387,12 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
 		// Inherit the current block-sizing context.
 		hasSizing:       true,
+		ownsSizing:      c.declaresSizing,
+		ownerSeq:        c.elID,
+		depth:           c.depth,
+		ownerGeomID:     c.elGeomID,
+		boxDepth:        c.depth,
+		sizeInset:       c.sizeInset,
 		sizeLeft:        c.sizeLeft,
 		boxWidthPx:      c.sizeWidthPx,
 		boxWidthPct:     c.sizeWidthPct,
@@ -1384,6 +1487,10 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 		boxLeft:       c.content,
 		textX:         c.content,
 		quote:         c.quote,
+		ownsSizing:    c.declaresSizing,
+		ownerSeq:      c.elID,
+		depth:         c.depth,
+		ownerGeomID:   c.elGeomID,
 		gap:           spacing,
 		rowGap:        spacing,
 		justify:       cs.justifyContent,
@@ -1482,6 +1589,10 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		boxLeft:       c.content,
 		textX:         c.content,
 		quote:         c.quote,
+		ownsSizing:    c.declaresSizing,
+		ownerSeq:      c.elID,
+		depth:         c.depth,
+		ownerGeomID:   c.elGeomID,
 		gap:           cs.columnGap,
 		rowGap:        cs.rowGap,
 		wrap:          cs.flexWrap,
@@ -1586,6 +1697,33 @@ func (c *collector) collectNode(n *html.Node) []renderBlock {
 	// The subtree is measured from its own left edge, so the page column's
 	// right edge no longer applies: the caller sets the width instead.
 	c.rightInset, c.blockInset = 0, 0
+	// A float or a flex item is a containing block of its own, whose width the
+	// layout decides. An ancestor's width context must not reach inside it: a
+	// "width:1200px" wrapper around a flex row made every item in the row
+	// measure itself against the wrapper instead of its own column.
+	savedSizing := sizingContext{
+		owner: c.hasSizeOwner, left: c.sizeLeft,
+		widthPx: c.sizeWidthPx, widthPct: c.sizeWidthPct, hasWidth: c.hasSizeWidth,
+		widthIsOwn: c.sizeWidthIsOwn,
+		maxPx:      c.sizeMaxPx, maxPct: c.sizeMaxPct, hasMax: c.hasSizeMax,
+		autoLeft: c.sizeAutoLeft, autoRight: c.sizeAutoRight,
+		boxLeft: c.sizeBoxLeft, padLeft: c.sizePadLeft, padRight: c.sizePadRight,
+		marginRight: c.sizeMarginRight, inset: c.sizeInset,
+	}
+	c.hasSizeOwner, c.sizeLeft = false, 0
+	c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth, c.sizeWidthIsOwn = 0, 0, false, false
+	c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = 0, 0, false
+	c.sizeAutoLeft, c.sizeAutoRight = false, false
+	c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight, c.sizeMarginRight, c.sizeInset = 0, 0, 0, 0, 0
+	defer func() {
+		c.hasSizeOwner, c.sizeLeft = savedSizing.owner, savedSizing.left
+		c.sizeWidthPx, c.sizeWidthPct, c.hasSizeWidth = savedSizing.widthPx, savedSizing.widthPct, savedSizing.hasWidth
+		c.sizeWidthIsOwn = savedSizing.widthIsOwn
+		c.sizeMaxPx, c.sizeMaxPct, c.hasSizeMax = savedSizing.maxPx, savedSizing.maxPct, savedSizing.hasMax
+		c.sizeAutoLeft, c.sizeAutoRight = savedSizing.autoLeft, savedSizing.autoRight
+		c.sizeBoxLeft, c.sizePadLeft, c.sizePadRight = savedSizing.boxLeft, savedSizing.padLeft, savedSizing.padRight
+		c.sizeMarginRight, c.sizeInset = savedSizing.marginRight, savedSizing.inset
+	}()
 	c.flush()
 	start := len(c.blocks)
 	c.walkNode(n)
@@ -1597,6 +1735,20 @@ func (c *collector) collectNode(n *html.Node) []renderBlock {
 	return out
 }
 
+// sizingContext is the block-sizing context of the element being walked, saved
+// around a subtree that lays out in a box of its own.
+type sizingContext struct {
+	owner                                   bool
+	left                                    float64
+	widthPx, widthPct                       float64
+	hasWidth, widthIsOwn                    bool
+	maxPx, maxPct                           float64
+	hasMax                                  bool
+	autoLeft, autoRight                     bool
+	boxLeft, padLeft, padRight, marginRight float64
+	inset                                   float64
+}
+
 // applyBoxEdges adds an element's vertical margin and padding to the first and
 // last blocks its subtree produced. Doing it by index rather than on c.cur
 // matters because a block whose first child is itself a block is flushed away
@@ -1604,6 +1756,17 @@ func (c *collector) collectNode(n *html.Node) []renderBlock {
 func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
 	if cs == nil || start >= len(c.blocks) {
 		return
+	}
+	// A block a descendant produced is not inside this element's own box: the
+	// edges added here are the element's, and its rectangle is the block's
+	// grown by them.
+	owns := func(b *renderBlock) bool { return b.ownerSeq == c.elID }
+	edge := cs.paddingTop + cs.borderW
+	if !owns(&c.blocks[start]) {
+		addAncPad(&c.blocks[start], c.elGeomID, 0, 0, edge, 0)
+	}
+	if last := &c.blocks[len(c.blocks)-1]; !owns(last) {
+		addAncPad(last, c.elGeomID, 0, 0, 0, cs.paddingBottom+cs.borderW)
 	}
 	first := &c.blocks[start]
 	first.marginTop += cs.marginTop
@@ -1617,6 +1780,10 @@ func (c *collector) applyBoxEdges(start int, cs *computedStyle) {
 	// no blocks of its own hands its range to its first descendant's blocks:
 	// those already carry their own element's right edges, so keep them.
 	for i := start; i < len(c.blocks); i++ {
+		if !owns(&c.blocks[i]) {
+			addAncPad(&c.blocks[i], c.elGeomID,
+				cs.paddingLeft+cs.borderW, cs.paddingRight+cs.borderW, 0, 0)
+		}
 		if c.blocks[i].hasRightEdges {
 			continue
 		}

@@ -377,7 +377,13 @@ func drawBorder(img *image.RGBA, x, y, w, h, t float64, c color.RGBA) {
 type drawBox struct {
 	// ref is the box's identity within one column layout, used to keep a
 	// container's box in front of the boxes of the children it laid out.
-	ref                      int
+	ref int
+	// depth is how deeply the box's element is nested, and abs records that
+	// the box is out of flow. Boxes paint ancestor first and out-of-flow
+	// content above the flow, so the painter sorts on both: without it a
+	// page's body background covers every panel in the first screen.
+	depth                    int
+	abs                      bool
 	x, y, w, h               float64
 	bg                       color.RGBA
 	hasBG                    bool
@@ -676,6 +682,43 @@ func (g *geomSink) rects() map[int]Rect {
 	return out
 }
 
+// ancPad is one enclosing element's edges around a block, in the order the
+// elements are walked: innermost first. An element's own rectangle is the
+// block's extended by every entry up to and including its own, so a padded
+// container is not reported as the size of the content inside it.
+type ancPad struct {
+	geomID      int
+	left, right float64
+	top, bottom float64
+}
+
+// addAncPad adds one element's edges to a block, keeping a single entry per
+// element.
+func addAncPad(b *renderBlock, geomID int, left, right, top, bottom float64) {
+	for i := range b.ancPads {
+		if b.ancPads[i].geomID == geomID {
+			b.ancPads[i].left += left
+			b.ancPads[i].right += right
+			b.ancPads[i].top += top
+			b.ancPads[i].bottom += bottom
+			return
+		}
+	}
+	b.ancPads = append(b.ancPads, ancPad{geomID: geomID, left: left, right: right, top: top, bottom: bottom})
+}
+
+// padTo sums the edges up to and including the element with this id, which is
+// where an enclosing element's rectangle ends.
+func (b *renderBlock) padTo(geomID int) (left, right, top, bottom float64) {
+	for _, p := range b.ancPads {
+		left, right, top, bottom = left+p.left, right+p.right, top+p.top, bottom+p.bottom
+		if p.geomID == geomID {
+			break
+		}
+	}
+	return
+}
+
 type renderBlockKind int
 
 const (
@@ -844,6 +887,43 @@ type renderBlock struct {
 	// own element, so an ancestor without blocks of its own cannot overwrite
 	// them.
 	hasRightEdges bool
+	// ownsSizing marks the block the sizing element itself starts: the one
+	// whose left edge is the declaring element's content edge rather than a
+	// descendant's. It is what tells the layout that the sizing context's box
+	// belongs to this block.
+	ownsSizing bool
+	// depth is how deeply nested the block's element is, which is the order
+	// backgrounds have to be painted in.
+	depth int
+	// ownerSeq numbers the element that produced the block. A box belongs to
+	// the element that declared it, and only that element's blocks are
+	// measured outwards from its own content edge; a descendant's block stops
+	// at the edge and the box's right padding is added instead.
+	ownerSeq int
+	// ownsBox records that this block's element is the one whose box the block
+	// carries, which is what decides between those two measurements.
+	ownsBox bool
+	// sizeInset is the right inset of the containing block the sizing context
+	// was declared in. The context's available width is measured from there,
+	// not from the column, so a child's own padding does not shrink the box
+	// its ancestor is centered in.
+	sizeInset float64
+	// ancPads are the edges the enclosing elements put around this block: the
+	// vertical padding of a container that produces no block of its own merges
+	// onto the first and last blocks of its range, and its horizontal padding
+	// is already folded into theirs. Those edges belong to the container's
+	// rectangle, not the block's, which is what lets getBoundingClientRect
+	// tell a container from what it contains.
+	ancPads []ancPad
+	// ownerGeomID is the geometry id of the element that produced the block.
+	ownerGeomID int
+	// boxPadRight is the right padding and border of the box this block
+	// carries, which is where the box's right edge sits beyond the block's
+	// content edge. It belongs to the boxed element, so a container that
+	// claims its own right edges does not lose it. boxDepth is that element's
+	// nesting depth, which is where the box paints.
+	boxPadRight float64
+	boxDepth    int
 	// Out-of-flow children (position:absolute/fixed) placed relative to this
 	// block's content box, and the offset from position:relative.
 	abs   []absChild
@@ -886,6 +966,19 @@ func layoutBlocks(blocks []renderBlock, width int, baseSize float64) *renderDoc 
 	g := newGeomSink()
 	lines, endY := layoutColumn(blocks, 0, colW, 0, baseSize, &boxes, g)
 	doc.lines = lines
+	// Paint order: an ancestor's background belongs behind its descendants',
+	// and out-of-flow boxes above all of them. The order the layout happened
+	// to emit them in is not that order: a container's box is only complete
+	// once its children have been laid out.
+	sort.SliceStable(boxes, func(i, j int) bool {
+		if boxes[i].abs != boxes[j].abs {
+			return !boxes[i].abs
+		}
+		if boxes[i].abs {
+			return false
+		}
+		return boxes[i].depth < boxes[j].depth
+	})
 	doc.boxes = boxes
 	doc.geom = g.rects()
 	doc.height = int(endY + 0.5)
@@ -918,9 +1011,25 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		at  int
 	}
 	y := startY
-	recordBox := func(b renderBlock, top, bottom, x, w float64) {
-		if g != nil && len(b.geomIDs) > 0 {
-			g.record(b.geomIDs, x, top, x+w, bottom)
+	recordBox := func(b renderBlock, top, bottom, x, w, ownX, ownW float64) {
+		if g != nil {
+			// One block answers for every element that encloses it. The
+			// element that produced it is measured from its own box; the ones
+			// around it also cover the edges they put there, so a padded
+			// container is not reported as its content.
+			ownTop, ownBottom := top, bottom
+			for _, p := range b.ancPads {
+				ownTop, ownBottom = ownTop+p.top, ownBottom-p.bottom
+			}
+			for _, id := range b.geomIDs {
+				ex, ew, et, eb := ownX, ownW, ownTop, ownBottom
+				if id != b.ownerGeomID {
+					l, r, t, bo := b.padTo(id)
+					ex, ew = ownX-l, ownW+l+r
+					et, eb = ownTop-t, ownBottom+bo
+				}
+				g.record([]int{id}, ex, et, ex+ew, eb)
+			}
 		}
 		if b.boxID == 0 {
 			return
@@ -929,8 +1038,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		if acc == nil {
 			acc = &boxAcc{
 				dx: drawBox{
-					ref: b.boxID,
-					x:   x, w: w,
+					ref:   b.boxID,
+					depth: b.boxDepth,
+					x:     x, w: w,
 					bg: b.boxBG, hasBG: b.boxHasBG,
 					borderW: b.borderW, borderC: b.borderColor, hasBorder: b.hasBorder,
 					shadowX: b.shadowX, shadowY: b.shadowY,
@@ -1033,6 +1143,10 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// box-sizing:border-box subtracting the edge, and auto horizontal
 		// margins center whatever is left over.
 		var bb, edge, contentW, inner, boxX, boxWidthOuter, contentRight float64
+		// ownOuter is the block's own border box, which is what its element is
+		// reported as. boxWidthOuter is the box it paints, which belongs to the
+		// element that declared it and may be wider or narrower.
+		var ownOuter float64
 		var extra, shift float64
 		// The containing block's content right edge: the column's, less any
 		// inset an ancestor container put on it.
@@ -1044,8 +1158,11 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			// A width context is active. Resolve the box of the element that
 			// declared it: "max-width:1200px;margin:0 auto" centers that
 			// element, and everything inside it follows the same shift and is
-			// measured against its content edge.
-			obb := contRight - b.sizeBoxLeft - b.sizeMarginRight
+			// measured against its content edge. The frame is the containing
+			// block the context was declared in, which is the column less that
+			// container's own inset: a padded container inside the sized
+			// element must not shrink the box the element is centered in.
+			obb := colW - b.sizeInset - b.sizeBoxLeft - b.sizeMarginRight
 			if obb < 0 {
 				obb = 0
 			}
@@ -1087,20 +1204,30 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				oShift = oExtra
 			}
 			// The declaring element's own block: the textX it carries is
-			// already its content edge.
-			own := b.boxLeft == b.sizeLeft
+			// already its content edge. Any other block is inside the box,
+			// however its left edge lines up with it.
+			own := b.ownsSizing
 			switch {
 			case own:
 				bb, edge, contentW = obb, oedge, oContent
 				shift = oShift
 				inner = b.textX - b.sizeLeft
 				boxX = colX + b.sizeBoxLeft + shift
-				boxWidthOuter = outer
+				boxWidthOuter, ownOuter = outer, outer
+				if !b.ownsBox {
+					// The block declares a width of its own but carries a
+					// container's box: that box reaches the container's
+					// content edge, a little past the block's own width.
+					boxWidthOuter = b.sizeBoxLeft + obb + b.boxPadRight - b.borderLeft
+				}
 			default:
 				// A block inside the declaring element: it is measured from
 				// where it starts to the declaring element's content edge, and
-				// inherits the declaring element's shift.
-				bb = b.sizeLeft + oContent - b.boxLeft
+				// inherits the declaring element's shift. Containers between
+				// the two pull that edge in by their own inset, which is
+				// measured from the column, so the part inside the declaring
+				// element is what counts here.
+				bb = b.sizeLeft + oContent - (b.rightInset - b.sizeInset) - b.boxLeft
 				if bb < 0 {
 					bb = 0
 				}
@@ -1139,8 +1266,20 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				}
 				inner = b.textX - b.boxLeft
 				contentRight = b.paddingRight
-				boxX = colX + b.borderLeft + shift
+				boxX = colX + b.boxLeft + shift
+				// The box this block carries, when it is not the declaring
+				// element's own: it reaches the containing block's content
+				// edge, then adds the box's own right padding and border. The
+				// declaring element's own block already reaches past that
+				// edge by its right padding, so it does not.
 				boxWidthOuter = contentW + edge
+				ownOuter = bb
+				if b.boxID != 0 {
+					boxWidthOuter = b.boxLeft + bb - b.borderLeft
+					if !b.ownsBox {
+						boxWidthOuter += b.boxPadRight
+					}
+				}
 			}
 		} else {
 			bb = contRight - b.boxLeft - b.marginRight
@@ -1185,7 +1324,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				shift = extra
 			}
 			inner = b.textX - b.boxLeft
-			boxX = colX + b.borderLeft + shift
+			boxX = colX + b.boxLeft + shift
 			// The border box: from the block's left edge to the content edge
 			// plus the right padding and border.
 			contentRight = b.paddingRight + b.borderW
@@ -1194,12 +1333,26 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				leftEdge = b.boxLeft - b.borderLeft
 			}
 			boxWidthOuter = contentW - inner - contentRight + leftEdge + contentRight
+			ownOuter = boxWidthOuter
 			if specified {
 				// A declared width is the whole border box, not a line
 				// filling one, so the expression above does not apply.
 				// Drawing only the content of five "width: 20%" flex
 				// columns hid the gutter between them.
 				boxWidthOuter = contentW + edge
+				ownOuter = boxWidthOuter
+			}
+			if b.boxID != 0 {
+				// The box belongs to the element that owns it, so it reaches
+				// that element's content edge rather than stopping at this
+				// block's own width: a container with a fixed-width child must
+				// still paint its own full box. The owning element's own block
+				// is already measured to that edge; a descendant's stops at it
+				// and the box's right padding follows.
+				boxWidthOuter = b.boxLeft + bb - b.borderLeft
+				if !b.ownsBox {
+					boxWidthOuter += b.boxPadRight
+				}
 			}
 		}
 		blockTop := y
@@ -1262,10 +1415,17 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			// the floats already open at that height: Wikipedia's footer is a
 			// row of left floats ("Privacy policy", "About Wikipedia", ...),
 			// and stacking them all at the same x hides all but the last.
+			// A float sits against the content edge of its containing block,
+			// not the column: a floated column inside a padded row starts
+			// where the row's content does, and follows the shift of a
+			// centered one. bb is that content edge, measured from the block's
+			// own left.
+			left := colX + shift + b.boxLeft
+			right := left + bb
 			fy := y
-			fx := colX
+			fx := left
 			if b.floatSide == "right" {
-				fx = colX + colW - fw
+				fx = right - fw
 			}
 			// A float's margins are part of the space it takes up.
 			fMargin := 0.0
@@ -1284,13 +1444,13 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					fx = f.x + f.w + f.margin
 				}
 			}
-			if fx < colX || fx+fw > colX+colW {
+			if fx < left || fx+fw > right {
 				// No room beside them: this float drops below the ones in its
 				// way, as the float placement rules say.
 				fy = floatBottom()
-				fx = colX
+				fx = left
 				if b.floatSide == "right" {
-					fx = colX + colW - fw
+					fx = right - fw
 				}
 			}
 			// The float's own layout reserves its margin, so it is measured
@@ -1302,6 +1462,10 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				fh = 0
 			}
 			floats = append(floats, floatBox{side: b.floatSide, x: fx, w: fw, bottom: fy + fh, margin: fMargin})
+			// The float's own rectangle, for the elements that contain it: a
+			// container whose children all float would otherwise report as
+			// empty, since its own blocks were collected inside the float.
+			recordBox(b, fy, fy+fh, fx, fw, fx, fw)
 			continue
 		default:
 			textStart := colX + b.textX + shift
@@ -1475,9 +1639,23 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			absLines = append(absLines, layoutAbsChildren(b.abs, originX, contentTop, contentW, y-contentTop, baseSize, &absBoxes, g)...)
 		}
 		// The box is the border box: from the top of the content box up over
-		// the top padding and border, and down past the bottom ones.
+		// the top padding and border, and down past the bottom ones. A block
+		// that carries a box starts that box at the owning element's own left
+		// edge, which is not the block's when the element produced several.
+		boxRectX := boxX
+		if b.boxID != 0 {
+			boxRectX = colX + b.borderLeft + shift
+		}
+		// The rectangle of the block's own element: the box it carries when it
+		// owns it, otherwise the space it was given, which is what
+		// getBoundingClientRect reports for a plain container.
+		ownX, ownW := boxX, ownOuter
+		if b.ownsBox {
+			// The element declared the box, so its rectangle is the box.
+			ownX, ownW = boxRectX, boxWidthOuter
+		}
 		recordBox(b, contentTop-b.paddingTop-b.borderW,
-			y+b.paddingBottom+b.borderW, boxX, boxWidthOuter)
+			y+b.paddingBottom+b.borderW, boxRectX, boxWidthOuter, ownX, ownW)
 		if b.boxID != 0 && (b.flexRow || b.grid || b.table) && len(*boxes) > childBoxStart {
 			boxInserts = append(boxInserts, struct {
 				ref int
@@ -1543,6 +1721,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 	}
 	// Out-of-flow content paints above the flow: its boxes after the flow's
 	// boxes, its lines after the flow's lines.
+	for i := range absBoxes {
+		absBoxes[i].abs = true
+	}
 	*boxes = append(*boxes, absBoxes...)
 	out = append(out, absLines...)
 	return out, y
@@ -1606,8 +1787,10 @@ func layoutFlex(b renderBlock, colX, colW, y, baseSize float64, boxes *[]drawBox
 	// even when that is wider than the containing block: go.dev's testimonial
 	// carousel is a 10000px row of 1000px slides inside a 1000px wrapper that
 	// clips it, and measuring the row at the wrapper's width squeezed ten
-	// slides into a sixth of the space and wrapped their text.
-	if b.hasBoxWidth || b.hasBoxMaxWidth {
+	// slides into a sixth of the space and wrapped their text. A row that only
+	// inherits an ancestor's width must not use it: the row's own width is
+	// already the space it was given.
+	if b.ownsSizing && (b.hasBoxWidth || b.hasBoxMaxWidth) {
 		w := b.boxWidthPx + b.boxWidthPct*avail
 		if b.hasBoxMaxWidth {
 			mw := b.boxMaxWidthPx + b.boxMaxWidthPct*avail

@@ -75,10 +75,12 @@ func TestGeometryFollowsMutation(t *testing.T) {
 	}
 }
 
-// A parent's rectangle covers its children. When a container holds a single
-// block child, the engine merges the container's padding onto that one block, so
-// parent and child share a rectangle; this is the known approximation of the
-// text-flow renderer, and the parent's own height is still correct.
+// A parent's rectangle covers its children, and the child's rectangle is its
+// own. A container that produces no block of its own hands its padding to the
+// first block inside it, so the two shared a rectangle until the padding each
+// block carries was attributed to the element that put it there. The outer sits
+// inside the body's default 8px margin: Chromium reports it as 8,8,1264,50 and
+// the inner as 18,18,1244,30 for this page.
 func TestParentRectSpansChildren(t *testing.T) {
 	p := flexPage(t, `<div id="outer" style="background:#f00;padding:10px">
 		<p id="inner" style="background:#00f;height:30px;margin:0">x</p>
@@ -87,6 +89,10 @@ func TestParentRectSpansChildren(t *testing.T) {
 	inner := p.ElementRect(p.GetElementByID("inner"))
 	if outer.Height != 50 {
 		t.Fatalf("outer height = %g, want 50 (30 + 2*10 padding)", outer.Height)
+	}
+	if inner.X != 18 || inner.Y != 18 || inner.Width != 1244 || inner.Height != 30 {
+		t.Errorf("inner rect = %g,%g %gx%g, want 18,18 1244x30",
+			inner.X, inner.Y, inner.Width, inner.Height)
 	}
 	if outer.X > inner.X || outer.Right() < inner.Right() {
 		t.Fatalf("outer %+v does not cover inner %+v horizontally", outer, inner)
