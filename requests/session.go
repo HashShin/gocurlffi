@@ -86,13 +86,13 @@ func (s *Session) UserAgent() string {
 //	sess.Browse("https://example.com/")  // the same URL, rendered
 //
 // It takes anything Send does, and Get with WithBrowser reaches the same page.
-func (s *Session) Browse(req RequestTypes) (*Response, error) {
+func (s *Session) Browse(req RequestTypes, opts ...Option) (*Response, error) {
 	r, err := toRequest(req)
 	if err != nil {
 		return nil, err
 	}
 	r.Browser = true
-	return s.send(r)
+	return s.send(r, opts)
 }
 
 // sendBrowser loads a request in the browser the browser package installed,
@@ -197,6 +197,18 @@ func (s *Session) Request(method, rawURL string, opts ...Option) (*Response, err
 	}
 
 	if cfg.browser {
+		// A page is fetched by loading a URL, so a method other than GET or a
+		// body has nowhere to go. Refusing it here rather than dropping it is
+		// the whole point: the caller asked for a fingerprint and a body, and
+		// silently sending neither would be worse than an error.
+		if up := strings.ToUpper(method); up != "" && up != "GET" {
+			return nil, &InterfaceError{newError(
+				"Request.Browser loads a URL: it does not send a "+up, 0, nil)}
+		}
+		if cfg.content != nil || cfg.data != nil || cfg.jsonBody != nil {
+			return nil, &InterfaceError{newError(
+				"Request.Browser loads a URL: a request body has no browser path", 0, nil)}
+		}
 		// The same request as a Request value: the browser path takes a URL,
 		// so the options that shape the load and not the body carry over.
 		return s.sendBrowser(Request{
@@ -564,26 +576,28 @@ func (s *Session) Trace(rawURL string, opts ...Option) (*Response, error) {
 //
 // Fields left at their zero value fall back to the session's defaults, so an
 // empty Method means GET and an empty Timeout means the session timeout.
-func (s *Session) Send(req RequestTypes) (*Response, error) {
+func (s *Session) Send(req RequestTypes, opts ...Option) (*Response, error) {
 	r, err := toRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	return s.send(r)
+	return s.send(r, opts)
 }
 
-// send performs one Request, which is what Send has always done: the accepted
-// input shapes are resolved before it is called.
-func (s *Session) send(req Request) (*Response, error) {
-	if req.Browser {
-		return s.sendBrowser(req)
-	}
+// send performs one Request: its fields become options, the caller's options
+// follow them, and Request decides which path the result takes. A later option
+// wins, so Send(Request{...}, WithTimeout(...)) asks for the request with the
+// timeout overridden.
+func (s *Session) send(req Request, extra []Option) (*Response, error) {
 	method := req.Method
 	if method == "" {
 		method = "GET"
 	}
 
-	var opts []Option
+	opts := make([]Option, 0, len(extra)+10)
+	if req.Browser {
+		opts = append(opts, WithBrowser())
+	}
 	if req.Headers != nil {
 		opts = append(opts, WithHeaders(req.Headers))
 	}
@@ -608,6 +622,9 @@ func (s *Session) send(req Request) (*Response, error) {
 	if req.Proxy != "" {
 		opts = append(opts, WithProxy(req.Proxy))
 	}
+	// The caller's options come last, so a later option wins over the field it
+	// names.
+	opts = append(opts, extra...)
 	return s.Request(method, req.URL, opts...)
 }
 
@@ -637,10 +654,10 @@ func Do(method, rawURL string, opts ...Option) (*Response, error) {
 // It reads the whole body before returning, like the other helpers here. Use
 // Session.Send instead when cookies and connections should be reused across
 // requests.
-func Send(req RequestTypes) (*Response, error) {
+func Send(req RequestTypes, opts ...Option) (*Response, error) {
 	s := NewSession()
 	defer s.Close()
-	return s.Send(req)
+	return s.Send(req, opts...)
 }
 
 // Browse loads a request in the browser in a throwaway session, spelled like
@@ -648,8 +665,8 @@ func Send(req RequestTypes) (*Response, error) {
 // is what installs it:
 //
 //	rsp, err := Browse("https://quotes.toscrape.com/js/")
-func Browse(req RequestTypes) (*Response, error) {
-	return NewSession().Browse(req)
+func Browse(req RequestTypes, opts ...Option) (*Response, error) {
+	return NewSession().Browse(req, opts...)
 }
 
 // Get sends a GET request in a throwaway session.

@@ -14,10 +14,7 @@ import (
 )
 
 func main() {
-	rsp, err := Send(Request{
-		URL:         "https://tls.browserleaks.com/json",
-		Impersonate: DefaultChrome,
-	})
+	rsp, err := Send("https://tls.browserleaks.com/json", WithImpersonate(DefaultChrome))
 	if err != nil {
 		panic(err)
 	}
@@ -25,12 +22,14 @@ func main() {
 }
 ```
 
-`Send` takes a `Request`, or just a URL, which is a GET with the session's
-defaults. `Get` and its siblings take a URL and options:
+`Send` takes a URL and options. A `Request` value does the same job when
+several fields are set at once, and `Get`, `Post` and the rest are the same
+call under the method's name:
 
 ```go
-rsp, err := Send("https://tls.browserleaks.com/json")
-rsp, err = Get("https://tls.browserleaks.com/json", WithImpersonate(DefaultChrome))
+req := Request{URL: url, Impersonate: DefaultChrome, Timeout: 15 * time.Second}
+rsp, err := Send(req)                 // a request as a value
+rsp, err = sess.Send(req, WithProxy(p)) // ...and an option on top of it
 ```
 
 Reuse a session to keep cookies and connections:

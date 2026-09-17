@@ -94,13 +94,17 @@ rsp, err := sess.Post("https://httpbin.org/post",
 )
 ```
 
-`Send` and `Browse` accept a `Request`, a `*Request` or a URL string, so the
-common case needs no literal and the path is named by the call:
+`Send` and `Browse` accept a `Request`, a `*Request` or a URL string, and take
+options, so the common case needs no literal and the path is named by the call:
 
 ```go
-sess.Send("https://example.com/")   // impersonated HTTP
-sess.Browse("https://example.com/") // the same URL, rendered
+sess.Send("https://example.com/", WithImpersonate(DefaultChrome))   // impersonated HTTP
+sess.Browse("https://example.com/", WithImpersonate(DefaultChrome)) // the same URL, rendered
 ```
+
+Options are applied after the request's own fields, so one wins over the field
+it names: `Send(Request{...}, WithTimeout(5*time.Second))` is that request with
+a shorter timeout.
 
 `Browser` is the one-word way to ask for the browser, which runs the page's
 scripts and returns the document as it settled rather than the bytes the server

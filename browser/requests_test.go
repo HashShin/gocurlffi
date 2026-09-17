@@ -398,3 +398,43 @@ func TestOneWordForms(t *testing.T) {
 		t.Errorf("error %q does not name the type it got", err)
 	}
 }
+
+// Options work alongside a URL and alongside a Request, and they reach the
+// browser path too: a fingerprint named as an option must not be dropped
+// because the request was written as a URL.
+func TestSendAndBrowseTakeOptions(t *testing.T) {
+	uas := make(chan string, 3)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uas <- r.UserAgent()
+		_, _ = w.Write([]byte("<!doctype html><html><body>hi</body></html>"))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+
+	for _, err := range []error{
+		func() error { _, e := sess.Send(srv.URL, requests.WithImpersonate("chrome150")); return e }(),
+		func() error { _, e := sess.Browse(srv.URL, requests.WithImpersonate("chrome150")); return e }(),
+		func() error {
+			// An option on top of a Request value: the field and the option
+			// must agree here, since the option is applied last.
+			_, e := sess.Send(requests.Request{URL: srv.URL}, requests.WithImpersonate("chrome150"))
+			return e
+		}(),
+	} {
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+
+	want := <-uas
+	for i := 1; i < 3; i++ {
+		if got := <-uas; got != want {
+			t.Errorf("user agent %d = %q, want %q", i, got, want)
+		}
+	}
+	if !strings.Contains(want, "Chrome/") {
+		t.Errorf("user agent = %q, want the impersonated one", want)
+	}
+}

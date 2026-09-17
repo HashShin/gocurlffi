@@ -13,15 +13,13 @@
 //		sess := NewSession()
 //		defer sess.Close()
 //
-//		rsp, err := sess.Send(Request{
-//			Method: "GET",
-//			URL:    "https://httpbun.com/get",
-//			Headers: Headers{
+//		rsp, err := sess.Get("https://httpbun.com/get",
+//			WithHeaders(Headers{
 //				"Accept: application/json",
 //				"X-Custom: value",
-//			},
-//			Impersonate: Chrome146,
-//		})
+//			}),
+//			WithImpersonate(Chrome146),
+//		)
 //		if err != nil {
 //			panic(err)
 //		}
@@ -36,7 +34,7 @@
 // A request can also be loaded in the browser, which runs the page's scripts
 // and returns the document as it settled:
 //
-//	rsp, err := Send(Request{URL: "https://example.com/", Browser: true})
+//	rsp, err := Send("https://example.com/", WithBrowser())
 //
 // That needs the browser package linked into the program, since it is the one
 // that brings a JavaScript engine:
