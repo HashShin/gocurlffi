@@ -135,39 +135,66 @@ func main() {
 }
 ```
 
-Options that outlive one page - the fingerprint, a proxy, robots.txt, a hook
-that blocks or answers requests - go on the browser. `Open` returns the page
-object `Browse` builds for one request:
+To read the page and drive it, open it as an object. The same import carries
+that API:
 
 ```go
-b := browser.New(browser.Options{
-	Impersonate: browser.Chrome131,
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	. "github.com/HashShin/gocurlffi"
+)
+
+func main() {
+	b := New(BrowserOptions{Impersonate: DefaultChrome})
+	defer b.Close()
+
+	p, err := b.Open("https://quotes.toscrape.com/login")
+	if err != nil {
+		panic(err)
+	}
+
+	p.Fill("#username", "me")
+	p.Fill("#password", "secret")
+	p.Click("input[type=submit]")
+	p.WaitForSelector("a[href='/logout']", 5*time.Second)
+
+	png, _ := p.Screenshot(ScreenshotOptions{Width: 1280, Scale: 2})
+	os.WriteFile("page.png", png, 0o644)
+
+	fmt.Println(p.Title())
+}
+```
+
+Every call is a method on the page, and a click carries its own meaning: it
+submits the form a submit button belongs to, or follows the link it is on, so
+filling, clicking, waiting and shooting is one sequence.
+
+Options that outlive one page - the fingerprint, a proxy, robots.txt, a hook
+that blocks or answers requests - go on the browser:
+
+```go
+b := New(BrowserOptions{
+	Impersonate: Chrome131,
 	Proxy:       proxy,
 	ObeyRobots:  true,
-	Intercept: func(r *browser.Request) *browser.Response {
+	Intercept: func(r *BrowserRequest) *BrowserResponse {
 		if r.ResourceType == "image" {
-			return browser.Block()
+			return Block()
 		}
 		return nil
 	},
 })
 defer b.Close()
-
-p, _ := b.Open(url)
 ```
 
-The page is driven by calls on it, in the order they are written, so a login and
-a screenshot are one sequence:
-
-```go
-p.Fill("#user", "me")
-p.Fill("#pass", "secret")
-p.Click("button[type=submit]")
-p.WaitForSelector("#account", 5*time.Second)
-
-png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
-os.WriteFile("page.png", png, 0o644)
-```
+`Get`, `Options`, `Request` and `Response` stay the HTTP verbs and messages in
+this namespace, so the browser package's page shortcuts of those names -
+`browser.Get`, `browser.Options` - are reached by importing it.
 
 ---
 

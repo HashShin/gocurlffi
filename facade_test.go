@@ -11,22 +11,35 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/HashShin/gocurlffi/browser"
 )
 
 // The facade is a list of aliases with no code of its own, so its one failure
-// mode is falling behind the package it aliases: a type or option added to
+// mode is falling behind the packages it aliases: a type or option added to
 // requests and not re-exported here is invisible to a caller using the dotted
 // form, and nothing else would notice.
 //
-// This compares the two sets of exported names directly from the source, which
-// catches both a missing alias and a stale one.
+// This compares the sets of exported names directly from the source, which
+// catches both a missing alias and a stale one. The browser contributes the
+// page API, and its names may be spelled differently here when the plain name
+// is already an HTTP verb or message.
 func TestFacadeCoversRequests(t *testing.T) {
 	underlying := exportedNames(t, filepath.Join("requests"))
+	pageAPI := exportedNames(t, filepath.Join("browser"))
 	facade := exportedNames(t, ".")
 
 	// A couple of names belong to the aliased package but make no sense
 	// unqualified, so they are deliberately absent.
 	skip := map[string]bool{}
+
+	// Facade name -> the browser name it renames, for the four the facade
+	// cannot carry under their own name.
+	renamed := map[string]string{
+		"BrowserOptions":  "Options",
+		"BrowserRequest":  "Request",
+		"BrowserResponse": "Response",
+	}
 
 	var missing []string
 	for name := range underlying {
@@ -45,14 +58,44 @@ func TestFacadeCoversRequests(t *testing.T) {
 
 	var stale []string
 	for name := range facade {
-		if !underlying[name] {
-			stale = append(stale, name)
+		if underlying[name] || pageAPI[name] {
+			continue
 		}
+		if src, ok := renamed[name]; ok && pageAPI[src] {
+			continue
+		}
+		stale = append(stale, name)
 	}
 	sort.Strings(stale)
 	if len(stale) > 0 {
-		t.Errorf("these names are aliased here but no longer exist in requests: %v", stale)
+		t.Errorf("these names are aliased here but exist in neither requests nor browser: %v", stale)
 	}
+}
+
+// The page API is part of the one-import promise: a program that imports the
+// facade has to be able to open a page and drive it without naming the browser
+// package. This names what that takes, so a rewrite cannot quietly drop it.
+func TestFacadeCarriesThePageAPI(t *testing.T) {
+	facade := exportedNames(t, ".")
+	for _, name := range []string{
+		"New", "Browser", "Page", "BrowserOptions", "ScreenshotOptions",
+		"BrowserRequest", "BrowserResponse", "Block", "Fulfill",
+	} {
+		if !facade[name] {
+			t.Errorf("gocurlffi.go no longer aliases %s, which the README's page sample needs", name)
+		}
+	}
+}
+
+// The renamed aliases must still be aliases of the browser's own types, not
+// copies, or a *Page from the browser package would not be a *Page here.
+func TestFacadePageAliasesAreTheSameTypes(t *testing.T) {
+	var (
+		_ *Page             = (*browser.Page)(nil)
+		_ *Browser          = (*browser.Browser)(nil)
+		_ BrowserOptions    = browser.Options{}
+		_ ScreenshotOptions = browser.ScreenshotOptions{}
+	)
 }
 
 // exportedNames returns the exported top-level type, func, var and const names

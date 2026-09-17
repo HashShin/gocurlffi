@@ -41,9 +41,21 @@
 // with, which roughly doubles the binary; a program that only makes requests
 // imports [requests] instead and leaves it out.
 //
-// The page API - opening a page, reading it, driving it - is the browser
-// package's own, since two of its names, Get and Options, are the HTTP verbs
-// here:
+// The page object behind a rendered request is part of this namespace too, so
+// one import drives a page as well as fetches it:
+//
+//	b := New(BrowserOptions{Impersonate: Chrome131})
+//	defer b.Close()
+//
+//	p, err := b.Open("https://example.com/")
+//	p.Fill("#user", "me")
+//	p.Click("button[type=submit]")
+//	png, _ := p.Screenshot(ScreenshotOptions{Width: 1280})
+//
+// The names this package cannot carry keep their own spelling: Get and Options
+// are the HTTP verbs here, and Request and Response are the HTTP messages, so
+// the browser package's Get, Options, Request and Response are reached by
+// importing it:
 //
 //	import "github.com/HashShin/gocurlffi/browser"
 //
@@ -51,8 +63,8 @@
 //
 // A dot import is a deliberate trade. Go's tooling discourages it, and
 // staticcheck reports it as ST1001, because a dotted package puts every name it
-// exports into the file: this one brings in 32 types, 51 functions and 49
-// constants. Import the requests package normally instead if any of those names
+// exports into the file: this one brings in 40 types, 59 functions, 49
+// constants and one error sentinel. Import the requests package normally instead if any of those names
 // is already taken in your file. To keep the dot import and silence the check,
 // add "//lint:file-ignore ST1001 reason" at the top of the file, or exclude
 // ST1001 in staticcheck.conf.
@@ -62,18 +74,22 @@
 package gocurlffi
 
 import (
-	// The browser registers itself behind requests.Browser from its init, so
-	// linking it here is what makes Browse work from this facade alone. It
-	// costs the JavaScript engine; import requests directly to leave it out.
-	_ "github.com/HashShin/gocurlffi/browser"
-
+	// The browser registers itself behind requests.Browser from its init and
+	// supplies the page API aliased below, so linking it here is what makes
+	// Browse work from this facade alone. It costs the JavaScript engine;
+	// import requests directly to leave it out.
+	"github.com/HashShin/gocurlffi/browser"
 	"github.com/HashShin/gocurlffi/requests"
 )
 
 // Types, aliased so that a value of one is a value of the other.
 type (
 	BasicAuth              = requests.BasicAuth
+	Browser                = browser.Browser
+	BrowserOptions         = browser.Options
 	BrowserRenderer        = requests.BrowserRenderer
+	BrowserRequest         = browser.Request
+	BrowserResponse        = browser.Response
 	CertificateVerifyError = requests.CertificateVerifyError
 	ClientCert             = requests.ClientCert
 	ConnectionError        = requests.ConnectionError
@@ -92,6 +108,7 @@ type (
 	InvalidSchema          = requests.InvalidSchema
 	InvalidURL             = requests.InvalidURL
 	Option                 = requests.Option
+	Page                   = browser.Page
 	Param                  = requests.Param
 	Params                 = requests.Params
 	ProxyError             = requests.ProxyError
@@ -100,6 +117,7 @@ type (
 	RequestException       = requests.RequestException
 	Response               = requests.Response
 	SSLError               = requests.SSLError
+	ScreenshotOptions      = browser.ScreenshotOptions
 	Session                = requests.Session
 	SessionClosed          = requests.SessionClosed
 	Timeout                = requests.Timeout
@@ -110,12 +128,15 @@ type (
 
 // Constructors and one-shot request helpers.
 var (
+	Block               = browser.Block
 	Browse              = requests.Browse
 	Delete              = requests.Delete
 	Do                  = requests.Do
+	Fulfill             = browser.Fulfill
 	Get                 = requests.Get
 	Head                = requests.Head
 	IsTimeout           = requests.IsTimeout
+	New                 = browser.New
 	NewCookies          = requests.NewCookies
 	NewHeaders          = requests.NewHeaders
 	NewRequestException = requests.NewRequestException

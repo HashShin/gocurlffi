@@ -127,11 +127,15 @@ rsp, err := Browse("https://quotes.toscrape.com/js/")
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
-The module root links the browser, so the import above is all a program needs
-for this. Importing the browser package directly is for its page API -
-`browser.Get`, `browser.New`, `browser.Options` - whose `Get` and `Options`
-names the facade already uses for the HTTP verbs. A program that imports
-`requests` alone leaves the browser out and is told so if it asks for one.
+The module root links the browser and carries its page API - `New`, `Browser`,
+`Page`, `BrowserOptions`, `ScreenshotOptions`, `BrowserRequest`,
+`BrowserResponse`, `Block`, `Fulfill` - so the import above is all a program
+needs to fetch, render, read and drive a page. The browser names that would be
+ambiguous here keep their own spelling: `Get`, `Options`, `Request` and
+`Response` are the HTTP verb and messages in this namespace, so the browser
+package's shortcuts of those names come from importing it. A program that
+imports `requests` alone leaves the browser out and is told so if it asks for
+one.
 
 A `Request` with `Browser` set, sent on a session, uses one browser per session,
 so pages and plain requests on that session share cookies.

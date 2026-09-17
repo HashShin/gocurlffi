@@ -6,7 +6,11 @@ surface; this page is the orientation.
 
 `browser` runs page JavaScript over the same impersonating transport, so sites
 that render client-side can be scraped too. It re-exports the impersonation
-targets, so one import is enough, and importing it dotted needs no prefix.
+targets, so one import is enough, and importing it dotted needs no prefix. The
+module root carries the page API too - as `New`, `BrowserOptions`, `Page` and
+`ScreenshotOptions` - so a program already importing the facade needs no second
+import to drive a page; its `Get`, `Options`, `Request` and `Response` keep this
+package's spelling, because those names are the HTTP verb and messages there.
 
 For one page, a request can ask for it directly, with no browser API at all:
 
