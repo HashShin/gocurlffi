@@ -113,59 +113,9 @@ func main() {
 }
 ```
 
-`Send` is the fast path. Every other sample is a fragment of that program: the
-same import, then the lines that differ.
-
-A URL on its own is a request, and the one-shot helpers take the same options:
-
-```go
-rsp, err := Get(url, WithImpersonate(DefaultChrome))
-rsp, err = Post(url, WithJSON(map[string]any{"hello": "world"}))
-```
-
-`Put`, `Patch`, `Delete`, `Head`, `Options`, `Trace` and `Do` are the rest. The
-options form sets the same fields as the literal:
-
-```go
-rsp, err = Send(url,
-	WithImpersonate(DefaultChrome),
-	WithHeaders(Headers{
-		"Accept: application/json",
-		"X-Custom: value",
-	}),
-	WithParams(map[string]string{"q": "go"}),
-	WithTimeoutSeconds(15),
-	WithProxy("socks5://127.0.0.1:1080"),
-)
-```
-
-`WithHeader("Accept", "application/json")` sets one and repeats; `WithHeaders`
-also takes a `map[string]string`, a `[]string` or a `[]HeaderPair`. Options are
-applied after the request's own fields, so a later option wins over the field it
-names.
-
-A session keeps cookies and connections, and a request is a value, so it can be
-built in one place, logged, queued, and sent either way:
-
-```go
-sess := NewSession(WithImpersonate(DefaultChrome))
-defer sess.Close()
-
-req := Request{URL: url, Impersonate: DefaultChrome}
-
-rsp, err := Send(req)                                 // as a value
-rsp, err = sess.Send(req, WithTimeout(5*time.Second)) // with an option on top
-rsp, err = sess.Browse(req)                           // or rendered, same request
-
-sess.Send(Request{Method: "POST", URL: login, JSON: credentials}) // cookies are kept
-```
-
-TLS is an option too, for a self-signed server or a client certificate:
-
-```go
-sess = NewSession(WithImpersonate(DefaultChrome), WithVerify(false))
-sess = NewSession(WithImpersonate(DefaultChrome), WithCert("cert.pem", "key.pem"))
-```
+`Send` is the fast path. The samples below are fragments of that program: the
+same import, then the lines that differ. The rest of the HTTP API - options,
+sessions, TLS - is in [`docs/api.md`](docs/api.md).
 
 ### Browser
 
