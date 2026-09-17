@@ -100,6 +100,7 @@ type (
 
 // Constructors and one-shot request helpers.
 var (
+	Browse              = requests.Browse
 	Delete              = requests.Delete
 	Do                  = requests.Do
 	Get                 = requests.Get

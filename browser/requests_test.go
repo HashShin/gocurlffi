@@ -285,3 +285,43 @@ func TestPathsRunConcurrently(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// Browse is the same path as Send with Browser set, spelled so a call site that
+// mixes the two says which is which.
+func TestBrowseIsTheNamedBrowserPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<!doctype html><html><body><p id="out">raw</p>
+			<script>document.getElementById('out').textContent = 'rendered';</script>
+			</body></html>`))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+	req := requests.Request{URL: srv.URL, Impersonate: "chrome150"}
+
+	fast, err := sess.Send(req)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !strings.Contains(fast.Text(), `id="out">raw`) {
+		t.Errorf("Send ran scripts:\n%s", fast.Text())
+	}
+
+	// The caller's value is untouched: Browse takes a copy.
+	rendered, err := sess.Browse(req)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if !strings.Contains(rendered.Text(), `id="out">rendered`) {
+		t.Errorf("Browse did not run scripts:\n%s", rendered.Text())
+	}
+	if req.Browser {
+		t.Errorf("Browse set Browser on the caller's request")
+	}
+
+	// The same thing without a session.
+	if _, err := requests.Browse(requests.Request{URL: srv.URL}); err != nil {
+		t.Fatalf("package-level Browse: %v", err)
+	}
+}

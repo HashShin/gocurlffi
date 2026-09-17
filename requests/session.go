@@ -79,6 +79,15 @@ func (s *Session) UserAgent() string {
 	return ""
 }
 
+// Browse loads a request in the browser, which is exactly Send on a request
+// with Browser set: the same page, the same session's cookies and the same
+// fingerprint, spelled so the call site says which path it takes. Use it when
+// the two paths are mixed and reading which is which matters.
+func (s *Session) Browse(req Request) (*Response, error) {
+	req.Browser = true
+	return s.Send(req)
+}
+
 // sendBrowser loads a request in the browser the browser package installed,
 // creating it for this session on first use so pages and plain requests share
 // one cookie jar.
@@ -615,6 +624,14 @@ func Send(req Request) (*Response, error) {
 	s := NewSession()
 	defer s.Close()
 	return s.Send(req)
+}
+
+// Browse loads a request in the browser without a session of your own, exactly
+// as Send does with Browser set. It needs the browser package imported, which
+// is what installs it.
+func Browse(req Request) (*Response, error) {
+	req.Browser = true
+	return Send(req)
 }
 
 // Get sends a GET request in a throwaway session.

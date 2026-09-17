@@ -75,7 +75,13 @@ func main() {
 
 It is a field on the request, so the two paths sit side by side on one session:
 render the pages that need their scripts, scrape the rest, and flip `Browser` to
-change which is which.
+change which is which. `Browse` is the same call spelled out, when a site mixes
+both and the path should be visible where it is chosen:
+
+```go
+rsp, err := sess.Send(page)  // impersonated HTTP
+rsp, err = sess.Browse(page) // the same request, in the browser
+```
 
 The browser is linked by importing it: the root package does not pull a
 JavaScript engine into a program that only makes requests, which would double

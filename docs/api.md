@@ -123,6 +123,18 @@ The option form is the same path:
 rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
 ```
 
+And so is the named call, for a site that mixes the two and wants the path
+visible where it is chosen:
+
+```go
+rsp, err := sess.Send(page)   // impersonated HTTP
+rsp, err = sess.Browse(page)  // the same request, in the browser
+```
+
+`Browse` is `Send` with `Browser` set, on the same session, with the same
+cookies and the same fingerprint. Three spellings, one path: take whichever
+makes the call site read best.
+
 `Browser` is a field on the request, not a mode on the session, so the two paths
 sit side by side: a program renders the pages that need their scripts and
 scrapes the rest with the same client, the same cookies and the same import.
