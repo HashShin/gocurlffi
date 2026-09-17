@@ -15,11 +15,12 @@ rsp, err := Browse("https://quotes.toscrape.com/js/")
 ```
 
 `Request.Browser` is served by this package, which installs itself behind it
-when imported. The body is then the rendered document, and `Impersonate`,
-`Proxy`, `Timeout` and `Headers` on the same request apply to every resource the
-page fetches, the document and its subresources alike. Only a GET of a URL has a
-browser path. A `Session` keeps one browser, so pages and plain requests on that
-session share cookies.
+when imported - and the module root imports it, so a program using the facade
+gets `Browse` and `Request.Browser` without naming this package. The body is
+then the rendered document, and `Impersonate`, `Proxy`, `Timeout` and `Headers`
+on the same request apply to every resource the page fetches, the document and
+its subresources alike. Only a GET of a URL has a browser path. A `Session`
+keeps one browser, so pages and plain requests on that session share cookies.
 
 `Browser` is per request, so the two paths stand side by side: the same session
 renders one URL and scrapes the next, and flipping the field is the switch

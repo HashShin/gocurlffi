@@ -67,6 +67,10 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
   there as a change to the fingerprint.
 - **Everything in `gocurlffi.go` is an alias**, never a defined type, and it must
   cover `requests` completely. `facade_test.go` checks both, in both directions.
+- **The module root links the browser.** `gocurlffi.go` blank-imports `browser`
+  so that one import is enough for `Browse` and `Request.Browser`. Removing that
+  import to shrink the facade would break the documented one-import promise;
+  `requests` is the package for a program that wants the smaller binary.
 - **The README's Go examples must compile.** Extract the `package main` blocks
   and build them:
   ```sh

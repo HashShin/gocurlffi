@@ -36,14 +36,18 @@
 //
 //	rsp, err := Send("https://example.com/", WithBrowser())
 //
-// That needs the browser package linked into the program, since it is the one
-// that brings a JavaScript engine:
+// That works with the import above and no other, because this package links the
+// browser in. The cost is goja, the JavaScript engine the browser runs pages
+// with, which roughly doubles the binary; a program that only makes requests
+// imports [requests] instead and leaves it out.
 //
-//	import _ "github.com/HashShin/gocurlffi/browser"
+// The page API - opening a page, reading it, driving it - is the browser
+// package's own, since two of its names, Get and Options, are the HTTP verbs
+// here:
 //
-// Importing it here instead would double the size of every program that only
-// makes requests, so the browser stays opt-in. A Browser request without it
-// reports the import that is missing.
+//	import "github.com/HashShin/gocurlffi/browser"
+//
+//	p, err := browser.Get("https://example.com/", browser.Chrome131)
 //
 // A dot import is a deliberate trade. Go's tooling discourages it, and
 // staticcheck reports it as ST1001, because a dotted package puts every name it
@@ -53,11 +57,18 @@
 // add "//lint:file-ignore ST1001 reason" at the top of the file, or exclude
 // ST1001 in staticcheck.conf.
 //
-// The package has no code of its own: it is a facade so that the shortest
+// The package declares nothing of its own: it is a facade so that the shortest
 // import path and a single namespace are available to a caller who wants them.
 package gocurlffi
 
-import "github.com/HashShin/gocurlffi/requests"
+import (
+	// The browser registers itself behind requests.Browser from its init, so
+	// linking it here is what makes Browse work from this facade alone. It
+	// costs the JavaScript engine; import requests directly to leave it out.
+	_ "github.com/HashShin/gocurlffi/browser"
+
+	"github.com/HashShin/gocurlffi/requests"
+)
 
 // Types, aliased so that a value of one is a value of the other.
 type (

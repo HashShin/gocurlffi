@@ -102,13 +102,13 @@ func main() {
 ```
 
 `Send` is the fast path. Every other sample is a fragment of one of the two
-programs below: the same imports, then the lines that differ. The rest of the
+programs below: the same import, then the lines that differ. The rest of the
 HTTP API - options, sessions, TLS - is in [`docs/api.md`](docs/api.md).
 
 ### Browser
 
-The same request with the page's scripts run. The blank import is the only
-difference: it links the browser in.
+The same request with the page's scripts run. One import does it: the facade
+links the browser in.
 
 ```go
 package main
@@ -117,7 +117,6 @@ import (
 	"fmt"
 
 	. "github.com/HashShin/gocurlffi"
-	_ "github.com/HashShin/gocurlffi/browser" // links the browser in
 )
 
 func main() {
@@ -136,21 +135,17 @@ func main() {
 }
 ```
 
-The browser is a separate import on purpose: a program that only makes requests
-does not pull goja, a JavaScript engine, into its binary, which would double its
-size - 17.2MB to 34.6MB for the same build. A `Browse` without that import
-reports which one is missing.
+The facade links the browser, so it carries goja, the JavaScript engine the
+browser runs pages with, and both programs above build to 34.6MB. A program
+that imports `github.com/HashShin/gocurlffi/requests` instead is 17.2MB; import
+`requests` when a program only makes requests.
 
-The two paths sit side by side on one session, and the name says which is which:
-
-```go
-rsp, err := sess.Send(url)  // impersonated HTTP
-rsp, err = sess.Browse(url) // the same URL, rendered
-```
-
-For the page itself, rather than its bytes:
+The page API is the browser package's own, because `Get` and `Options` are
+already the HTTP verbs here:
 
 ```go
+import "github.com/HashShin/gocurlffi/browser"
+
 p, _ := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
 defer p.Close()
 
@@ -159,6 +154,13 @@ fmt.Println(p.Markdown())
 for _, l := range p.Links() {
 	fmt.Println(l.Href, l.Text)
 }
+```
+
+The two paths sit side by side on one session, and the name says which is which:
+
+```go
+rsp, err := sess.Send(url)  // impersonated HTTP
+rsp, err = sess.Browse(url) // the same URL, rendered
 ```
 
 ```go

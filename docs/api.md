@@ -127,15 +127,11 @@ rsp, err := Browse("https://quotes.toscrape.com/js/")
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
-The browser is linked by importing its package, which a program that renders
-pages wants anyway:
-
-```go
-import (
-	. "github.com/HashShin/gocurlffi"
-	_ "github.com/HashShin/gocurlffi/browser" // Browser: true needs this
-)
-```
+The module root links the browser, so the import above is all a program needs
+for this. Importing the browser package directly is for its page API -
+`browser.Get`, `browser.New`, `browser.Options` - whose `Get` and `Options`
+names the facade already uses for the HTTP verbs. A program that imports
+`requests` alone leaves the browser out and is told so if it asks for one.
 
 A `Request` with `Browser` set, sent on a session, uses one browser per session,
 so pages and plain requests on that session share cookies.
