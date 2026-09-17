@@ -64,6 +64,23 @@ defer b.Close()
 p, err := b.Open(url)
 ```
 
+`Options` also carries `ObeyRobots`, and an `Intercept` hook that is offered
+every request - document, script, image, fetch and XHR - and can drop it or
+answer it from the caller:
+
+```go
+b := New(Options{
+	Impersonate: Chrome131,
+	ObeyRobots:  true,
+	Intercept: func(r *Request) *Response {
+		if r.ResourceType == "image" {
+			return Block()
+		}
+		return nil
+	},
+})
+```
+
 A `Page` renders and drives as well as reads:
 
 ```go
