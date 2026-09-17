@@ -42,12 +42,15 @@
 // imports [requests] instead and leaves it out.
 //
 // The page object behind a rendered request is part of this namespace too, so
-// one import drives a page as well as fetches it:
+// one import drives a page as well as fetches it. Open takes the same input
+// Browse does and answers with the page rather than the rendered bytes:
 //
-//	b := New(BrowserOptions{Impersonate: Chrome131})
-//	defer b.Close()
+//	p, err := Open(Request{URL: "https://example.com/", Impersonate: Chrome131})
+//	if err != nil {
+//		panic(err)
+//	}
+//	defer p.Close()
 //
-//	p, err := b.Open("https://example.com/")
 //	p.Fill("#user", "me")
 //	p.Click("button[type=submit]")
 //	png, _ := p.Screenshot(ScreenshotOptions{Width: 1280})
@@ -142,11 +145,13 @@ var (
 	NewRequestException = requests.NewRequestException
 	NewResponse         = requests.NewResponse
 	NewSession          = requests.NewSession
+	Open                = browser.Open
 	Options             = requests.Options
 	Patch               = requests.Patch
 	Post                = requests.Post
 	Put                 = requests.Put
 	Send                = requests.Send
+	ToRequest           = requests.ToRequest
 	Trace               = requests.Trace
 	// UseBrowser installs the renderer a Browser request delegates to. The
 	// browser package calls it from its init, so this is only for a program

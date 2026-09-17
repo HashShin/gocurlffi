@@ -127,7 +127,7 @@ func TestRequestInputShapes(t *testing.T) {
 		{"a Request", req},
 		{"a *Request", &req},
 	} {
-		got, err := toRequest(tc.in)
+		got, err := ToRequest(tc.in)
 		if err != nil {
 			t.Errorf("%s: %v", tc.name, err)
 			continue
@@ -143,16 +143,16 @@ func TestRequestInputShapes(t *testing.T) {
 	// A nil interface lands in the type switch's default, and a nil *Request
 	// has to be reported rather than dereferenced.
 	for _, bad := range []RequestTypes{42, nil, []string{"u"}} {
-		if _, err := toRequest(bad); err == nil {
-			t.Errorf("toRequest(%#v) accepted a type it cannot send", bad)
+		if _, err := ToRequest(bad); err == nil {
+			t.Errorf("ToRequest(%#v) accepted a type it cannot send", bad)
 		} else {
 			var ie *InterfaceError
 			if !errors.As(err, &ie) {
-				t.Errorf("toRequest(%#v) error = %v, want an *InterfaceError", bad, err)
+				t.Errorf("ToRequest(%#v) error = %v, want an *InterfaceError", bad, err)
 			}
 		}
 	}
-	if _, err := toRequest((*Request)(nil)); err == nil {
+	if _, err := ToRequest((*Request)(nil)); err == nil {
 		t.Errorf("a nil *Request was accepted")
 	}
 }

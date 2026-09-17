@@ -315,8 +315,11 @@ func itoa(i int) string {
 // [HeaderTypes], [CookieTypes] and [Params].
 type RequestTypes interface{}
 
-// toRequest turns an accepted request input into a Request.
-func toRequest(v RequestTypes) (Request, error) {
+// ToRequest turns an accepted request input - a Request, a *Request or a URL
+// string - into a Request. It is what Send, Browse and the method helpers run
+// their input through, exported for a caller that needs the value: the browser
+// package opens the page object behind the same input.
+func ToRequest(v RequestTypes) (Request, error) {
 	switch r := v.(type) {
 	case Request:
 		return r, nil

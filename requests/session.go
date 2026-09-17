@@ -87,7 +87,7 @@ func (s *Session) UserAgent() string {
 //
 // It takes anything Send does, and Get with WithBrowser reaches the same page.
 func (s *Session) Browse(req RequestTypes, opts ...Option) (*Response, error) {
-	r, err := toRequest(req)
+	r, err := ToRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +577,7 @@ func (s *Session) Trace(rawURL string, opts ...Option) (*Response, error) {
 // Fields left at their zero value fall back to the session's defaults, so an
 // empty Method means GET and an empty Timeout means the session timeout.
 func (s *Session) Send(req RequestTypes, opts ...Option) (*Response, error) {
-	r, err := toRequest(req)
+	r, err := ToRequest(req)
 	if err != nil {
 		return nil, err
 	}

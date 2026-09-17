@@ -78,12 +78,45 @@ func TestFacadeCoversRequests(t *testing.T) {
 func TestFacadeCarriesThePageAPI(t *testing.T) {
 	facade := exportedNames(t, ".")
 	for _, name := range []string{
-		"New", "Browser", "Page", "BrowserOptions", "ScreenshotOptions",
+		"New", "Open", "Browser", "Page", "BrowserOptions", "ScreenshotOptions",
 		"BrowserRequest", "BrowserResponse", "Block", "Fulfill",
 	} {
 		if !facade[name] {
 			t.Errorf("gocurlffi.go no longer aliases %s, which the README's page sample needs", name)
 		}
+	}
+}
+
+// The README's driving sample has to run from the facade alone: the same
+// Request literal Browse takes opens a page, and the page is then filled and
+// clicked with no second import.
+func TestFacadeOpensAndDrivesAPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<input id="q">
+<button id="b">go</button>
+<script>document.getElementById('b').addEventListener('click', function(){ window.hit = document.getElementById('q').value })</script>`))
+	}))
+	defer srv.Close()
+
+	p, err := Open(Request{URL: srv.URL + "/"})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer p.Close()
+
+	if err := p.Fill("#q", "go"); err != nil {
+		t.Fatalf("Fill: %v", err)
+	}
+	if err := p.Click("#b"); err != nil {
+		t.Fatalf("Click: %v", err)
+	}
+	v, err := p.Eval("window.hit")
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if v.String() != "go" {
+		t.Fatalf("the page saw %v, want the filled value", v)
 	}
 }
 

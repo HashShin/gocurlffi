@@ -135,8 +135,9 @@ func main() {
 }
 ```
 
-To read the page and drive it, open it as an object. The same import carries
-that API:
+The same literal opens the page object, when the page is to be read and driven
+rather than printed. `Browse` answers with the rendered bytes, `Open` with the
+page they came from:
 
 ```go
 package main
@@ -150,13 +151,18 @@ import (
 )
 
 func main() {
-	b := New(BrowserOptions{Impersonate: DefaultChrome})
-	defer b.Close()
-
-	p, err := b.Open("https://quotes.toscrape.com/login")
+	p, err := Open(Request{
+		Method: "GET",
+		URL:    "https://quotes.toscrape.com/login",
+		Headers: Headers{
+			"Accept: text/html",
+		},
+		Impersonate: DefaultChrome,
+	})
 	if err != nil {
 		panic(err)
 	}
+	defer p.Close()
 
 	p.Fill("#username", "me")
 	p.Fill("#password", "secret")
