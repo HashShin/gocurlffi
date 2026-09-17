@@ -887,6 +887,10 @@ type renderBlock struct {
 	// own element, so an ancestor without blocks of its own cannot overwrite
 	// them.
 	hasRightEdges bool
+	// inlineBox marks an inline-level box that lays its children out in a row,
+	// such as "display: inline-flex". It shrink-wraps and is placed by the
+	// containing block's text-align rather than filling the line.
+	inlineBox bool
 	// ownsSizing marks the block the sizing element itself starts: the one
 	// whose left edge is the declaring element's content edge rather than a
 	// descendant's. It is what tells the layout that the sizing context's box
@@ -1143,6 +1147,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		// box-sizing:border-box subtracting the edge, and auto horizontal
 		// margins center whatever is left over.
 		var bb, edge, contentW, inner, boxX, boxWidthOuter, contentRight float64
+		// baseShift is where the containing block's content edge sits, and
+		// alignExtra how much of the free space is spent before the box.
+		var baseShift, alignExtra float64
 		// ownOuter is the block's own border box, which is what its element is
 		// reported as. boxWidthOuter is the box it paints, which belongs to the
 		// element that declared it and may be wider or narrower.
@@ -1210,9 +1217,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			switch {
 			case own:
 				bb, edge, contentW = obb, oedge, oContent
-				shift = oShift
+				baseShift = oShift
 				inner = b.textX - b.sizeLeft
-				boxX = colX + b.sizeBoxLeft + shift
+				boxX = colX + b.sizeBoxLeft + baseShift + alignExtra
 				boxWidthOuter, ownOuter = outer, outer
 				if !b.ownsBox {
 					// The block declares a width of its own but carries a
@@ -1257,16 +1264,16 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 				if extra < 0 {
 					extra = 0
 				}
-				shift = oShift
+				baseShift = oShift
 				switch {
 				case b.boxAutoLeft && b.boxAutoRight:
-					shift += extra / 2
+					alignExtra = extra / 2
 				case b.boxAutoLeft:
-					shift += extra
+					alignExtra = extra
 				}
 				inner = b.textX - b.boxLeft
 				contentRight = b.paddingRight
-				boxX = colX + b.boxLeft + shift
+				boxX = colX + b.boxLeft + baseShift + alignExtra
 				// The box this block carries, when it is not the declaring
 				// element's own: it reaches the containing block's content
 				// edge, then adds the box's own right padding and border. The
@@ -1319,12 +1326,12 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			}
 			switch {
 			case b.boxAutoLeft && b.boxAutoRight:
-				shift = extra / 2
+				alignExtra = extra / 2
 			case b.boxAutoLeft:
-				shift = extra
+				alignExtra = extra
 			}
 			inner = b.textX - b.boxLeft
-			boxX = colX + b.boxLeft + shift
+			boxX = colX + b.boxLeft + baseShift + alignExtra
 			// The border box: from the block's left edge to the content edge
 			// plus the right padding and border.
 			contentRight = b.paddingRight + b.borderW
@@ -1354,6 +1361,43 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					boxWidthOuter += b.boxPadRight
 				}
 			}
+		}
+		// An inline-level box that lays its children out in a row is one
+		// atomic box on a line: it shrinks to its content and the containing
+		// block's text-align places it, rather than filling the line and
+		// stacking its items at the left. h2apk's hero centers its GitHub and
+		// Support links this way.
+		if b.inlineBox && !b.ownsSizing {
+			w := 0.0
+			for i, col := range b.children {
+				if i > 0 {
+					w += b.gap
+				}
+				w += intrinsicColumnWidth(col, bb, baseSize)
+			}
+			if w > bb {
+				w = bb
+			}
+			contentW, ownOuter = w, w+edge
+			space := bb - (contentW + edge)
+			if space < 0 {
+				space = 0
+			}
+			switch b.align {
+			case "center":
+				alignExtra = space / 2
+			case "right", "end":
+				alignExtra = space
+			default:
+				alignExtra = 0
+			}
+		}
+		shift = baseShift + alignExtra
+		if b.inlineBox {
+			// The shrink-wrap has just moved the box, so its edge moves with
+			// it. Every other block keeps the edge its branch computed, which
+			// is the declaring element's border box where there is one.
+			boxX = colX + b.boxLeft + shift
 		}
 		blockTop := y
 		lineStart := len(out)

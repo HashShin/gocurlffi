@@ -2051,3 +2051,37 @@ func TestFloatResolvesAgainstItsContainingBlock(t *testing.T) {
 		t.Errorf("the second column starts at %g, want %g", four.X, eight.X+eight.Width)
 	}
 }
+
+// An inline-level box that lays its children out in a row is one atomic box on
+// a line: it shrinks to its content, and the containing block's text-align
+// places it. h2apk's hero centers its GitHub and Support links this way; given
+// the whole line to fill, they were rendered at the far left.
+func TestInlineFlexShrinkWrapsAndCenters(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		.hero { width: 1000px; text-align: center }
+		.links { display: inline-flex; gap: 14px; font-size: 12px }
+	</style></head><body>
+		<div class="hero"><p id="links" class="links">
+			<a href="#">GitHub</a><a href="#">Support</a></p></div>
+	</body></html>`)
+	links := p.ElementRect(p.GetElementByID("links"))
+	if links.Width > 300 {
+		t.Errorf("the inline-flex row is %g wide, want it shrunk to its links", links.Width)
+	}
+	if want := 500 - links.Width/2; diff(links.X, want) > 1 {
+		t.Errorf("inline-flex row x=%g, want %g (centered in the hero)", links.X, want)
+	}
+	pos := outlinePositions(t, p, 1000)
+	gh, ok1 := pos["GitHub"]
+	sup, ok2 := pos["Support"]
+	if !ok1 || !ok2 {
+		t.Fatalf("missing the links in the outline: %v", pos)
+	}
+	if gh[0] <= 100 || gh[0] >= 500 {
+		t.Errorf("GitHub starts at x=%g, want it inside the centered row", gh[0])
+	}
+	if sup[0] <= gh[0] {
+		t.Errorf("Support x=%g is not right of GitHub x=%g", sup[0], gh[0])
+	}
+}

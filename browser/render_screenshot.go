@@ -729,6 +729,14 @@ func (c *collector) assignBox(start int, cs *computedStyle) {
 	}
 }
 
+// isInlineFlexDisplay reports whether an element that lays its children out in
+// a row is inline-level. Such a box is one atomic item on a line: it shrinks to
+// its content and the containing block's text-align places it, instead of
+// filling the line and stacking its items at the left.
+func isInlineFlexDisplay(d string) bool {
+	return d == "inline-flex" || d == "inline-grid"
+}
+
 func isBlockDisplay(d string) bool {
 	switch d {
 	case "block", "flex", "grid", "list-item", "table", "table-row", "table-cell", "inline-flex":
@@ -1484,6 +1492,8 @@ func (c *collector) collectTable(el *html.Node, cs *computedStyle) bool {
 		kind:          blockFlex,
 		flexRow:       true,
 		table:         true,
+		inlineBox:     isInlineFlexDisplay(cs.display),
+		align:         cs.textAlign,
 		boxLeft:       c.content,
 		textX:         c.content,
 		quote:         c.quote,
@@ -1585,6 +1595,8 @@ func (c *collector) collectFlexRow(el *html.Node, cs *computedStyle, grid bool) 
 		kind:          blockFlex,
 		flexRow:       true,
 		grid:          grid,
+		inlineBox:     isInlineFlexDisplay(cs.display),
+		align:         cs.textAlign,
 		gridTmpl:      cs.grid,
 		boxLeft:       c.content,
 		textX:         c.content,
