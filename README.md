@@ -116,8 +116,6 @@ func main() {
 `Send` is the fast path. Every other sample is a fragment of that program: the
 same import, then the lines that differ.
 
-### HTTP
-
 A URL on its own is a request, and the one-shot helpers take the same options:
 
 ```go
