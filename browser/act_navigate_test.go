@@ -301,3 +301,38 @@ func htmlServer(t *testing.T, pages map[string]string) *httptest.Server {
 	t.Cleanup(srv.Close)
 	return srv
 }
+
+// A submit control can live outside its form and name it with the form
+// attribute, which is how a toolbar button submits.
+func TestClickSubmitterByFormAttribute(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/post" {
+			_ = r.ParseForm()
+			gotBody = r.Form.Encode()
+			_, _ = w.Write([]byte(`<h1 id="done">ok</h1>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<form id="f" action="/post" method="post"><input name="q" value="1"></form>
+			<button id="s" type="submit" form="f" name="action" value="go">Go</button>`))
+	}))
+	defer srv.Close()
+
+	b := New(Options{})
+	defer b.Close()
+
+	p, err := b.Open(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := p.Click("#s"); err != nil {
+		t.Fatalf("Click: %v", err)
+	}
+	if gotBody != "action=go&q=1" {
+		t.Fatalf("POST body = %q, want action=go&q=1", gotBody)
+	}
+	if p.Query("#done") == nil {
+		t.Fatal("the response to the form was not installed")
+	}
+}
