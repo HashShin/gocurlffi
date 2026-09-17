@@ -2115,3 +2115,34 @@ func TestButtonShrinksToItsLabel(t *testing.T) {
 		t.Errorf("the width:100%% button is %g wide, want the panel's 360", full.Width)
 	}
 }
+
+// Two "flex: 1" buttons share their row. The second has no border and so carries
+// no box of its own, and it was reported from its content edge instead of its
+// column: 16px right of where the row put it, and 16px narrow. Chromium reports
+// the pair at x=129.4 w=511.1 and x=640.5 for this row at 1280px.
+func TestFlexItemWithoutABoxStartsAtItsColumn(t *testing.T) {
+	p := flexPage(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box; border: none }
+		.wrap { max-width: 1100px; margin: 0 auto; padding: 24px 48px 80px }
+		.switch { display: flex; gap: 0; border: 1px solid #333; border-radius: 10px }
+		.bm { flex: 1; padding: 11px 16px; font-size: 12px; border-right: 1px solid #555;
+			background: transparent }
+		.bm:last-child { border-right: none }
+	</style></head><body>
+		<div class="wrap"><div class="switch">
+			<button class="bm" id="a">Debug / Test</button>
+			<button class="bm" id="b">Play Store Release</button>
+		</div></div>
+	</body></html>`)
+	a := p.ElementRect(p.GetElementByID("a"))
+	b := p.ElementRect(p.GetElementByID("b"))
+	if diff(b.X, a.X+a.Width) > 0.6 {
+		t.Errorf("the second button starts at x=%g, want %g (the first's right edge)",
+			b.X, a.X+a.Width)
+	}
+	// The last child drops its 1px border, which is the only difference between
+	// their shares.
+	if diff(b.Width, a.Width) > 1.5 {
+		t.Errorf("the buttons are %g and %g wide, want equal shares", a.Width, b.Width)
+	}
+}

@@ -1716,6 +1716,13 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		if b.ownsBox {
 			// The element declared the box, so its rectangle is the box.
 			ownX, ownW = boxRectX, boxWidthOuter
+		} else if b.boxID == 0 && b.padLeft > 0 && !b.ownsSizing {
+			// A block inside a declared width is measured from its content
+			// edge, which is its own padding away from where it starts: a
+			// control with no background of its own was reported 16px right of
+			// its column. A block that owns the width context already starts at
+			// the border box of the element that declared it.
+			ownX, ownW = boxX-b.padLeft, ownOuter+b.padLeft
 		}
 		recordBox(b, contentTop-b.paddingTop-b.borderW,
 			y+b.paddingBottom+b.borderW, boxRectX, boxWidthOuter, ownX, ownW)
