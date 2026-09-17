@@ -19,8 +19,68 @@ The repository is private, so a remote install needs credentials and
 `GOPRIVATE=github.com/HashShin/*`. A checkout needs neither:
 
 ```sh
-make install                    # -> /usr/local/bin/gocurlffi
+make build                     # -> bin/gocurlffi
+make install                   # -> /usr/local/bin
 make install PREFIX=$HOME/.local
+```
+
+If the Go toolchain is not on `PATH`, set `GOPATH` and let Go use its downloaded
+one:
+
+```sh
+export GOPATH=/tmp/gopath GOMODCACHE=/tmp/gopath/pkg/mod GOCACHE=/tmp/gocache
+```
+
+---
+
+## Commands
+
+One binary, `bin/gocurlffi`, carries both request paths and both servers.
+`gocurlffi help <command>` prints a command's flags; the list is generated from
+the definitions, so it cannot drift from what the command accepts.
+
+| Command | What it does |
+| --- | --- |
+| `get <url>` | Fast HTTP client with a browser's TLS/JA3, HTTP/2 and HTTP/3. |
+| `get <url> --render` | The same request, loaded in the pure-Go browser. |
+| `open <url>` | Shorthand for `get --render`. |
+| `serve` | CDP and WebDriver BiDi server on `ws://127.0.0.1:9222`. |
+| `mcp` | MCP tools over stdio, or over HTTP with `--port`. |
+| `targets` | List every impersonation target. |
+| `version`, `help` | Print the version, or a command's flags. |
+
+A bare method name is a command, so `gocurlffi post ...` is `gocurlffi get -X
+POST ...`. `fetch`, `browse`, `render` and `list` are kept as aliases.
+
+```sh
+gocurlffi get tls.browserleaks.com/json -i chrome150
+gocurlffi post httpbin.org/post -j '{"a":1}'
+
+gocurlffi get https://quotes.toscrape.com/js/ --render --format text
+gocurlffi open example.com --screenshot page.png
+gocurlffi open example.com/login --fill '#user=me' --click 'button[type=submit]'
+
+gocurlffi serve --port 9222
+gocurlffi mcp --port 9223
+```
+
+`--render` is refused for `post`, `put`, `patch`, `delete`, `head`, `options`
+and `trace`, because a request with a body has no browser path. Exit status is
+`0` on success, `1` when the command ran and failed, `2` when the arguments were
+wrong, so a shell can tell a bad URL from a bad flag.
+
+[`docs/cli.md`](docs/cli.md) has every flag of every command.
+
+### Working on the repository
+
+```sh
+make test                      # unit tests, no network
+make test-race                 # the same under the race detector
+make test-live                 # live fingerprints vs the curl_cffi baseline (network)
+make vet                       # go vet ./...
+make lint                      # vet, plus staticcheck when it is installed
+make fmt                       # gofmt -w .
+make clean                     # rm -rf bin
 ```
 
 ---
@@ -53,15 +113,23 @@ func main() {
 }
 ```
 
-Every other sample is a fragment of that program: the same import, then the
-lines that differ.
+`Send` is the fast path. Every other sample is a fragment of that program: the
+same import, then the lines that differ.
 
-### URL and options
+### HTTP
 
-The same request, without the literal:
+A URL on its own is a request, and the one-shot helpers take the same options:
 
 ```go
-rsp, err := Send(url,
+rsp, err := Get(url, WithImpersonate(DefaultChrome))
+rsp, err = Post(url, WithJSON(map[string]any{"hello": "world"}))
+```
+
+`Put`, `Patch`, `Delete`, `Head`, `Options`, `Trace` and `Do` are the rest. The
+options form sets the same fields as the literal:
+
+```go
+rsp, err = Send(url,
 	WithImpersonate(DefaultChrome),
 	WithHeaders(Headers{
 		"Accept: application/json",
@@ -78,39 +146,30 @@ also takes a `map[string]string`, a `[]string` or a `[]HeaderPair`. Options are
 applied after the request's own fields, so a later option wins over the field it
 names.
 
-### One request, sent more than once
-
-```go
-req := Request{URL: url, Impersonate: DefaultChrome}
-
-rsp, err := Send(req)                // as a value
-rsp, err = sess.Send(req, WithTimeout(5*time.Second)) // with an option on top
-rsp, err = sess.Browse(req)          // or rendered, same request
-```
-
-A request is a value, so it can be built in one place, logged, queued, and sent
-either way.
-
-### One-shot, no session
-
-```go
-rsp, err := Get(url, WithImpersonate(DefaultChrome))
-rsp, err = Post(url, WithJSON(map[string]any{"hello": "world"}))
-```
-
-`Put`, `Patch`, `Delete`, `Head`, `Options`, `Trace` and `Do` are the rest.
-
-### Session: cookies and connections
+A session keeps cookies and connections, and a request is a value, so it can be
+built in one place, logged, queued, and sent either way:
 
 ```go
 sess := NewSession(WithImpersonate(DefaultChrome))
 defer sess.Close()
 
+req := Request{URL: url, Impersonate: DefaultChrome}
+
+rsp, err := Send(req)                                 // as a value
+rsp, err = sess.Send(req, WithTimeout(5*time.Second)) // with an option on top
+rsp, err = sess.Browse(req)                           // or rendered, same request
+
 sess.Send(Request{Method: "POST", URL: login, JSON: credentials}) // cookies are kept
-rsp, err := sess.Get("https://example.com/dashboard")
 ```
 
-### Browser: the rendered page
+TLS is an option too, for a self-signed server or a client certificate:
+
+```go
+sess = NewSession(WithImpersonate(DefaultChrome), WithVerify(false))
+sess = NewSession(WithImpersonate(DefaultChrome), WithCert("cert.pem", "key.pem"))
+```
+
+### Browser
 
 ```go
 import _ "github.com/HashShin/gocurlffi/browser" // links the browser in
@@ -119,10 +178,10 @@ rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChr
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
-The browser is a separate import on purpose: the client does not pull a
-JavaScript engine into a program that only makes requests, which would double
-its size - 17.2MB to 34.6MB for the same binary. A `Browse` without that import
-reports which one is missing.
+The browser is a separate import on purpose: a program that only makes requests
+does not pull a JavaScript engine into its binary, which would double its size -
+17.2MB to 34.6MB for the same build. A `Browse` without that import reports which
+one is missing.
 
 The two paths sit side by side on one session, and the name says which is which:
 
@@ -131,7 +190,7 @@ rsp, err := sess.Send(url)  // impersonated HTTP
 rsp, err = sess.Browse(url) // the same URL, rendered
 ```
 
-### Browser: read the page
+For the page itself, rather than its bytes:
 
 ```go
 p, _ := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
@@ -144,8 +203,6 @@ for _, l := range p.Links() {
 }
 ```
 
-### Browser: screenshot, fill, click
-
 ```go
 png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
 os.WriteFile("page.png", png, 0o644)
@@ -153,30 +210,6 @@ os.WriteFile("page.png", png, 0o644)
 p.Fill("#user", "me")
 p.Click("button[type=submit]")
 p.WaitForSelector("#account", 5*time.Second)
-```
-
-### TLS
-
-```go
-sess := NewSession(WithVerify(false))              // self-signed
-sess = NewSession(WithCert("cert.pem", "key.pem")) // client certificate
-```
-
----
-
-## CLI
-
-```sh
-gocurlffi get tls.browserleaks.com/json -i chrome150
-gocurlffi post httpbin.org/post -j '{"a":1}'
-
-gocurlffi get https://quotes.toscrape.com/js/ --render --format text
-gocurlffi open example.com --screenshot page.png
-gocurlffi open example.com/login --fill '#user=me' --click 'button[type=submit]'
-
-gocurlffi targets          # every impersonation target
-gocurlffi serve            # CDP over ws://127.0.0.1:9222
-gocurlffi mcp --port 9223  # MCP over http://127.0.0.1:9223/mcp
 ```
 
 ---
