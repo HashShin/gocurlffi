@@ -1131,10 +1131,26 @@ func (e *jsEnv) newEvent(typ string) *goja.Object {
 	_ = o.Set("type", typ)
 	_ = o.Set("bubbles", true)
 	_ = o.Set("cancelable", true)
+	// preventDefault is real: a handler that calls it suppresses the default
+	// action the Go side would otherwise take for a click or a submit, which is
+	// how a page keeps a link or a form for its own script.
 	_ = o.Set("defaultPrevented", false)
-	_ = o.Set("preventDefault", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
+	_ = o.Set("preventDefault", func(goja.FunctionCall) goja.Value {
+		_ = o.Set("defaultPrevented", true)
+		return goja.Undefined()
+	})
 	_ = o.Set("stopPropagation", func(goja.FunctionCall) goja.Value { return goja.Undefined() })
 	return o
+}
+
+// defaultPrevented reports whether a handler called preventDefault on the
+// event, which is how the action methods know to leave the page alone.
+func (e *jsEnv) defaultPrevented(ev *goja.Object) bool {
+	if ev == nil {
+		return false
+	}
+	v := ev.Get("defaultPrevented")
+	return v != nil && v.ToBoolean()
 }
 
 // --- script execution ---
@@ -1143,6 +1159,12 @@ func (e *jsEnv) newEvent(typ string) *goja.Object {
 // compile and runtime error messages. A panic inside a native binding is
 // converted into an error so a broken page script cannot crash the process.
 func (e *jsEnv) runScript(src, filename string) (err error) {
+	// A click a script makes must not reload the document while the script that
+	// asked is still on the stack, so the page marks script execution here.
+	prevInScript := e.page.inScript
+	e.page.inScript = true
+	defer func() { e.page.inScript = prevInScript }()
+
 	defer e.flushObservers()
 	defer func() {
 		if r := recover(); r != nil {

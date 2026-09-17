@@ -224,7 +224,9 @@ make build
 - Page actions: `Click`, `ClickPoint`, `Type`, `Fill`, `Select`, `Check`,
   `Focus`, `Press` and `Scroll`, dispatching the events a browser would. They
   are the shared layer the CLI, the CDP Input domain and the BiDi input module
-  call, and clicks use the geometry centre.
+  call, and clicks use the geometry centre. A click then means what it means in
+  a browser: it follows the enclosing `<a href>` and submits the form a submit
+  control belongs to, unless a handler calls `preventDefault`.
 - iframes: each `<iframe>` is loaded as a child page with its own document and
   JavaScript environment, sharing the browser's cookies. `Page.Frames()`,
   `iframe.contentDocument`/`contentWindow` and extraction across the frame tree
@@ -718,11 +720,11 @@ not a browser, and the gaps below remain. Specifically absent:
   MCP server lets an external agent drive it instead.
 - No WebAssembly (no engine). Service Workers are feature-detection only: there
   is no persistent, background worker.
-- **A click has no default action.** `Page.Click` dispatches the events, so the
-  page's own handlers run, but nothing navigates: a link and a form's submit
-  button leave the document where it is, `HTMLFormElement.submit` and
-  `requestSubmit` are absent, and a navigation a handler asks for after the load
-  has finished is recorded and never followed. Call `Page.Load` for the next URL.
+- **Form submission from a script is not carried out.** A click navigates a link
+  and submits a form (see Page actions above), but `HTMLFormElement.submit` and
+  `requestSubmit` are absent, and a form submitted by an `element.click()` from
+  inside a running script is refused with a warning rather than queued - only a
+  link's scripted click is queued, and it lands when the script phase ends.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element
   (visible) rather than in `content`. Use `template.content` to build content.

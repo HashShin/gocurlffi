@@ -156,8 +156,8 @@ defer b.Close()
 p, _ := b.Open(url)
 ```
 
-The page is driven by calls on it, in the order they are written, and a click is
-delivered to the page's own handlers:
+The page is driven by calls on it, in the order they are written, so a login and
+a screenshot are one sequence:
 
 ```go
 p.Fill("#user", "me")
@@ -179,9 +179,9 @@ os.WriteFile("page.png", png, 0o644)
   extension permutation is replaced by one fixed valid order, and the IP, port
   and size counters on `Response` are unpopulated.
 - The browser is missing a further set of web APIs.
-- A click reaches the page's own handlers but performs no default action: a link
-  or a submit button does not navigate, and `form.submit()` is absent. Move the
-  page with `Page.Load`.
+- A click follows a link and submits a form, but a script's own
+  `form.submit()`/`requestSubmit()` is absent, and a navigation a timer or
+  `Page.Eval` asks for after the load is recorded and not followed.
 
 [`docs/limitations.md`](docs/limitations.md) has the rest, with the measurements.
 

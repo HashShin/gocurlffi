@@ -64,6 +64,10 @@ type Page struct {
 	// navDepth counts script-driven navigations in the current chain so a page
 	// that navigates on every load cannot spin forever.
 	navDepth int
+	// inScript is true while a script is executing. A click a script makes
+	// (element.click()) is then queued like any other script navigation rather
+	// than reloading the page out from under the running document.
+	inScript bool
 
 	resp    *requests.Response
 	console []ConsoleEntry
@@ -279,6 +283,22 @@ func (p *Page) load(rawURL string, headers map[string]string) error {
 	if err != nil {
 		return err
 	}
+	return p.install(resp)
+}
+
+// loadForm sends a form to rawURL and installs the response, which is how a
+// form's default action navigates.
+func (p *Page) loadForm(rawURL string, body []byte, headers map[string]string) error {
+	resp, err := p.browser.request("POST", rawURL, headers, body, "document")
+	if err != nil {
+		return err
+	}
+	return p.install(resp)
+}
+
+// install makes a fetched response the page's document and runs it. Both the
+// network loader and the form loader go through here, so they cannot drift.
+func (p *Page) install(resp *requests.Response) error {
 	p.resp = resp
 	p.URL = resp.URL
 	contentType := ""

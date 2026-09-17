@@ -2,8 +2,10 @@ package browser
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
+	"github.com/dop251/goja"
 	"golang.org/x/net/html"
 )
 
@@ -22,7 +24,8 @@ func (p *Page) resolve(sel string) (*html.Node, error) {
 }
 
 // Click dispatches a full mouse press and release on the first element matching
-// the selector, then a click, as a browser does.
+// the selector, then a click, as a browser does, and follows the click's own
+// meaning: a link navigates and a submit control submits its form.
 func (p *Page) Click(sel string) error {
 	n, err := p.resolve(sel)
 	if err != nil {
@@ -36,22 +39,33 @@ func (p *Page) ClickNode(n *html.Node) error {
 	if n == nil {
 		return fmt.Errorf("browser: click on nil element")
 	}
-	if p.env == nil {
-		return nil
-	}
 	r := p.ElementRect(n)
 	cx, cy := r.X+r.Width/2, r.Y+r.Height/2
-	for _, typ := range []string{"pointerdown", "mousedown", "pointerup", "mouseup", "click"} {
-		ev := p.env.newEvent(typ)
-		_ = ev.Set("clientX", cx)
-		_ = ev.Set("clientY", cy)
-		_ = ev.Set("pageX", cx)
-		_ = ev.Set("pageY", cy)
-		_ = ev.Set("button", 0)
-		p.env.dispatchNode(n, typ, ev)
+	var click *goja.Object
+	if p.env != nil {
+		for _, typ := range []string{"pointerdown", "mousedown", "pointerup", "mouseup", "click"} {
+			ev := p.env.newEvent(typ)
+			_ = ev.Set("clientX", cx)
+			_ = ev.Set("clientY", cy)
+			_ = ev.Set("pageX", cx)
+			_ = ev.Set("pageY", cy)
+			_ = ev.Set("button", 0)
+			p.env.dispatchNode(n, typ, ev)
+			if typ == "click" {
+				click = ev
+			}
+		}
 	}
 	p.focused = n
-	return nil
+	if p.env != nil && p.env.defaultPrevented(click) {
+		return nil
+	}
+	if err := p.defaultAction(n); err != nil {
+		return err
+	}
+	// A handler may have asked for a navigation of its own, with location.assign
+	// rather than by the click. Follow it now that the page has settled.
+	return p.followPendingNav()
 }
 
 // ClickPoint clicks whatever element is at the page coordinates.
@@ -61,6 +75,167 @@ func (p *Page) ClickPoint(x, y float64) error {
 		return fmt.Errorf("browser: nothing at (%g, %g)", x, y)
 	}
 	return p.ClickNode(n)
+}
+
+// defaultAction is what a click means once the page's handlers have had their
+// say: a link navigates, a submit control submits its form, and anything else
+// is the page's own business. A handler that calls preventDefault stops this,
+// as it does in a browser.
+//
+// A click a script makes (element.click()) is queued instead of performed,
+// because loading a new document from inside the script that asked would pull
+// the document out from under it.
+func (p *Page) defaultAction(n *html.Node) error {
+	if form, submitter := p.submitOwner(n); form != nil {
+		if p.inScript {
+			// Carrying a POST body past the end of the script phase would need
+			// a queue of its own; a page that submits from script usually posts
+			// with fetch instead.
+			p.log("warn", "form submit from a script is not carried out")
+			return nil
+		}
+		return p.submitForm(form, submitter)
+	}
+	href, ok := p.linkTarget(n)
+	if !ok {
+		return nil
+	}
+	if p.inScript {
+		p.requestNavigation(href)
+		return nil
+	}
+	return p.navigate(href, nil, nil)
+}
+
+// linkTarget reports the URL a click on n follows: the nearest enclosing anchor
+// with an href. Anchors a browser would not navigate - a download, or a target
+// that needs a second window - are reported as no link.
+func (p *Page) linkTarget(n *html.Node) (string, bool) {
+	for cur := n; cur != nil; cur = cur.Parent {
+		if cur.Type != html.ElementNode {
+			continue
+		}
+		switch strings.ToLower(cur.Data) {
+		case "a", "area":
+		default:
+			continue
+		}
+		href := attrOf(cur, "href")
+		if href == "" || hasAttr(cur, "download") {
+			return "", false
+		}
+		if t := attrOf(cur, "target"); t != "" && t != "_self" && t != "_top" && t != "_parent" {
+			p.log("warn", "link target "+t+" needs a second window; staying on "+p.URL)
+			return "", false
+		}
+		return resolveURL(p.baseURL(), href), true
+	}
+	return "", false
+}
+
+// submitOwner reports the form a click submits: the control, when it is a
+// submit button, and the form it belongs to, by nesting or by the form
+// attribute. A disabled control submits nothing.
+func (p *Page) submitOwner(n *html.Node) (*html.Node, *html.Node) {
+	if n == nil || n.Type != html.ElementNode || hasAttr(n, "disabled") {
+		return nil, nil
+	}
+	tag := strings.ToLower(n.Data)
+	typ := strings.ToLower(attrOf(n, "type"))
+	isSubmit := tag == "button" && (typ == "" || typ == "submit") || tag == "input" && (typ == "submit" || typ == "image")
+	if !isSubmit {
+		return nil, nil
+	}
+	if id := attrOf(n, "form"); id != "" {
+		if f := p.GetElementByID(id); f != nil && strings.EqualFold(f.Data, "form") {
+			return f, n
+		}
+		return nil, nil
+	}
+	for cur := n.Parent; cur != nil; cur = cur.Parent {
+		if cur.Type == html.ElementNode && strings.EqualFold(cur.Data, "form") {
+			return cur, n
+		}
+	}
+	return nil, nil
+}
+
+// submitForm performs a form's default action: submit fires on the form, the
+// successful controls are collected, and the form's method and action fetch the
+// next document. A POST carries the entries as the body; a GET appends them to
+// the action's query.
+func (p *Page) submitForm(form, submitter *html.Node) error {
+	if p.env != nil {
+		ev := p.env.newEvent("submit")
+		p.env.dispatchNode(form, "submit", ev)
+		if p.env.defaultPrevented(ev) {
+			return nil
+		}
+	}
+	target := resolveURL(p.baseURL(), attrOf(form, "action"))
+	fd := &formData{}
+	collectFormEntries(form, fd)
+	addSubmitter(fd, submitter)
+	// collectFormEntries skips file inputs, so this is always the urlencoded
+	// body, which is also the query a GET sends.
+	body, contentType := fd.encode()
+	switch strings.ToUpper(strings.TrimSpace(attrOf(form, "method"))) {
+	case "DIALOG":
+		return nil
+	case "POST":
+		return p.navigate(target, body, map[string]string{"Content-Type": contentType})
+	default:
+		return p.navigate(withQuery(target, string(body)), nil, nil)
+	}
+}
+
+// addSubmitter adds the button that was clicked to the entries, which a browser
+// includes in the submission.
+func addSubmitter(fd *formData, n *html.Node) {
+	if n == nil {
+		return
+	}
+	name := attrOf(n, "name")
+	if name == "" {
+		return
+	}
+	value := attrOf(n, "value")
+	if value == "" && strings.EqualFold(n.Data, "button") {
+		value = strings.TrimSpace(textContent(n))
+	}
+	fd.entries = append(fd.entries, formEntry{name: name, value: value})
+}
+
+// withQuery puts a form's serialized entries in a URL's query, dropping the
+// fragment the way a form submission does.
+func withQuery(rawURL, query string) string {
+	if query == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL + "?" + query
+	}
+	if u.RawQuery == "" {
+		u.RawQuery = query
+	} else {
+		u.RawQuery += "&" + query
+	}
+	u.Fragment = ""
+	return u.String()
+}
+
+// navigate loads the document a default action resolved to, and follows any
+// navigation that document asks for in turn. A non-nil body makes it a POST.
+func (p *Page) navigate(rawURL string, body []byte, headers map[string]string) error {
+	if body != nil {
+		if err := p.loadForm(rawURL, body, headers); err != nil {
+			return err
+		}
+	} else if err := p.load(rawURL, headers); err != nil {
+		return err
+	}
+	return p.followPendingNav()
 }
 
 // Focus dispatches the focus event on the element and records it as active.

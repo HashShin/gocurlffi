@@ -99,6 +99,13 @@ if err := p.Click("button[type=submit]"); err != nil {
 p.WaitForSelector("#account", 5*time.Second)
 ```
 
+A click carries its default action: it follows the `<a href>` it is on, and it
+submits the form a submit control belongs to, with the controls the page holds
+(the clicked button among them), POST as the body and GET as the query. A
+handler that calls `preventDefault` keeps the page where it is. `HTMLFormElement
+.submit` and `requestSubmit` are not implemented, so a page whose script submits
+that way needs `Page.Load`, or the form's request on the HTTP path.
+
 The same thing from the shell, where `--render` selects this path:
 
 ```sh

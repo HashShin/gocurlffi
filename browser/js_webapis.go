@@ -610,7 +610,7 @@ func (e *jsEnv) newFormDataObject(fd *formData) *goja.Object {
 func (e *jsEnv) newFormDataFromForm(form *goja.Object) *goja.Object {
 	fd := &formData{}
 	if node := e.nodeArg(form); node != nil {
-		e.collectFormEntries(node, fd)
+		collectFormEntries(node, fd)
 	}
 	return e.newFormDataObject(fd)
 }
@@ -1446,7 +1446,11 @@ func (e *jsEnv) setupBodies() {
 }
 
 // collectFormEntries walks a form subtree gathering successful controls.
-func (e *jsEnv) collectFormEntries(n *html.Node, fd *formData) {
+// collectFormEntries gathers a form's successful controls. It reads attributes
+// only - a value a control holds in the DOM, such as the one Fill sets, is an
+// attribute here - so it is a plain function and a form can be submitted on a
+// page whose scripts are off.
+func collectFormEntries(n *html.Node, fd *formData) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode {
 			switch strings.ToLower(c.Data) {
@@ -1469,7 +1473,7 @@ func (e *jsEnv) collectFormEntries(n *html.Node, fd *formData) {
 				}
 			}
 		}
-		e.collectFormEntries(c, fd)
+		collectFormEntries(c, fd)
 	}
 }
 
