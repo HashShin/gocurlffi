@@ -6,7 +6,7 @@ surface; this page is the orientation.
 
 `browser` runs page JavaScript over the same impersonating transport, so sites
 that render client-side can be scraped too. It re-exports the impersonation
-targets, so one import is enough, and importing it dotted needs no prefix:
+targets, so one import is enough, and importing it dotted needs no prefix.
 
 For one page, a request can ask for it directly, with no browser API at all:
 

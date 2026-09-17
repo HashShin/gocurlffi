@@ -137,9 +137,9 @@ func main() {
 ```
 
 The browser is a separate import on purpose: a program that only makes requests
-does not pull a JavaScript engine into its binary, which would double its size -
-17.2MB to 34.6MB for the same build. A `Browse` without that import reports which
-one is missing.
+does not pull goja, a JavaScript engine, into its binary, which would double its
+size - 17.2MB to 34.6MB for the same build. A `Browse` without that import
+reports which one is missing.
 
 The two paths sit side by side on one session, and the name says which is which:
 
