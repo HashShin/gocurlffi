@@ -1,8 +1,33 @@
 # gocurlffi
 
 Pure-Go HTTP client that impersonates real browsers' TLS/JA3, HTTP/2 and HTTP/3
-fingerprints, plus a headless browser that runs page JavaScript. No cgo, no C.
-Cross-compiles, including to Android/Termux.
+fingerprints, plus a headless browser that runs page JavaScript.
+
+No cgo, no C, no code generation. Cross-compiles, including to Android/Termux.
+
+---
+
+## Install
+
+```sh
+go get github.com/HashShin/gocurlffi
+
+go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
+```
+
+The repository is private, so a remote install needs credentials and
+`GOPRIVATE=github.com/HashShin/*`. A checkout needs neither:
+
+```sh
+make install                    # -> /usr/local/bin/gocurlffi
+make install PREFIX=$HOME/.local
+```
+
+---
+
+## Usage
+
+### Request style
 
 ```go
 package main
@@ -14,15 +39,11 @@ import (
 )
 
 func main() {
-	rsp, err := Send("https://httpbun.com/get",
-		WithImpersonate(DefaultChrome), // the TLS and HTTP/2 fingerprint
-		WithHeaders(Headers{
-			"Accept: application/json",
-			"X-Custom: value",
-		}),
-		WithParams(map[string]string{"q": "go"}),
-		WithTimeoutSeconds(15),
-	)
+	rsp, err := Send(Request{
+		URL:         "https://httpbun.com/get",
+		Impersonate: DefaultChrome,
+		Headers:     Headers{"Accept: application/json"},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -30,50 +51,46 @@ func main() {
 }
 ```
 
-`Send` takes a URL and options: impersonation, headers, query parameters,
-cookies, a body or JSON, a timeout, a proxy. The same request can be written as
-a value, which is what to reach for when it is built in one place and sent in
-another:
+`Request` is a value, so a request can be built in one place and sent in
+another, logged, or queued.
+
+### URL and options
+
+The same request without the literal:
 
 ```go
-req := Request{
-	URL:         "https://httpbun.com/get",
-	Impersonate: DefaultChrome,
-	Headers:     Headers{"Accept: application/json"},
-	Params:      map[string]string{"q": "go"},
-	Timeout:     15 * time.Second,
-}
-
-rsp, err := Send(req)                                         // as a value
-rsp, err = sess.Send(req, WithProxy("http://127.0.0.1:8080")) // with an option on top
+rsp, err := Send("https://httpbun.com/get",
+	WithImpersonate(DefaultChrome),
+	WithHeaders(Headers{"Accept: application/json"}),
+	WithParams(map[string]string{"q": "go"}),
+	WithTimeoutSeconds(15),
+)
 ```
 
-`Get`, `Post` and the rest are the same call under the method's name, and
-`docs/api.md` lists every field and option.
+Options are applied after the request's own fields, so a later option wins over
+the field it names: `Send(req, WithProxy(proxy))` is that request through the
+proxy.
 
-Reuse a session to keep cookies and connections:
+### One-shot, no session
+
+```go
+rsp, err := Get("https://httpbun.com/get", WithImpersonate(DefaultChrome))
+rsp, err = Post("https://httpbun.com/post", WithJSON(map[string]any{"hello": "world"}))
+```
+
+`Put`, `Patch`, `Delete`, `Head`, `Options`, `Trace` and `Do` are the rest.
+
+### Session: cookies and connections
 
 ```go
 sess := NewSession(WithImpersonate(DefaultChrome))
 defer sess.Close()
 
-rsp, err := sess.Get("https://example.com/")
+sess.Send(Request{Method: "POST", URL: login, JSON: credentials}) // cookies are kept
+rsp, err := sess.Get("https://example.com/dashboard")
 ```
 
-From the shell:
-
-```sh
-gocurlffi get tls.browserleaks.com/json -i chrome150
-gocurlffi post httpbin.org/post -j '{"a":1}'
-```
-
-## Browser
-
-`browser` fetches through the same impersonating transport and then runs the
-page's scripts, so client-rendered pages can be read too.
-
-For a single page there is `Browse`, which is `Send` with the path in the name,
-and takes the same things:
+### Browser: the rendered page
 
 ```go
 package main
@@ -90,107 +107,85 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(rsp.Text()) // the rendered document, after the scripts have run
+	fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 }
 ```
 
-The two paths then sit side by side on one session, and the call says which is
-which:
-
-```go
-rsp, err := sess.Send("https://example.com/")   // impersonated HTTP
-rsp, err = sess.Browse("https://example.com/")  // the same URL, rendered
-```
-
-A `Request` value works too, which is what to use when several fields are set:
-`Send` and `Browse` take a `Request`, a `*Request` or a URL. `Send` with
-`Browser` set and `Get` with `WithBrowser()` are the same two paths, spelled the
-other ways round.
-
-The browser is linked by importing it: the root package does not pull a
+The browser is a separate import on purpose: the client does not pull a
 JavaScript engine into a program that only makes requests, which would double
-its size. A `Browser` request without that import reports which one is missing.
+its size - 17.2MB to 34.6MB for the same binary. A `Browse` without that import
+reports which one is missing.
 
-The `browser` package itself gives the page:
+### Both paths side by side
 
 ```go
-package main
-
-import (
-	"fmt"
-
-	"github.com/HashShin/gocurlffi/browser"
-)
-
-func main() {
-	p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
-	if err != nil {
-		panic(err)
-	}
-	defer p.Close()
-
-	fmt.Println(p.Title())
-	fmt.Println(p.Text())     // rendered, after the page's scripts have run
-	fmt.Println(p.Markdown()) // the same document as Markdown
-	for _, l := range p.Links() {
-		fmt.Println(l.Href, l.Text)
-	}
-}
+rsp, err := sess.Send("https://example.com/")  // impersonated HTTP
+rsp, err = sess.Browse("https://example.com/") // the same URL, rendered
 ```
 
-A page renders and drives as well as reads:
+`Send` and `Browse` take a `Request`, a `*Request` or a URL, so which path a
+request takes is one name at the call site and nothing else. `Get` with
+`WithBrowser()` is the same two paths spelled the other way round.
+
+### Browser: read the page
 
 ```go
-png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
+p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
 if err != nil {
 	panic(err)
 }
+defer p.Close()
+
+fmt.Println(p.Title())
+fmt.Println(p.Markdown())
+for _, l := range p.Links() {
+	fmt.Println(l.Href, l.Text)
+}
+```
+
+### Browser: screenshot, fill, click
+
+```go
+png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
 os.WriteFile("page.png", png, 0o644)
 
-if err := p.Fill("#user", "me"); err != nil {
-	panic(err)
-}
-if err := p.Click("button[type=submit]"); err != nil {
-	panic(err)
-}
+p.Fill("#user", "me")
+p.Click("button[type=submit]")
 p.WaitForSelector("#account", 5*time.Second)
 ```
 
-From the shell, `--render` selects the same path:
+### Proxy, timeout, TLS
+
+```go
+rsp, err := Send(Request{
+	URL:         "https://httpbun.com/ip",
+	Impersonate: DefaultChrome,
+	Proxy:       "socks5://127.0.0.1:1080",
+	Timeout:     10 * time.Second,
+})
+
+sess := NewSession(WithVerify(false))                          // self-signed
+sess = NewSession(WithCert("cert.pem", "key.pem"))             // client certificate
+```
+
+---
+
+## CLI
 
 ```sh
+gocurlffi get tls.browserleaks.com/json -i chrome150
+gocurlffi post httpbin.org/post -j '{"a":1}'
+
 gocurlffi get https://quotes.toscrape.com/js/ --render --format text
 gocurlffi open example.com --screenshot page.png
 gocurlffi open example.com/login --fill '#user=me' --click 'button[type=submit]'
-gocurlffi open example.com/login --click '#submit' --pdf login.pdf
+
+gocurlffi targets          # every impersonation target
+gocurlffi serve            # CDP over ws://127.0.0.1:9222
+gocurlffi mcp --port 9223  # MCP over http://127.0.0.1:9223/mcp
 ```
 
-It can also be driven by Puppeteer or Playwright over CDP, or by an agent over
-MCP:
-
-```sh
-gocurlffi serve            # ws://127.0.0.1:9222
-gocurlffi mcp --port 9223  # http://127.0.0.1:9223/mcp
-```
-
-## Install
-
-```sh
-go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
-
-# or from a checkout
-make install                    # -> /usr/local/bin/gocurlffi
-make install PREFIX=$HOME/.local
-```
-
-The repository is private, so a remote install needs credentials and
-`GOPRIVATE=github.com/HashShin/*`. A checkout needs neither.
-
-As a library:
-
-```sh
-go get github.com/HashShin/gocurlffi
-```
+---
 
 ## Limitations
 
