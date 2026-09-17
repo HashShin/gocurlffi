@@ -100,7 +100,7 @@ sent. It is a GET of a URL and nothing else: a method or a body is an
 `*InterfaceError`, and it is orders of magnitude slower than the fast client.
 
 ```go
-rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
@@ -123,17 +123,19 @@ The option form is the same path:
 rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
 ```
 
-And so is the named call, for a site that mixes the two and wants the path
-visible where it is chosen:
+`Browse` is the URL-taking form, the counterpart of `Get`:
 
 ```go
-rsp, err := sess.Send(page)   // impersonated HTTP
-rsp, err = sess.Browse(page)  // the same request, in the browser
+rsp, err := sess.Get(url, WithImpersonate(DefaultChrome)) // impersonated HTTP
+rsp, err = sess.Browse(url, WithImpersonate(DefaultChrome)) // the same URL, rendered
 ```
 
-`Browse` is `Send` with `Browser` set, on the same session, with the same
-cookies and the same fingerprint. Three spellings, one path: take whichever
-makes the call site read best.
+It is `Get` with `WithBrowser` and nothing else, on the same session, with the
+same cookies and fingerprint, so no spelling can drift from another. Four
+spellings, one path: the URL and options helpers, `Browse`, the `Browser` field
+on a `Request`, and `WithBrowser`. Take whichever makes the call site read
+best - the `Request` field is the one that lets a single value be sent down
+either path.
 
 `Browser` is a field on the request, not a mode on the session, so the two paths
 sit side by side: a program renders the pages that need their scripts and

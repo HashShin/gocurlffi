@@ -9,6 +9,7 @@ require (
 	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/tls-client v1.16.0
 	github.com/bogdanfinn/utls v1.7.8-barnius
+	github.com/coder/websocket v1.8.15
 	github.com/dop251/goja v0.0.0-20260911104922-fabc3b8078ad
 	github.com/klauspost/compress v1.18.2
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
@@ -24,7 +25,6 @@ require (
 	github.com/bogdanfinn/quic-go-utls v1.0.10-utls // indirect
 	github.com/bogdanfinn/websocket v1.5.6-barnius // indirect
 	github.com/cloudflare/circl v1.6.2 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect

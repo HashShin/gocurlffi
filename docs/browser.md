@@ -11,7 +11,7 @@ targets, so one import is enough, and importing it dotted needs no prefix:
 For one page, a request can ask for it directly, with no browser API at all:
 
 ```go
-rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(Chrome131))
 ```
 
 `Request.Browser` is served by this package, which installs itself behind it

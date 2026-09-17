@@ -79,13 +79,14 @@ func (s *Session) UserAgent() string {
 	return ""
 }
 
-// Browse loads a request in the browser, which is exactly Send on a request
-// with Browser set: the same page, the same session's cookies and the same
-// fingerprint, spelled so the call site says which path it takes. Use it when
-// the two paths are mixed and reading which is which matters.
-func (s *Session) Browse(req Request) (*Response, error) {
-	req.Browser = true
-	return s.Send(req)
+// Browse loads a URL in the browser, which is Get with WithBrowser: the page's
+// scripts run and the response body is the document as it settled. It is the
+// short form for a site that mixes the two paths, so the call site says which
+// is which without a Request literal.
+//
+//	sess.Browse(url, WithImpersonate(DefaultChrome))
+func (s *Session) Browse(rawURL string, opts ...Option) (*Response, error) {
+	return s.Request("GET", rawURL, withBrowser(opts)...)
 }
 
 // sendBrowser loads a request in the browser the browser package installed,
@@ -626,12 +627,22 @@ func Send(req Request) (*Response, error) {
 	return s.Send(req)
 }
 
-// Browse loads a request in the browser without a session of your own, exactly
-// as Send does with Browser set. It needs the browser package imported, which
-// is what installs it.
-func Browse(req Request) (*Response, error) {
-	req.Browser = true
-	return Send(req)
+// Browse loads a URL in the browser in a throwaway session, the short form of
+// Get with WithBrowser. It needs the browser package imported, which is what
+// installs it:
+//
+//	rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
+func Browse(rawURL string, opts ...Option) (*Response, error) {
+	return oneShot("GET", rawURL, withBrowser(opts)...)
+}
+
+// withBrowser appends the browser option to a caller's options without writing
+// through their slice: append on a slice with spare capacity would land in the
+// caller's array.
+func withBrowser(opts []Option) []Option {
+	out := make([]Option, 0, len(opts)+1)
+	out = append(out, opts...)
+	return append(out, WithBrowser())
 }
 
 // Get sends a GET request in a throwaway session.

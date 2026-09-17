@@ -52,7 +52,7 @@ gocurlffi post httpbin.org/post -j '{"a":1}'
 `browser` fetches through the same impersonating transport and then runs the
 page's scripts, so client-rendered pages can be read too.
 
-For a single page, the same `Send` takes a `Browser` option:
+For a single page there is `Browse`, the same shape as `Get`:
 
 ```go
 package main
@@ -65,7 +65,7 @@ import (
 )
 
 func main() {
-	rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+	rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
 	if err != nil {
 		panic(err)
 	}
@@ -73,15 +73,16 @@ func main() {
 }
 ```
 
-It is a field on the request, so the two paths sit side by side on one session:
-render the pages that need their scripts, scrape the rest, and flip `Browser` to
-change which is which. `Browse` is the same call spelled out, when a site mixes
-both and the path should be visible where it is chosen:
+`Browse` is `Get` in the browser, so the two paths sit side by side on one
+session and the call says which is which:
 
 ```go
-rsp, err := sess.Send(page)  // impersonated HTTP
-rsp, err = sess.Browse(page) // the same request, in the browser
+rsp, err := sess.Get(url)                          // impersonated HTTP
+rsp, err = sess.Browse(url, WithImpersonate(Chrome131)) // the same URL, rendered
 ```
+
+A `Request` value works too, with `Browser` set either way; the field is what
+lets one value be sent down either path.
 
 The browser is linked by importing it: the root package does not pull a
 JavaScript engine into a program that only makes requests, which would double
