@@ -156,6 +156,19 @@ defer b.Close()
 p, _ := b.Open(url)
 ```
 
+The page is driven by calls on it, in the order they are written, and a click is
+delivered to the page's own handlers:
+
+```go
+p.Fill("#user", "me")
+p.Fill("#pass", "secret")
+p.Click("button[type=submit]")
+p.WaitForSelector("#account", 5*time.Second)
+
+png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
+os.WriteFile("page.png", png, 0o644)
+```
+
 ---
 
 ## Limitations
@@ -166,6 +179,9 @@ p, _ := b.Open(url)
   extension permutation is replaced by one fixed valid order, and the IP, port
   and size counters on `Response` are unpopulated.
 - The browser is missing a further set of web APIs.
+- A click reaches the page's own handlers but performs no default action: a link
+  or a submit button does not navigate, and `form.submit()` is absent. Move the
+  page with `Page.Load`.
 
 [`docs/limitations.md`](docs/limitations.md) has the rest, with the measurements.
 

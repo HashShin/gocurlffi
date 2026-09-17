@@ -25,5 +25,12 @@ there is one. The README carries the short version.
 - Async sessions, caching backends, DoH and `curl_options` are not ported.
 - **`requests` alone has no JavaScript engine.** For client-rendered pages use
   the `browser` package or `--render`.
+- **A click has no default action.** `Click` dispatches pointer, mouse and click
+  events, so a page's own handlers run, but the browser follows neither a link
+  nor a form: clicking an `<a href>` or a submit button leaves the document in
+  place, `HTMLFormElement.submit` and `requestSubmit` are absent, and a
+  navigation a handler asks for after the load has finished (`location.href =
+  ...`, measured) is recorded and not followed. Use `Page.Load` or
+  `Browser.Open` for the next URL, or send the form's request on the HTTP path.
 - The browser is missing a further set of web APIs; the notable ones are listed
   in [`browser/README.md`](../browser/README.md).

@@ -718,6 +718,11 @@ not a browser, and the gaps below remain. Specifically absent:
   MCP server lets an external agent drive it instead.
 - No WebAssembly (no engine). Service Workers are feature-detection only: there
   is no persistent, background worker.
+- **A click has no default action.** `Page.Click` dispatches the events, so the
+  page's own handlers run, but nothing navigates: a link and a form's submit
+  button leave the document where it is, `HTMLFormElement.submit` and
+  `requestSubmit` are absent, and a navigation a handler asks for after the load
+  has finished is recorded and never followed. Call `Page.Load` for the next URL.
 - `<template>` contents are moved out of the element at parse time, so
   appending a node directly to a template element puts it in the element
   (visible) rather than in `content`. Use `template.content` to build content.
