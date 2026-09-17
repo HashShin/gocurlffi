@@ -135,6 +135,27 @@ func main() {
 }
 ```
 
+Options that outlive one page - the fingerprint, a proxy, robots.txt, a hook
+that blocks or answers requests - go on the browser. `Open` returns the page
+object `Browse` builds for one request:
+
+```go
+b := browser.New(browser.Options{
+	Impersonate: browser.Chrome131,
+	Proxy:       proxy,
+	ObeyRobots:  true,
+	Intercept: func(r *browser.Request) *browser.Response {
+		if r.ResourceType == "image" {
+			return browser.Block()
+		}
+		return nil
+	},
+})
+defer b.Close()
+
+p, _ := b.Open(url)
+```
+
 ---
 
 ## Limitations
