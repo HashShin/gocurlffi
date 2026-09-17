@@ -101,9 +101,9 @@ func main() {
 }
 ```
 
-`Send` is the fast path. Every other sample is a fragment of one of the two
-programs below: the same import, then the lines that differ. The rest of the
-HTTP API - options, sessions, TLS - is in [`docs/api.md`](docs/api.md).
+`Send` is the fast path. The rest of the HTTP API - options, sessions, TLS - is
+in [`docs/api.md`](docs/api.md), and the page API behind `Browse` is in
+[`docs/browser.md`](docs/browser.md).
 
 ### Browser
 
@@ -133,13 +133,6 @@ func main() {
 	}
 	fmt.Println(rsp.StatusCode, rsp.Text()) // rendered, after the scripts have run
 }
-```
-
-The two paths sit side by side on one session, and the name says which is which:
-
-```go
-rsp, err := sess.Send(url)  // impersonated HTTP
-rsp, err = sess.Browse(url) // the same URL, rendered
 ```
 
 ---
