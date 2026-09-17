@@ -85,7 +85,7 @@ import (
 )
 
 func main() {
-	rsp, err := Send(Request{
+	r, err := Send(Request{
 		Method: "GET",
 		URL:    "https://httpbun.com/get",
 		Headers: Headers{
@@ -97,7 +97,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(rsp.StatusCode, rsp.Text())
+	fmt.Println(r.StatusCode, r.Text())
 }
 ```
 
@@ -123,7 +123,7 @@ import (
 )
 
 func main() {
-	p, err := Open(Request{
+	r, err := Open(Request{
 		Method: "GET",
 		URL:    "https://quotes.toscrape.com/login",
 		Headers: Headers{
@@ -134,17 +134,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer p.Close()
+	defer r.Close()
 
-	p.Fill("#username", "me")
-	p.Fill("#password", "secret")
-	p.Click("input[type=submit]")
-	p.WaitForSelector("a[href='/logout']", 5*time.Second)
+	r.Fill("#username", "me")
+	r.Fill("#password", "secret")
+	r.Click("input[type=submit]")
+	r.WaitForSelector("a[href='/logout']", 5*time.Second)
 
-	png, _ := p.Screenshot(ScreenshotOptions{Width: 1280, Scale: 2})
+	png, _ := r.Screenshot(ScreenshotOptions{Width: 1280, Scale: 2})
 	os.WriteFile("page.png", png, 0o644)
 
-	fmt.Println(p.Title())
+	fmt.Println(r.Title())
 }
 ```
 
