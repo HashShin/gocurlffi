@@ -37,7 +37,10 @@ import (
 )
 
 func main() {
-	rsp, err := Send("https://httpbun.com/get", WithImpersonate(DefaultChrome))
+	rsp, err := Send("https://httpbun.com/get",
+		WithImpersonate(DefaultChrome),
+		WithHeader("Accept", "application/json"),
+	)
 	if err != nil {
 		panic(err)
 	}
