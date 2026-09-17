@@ -135,25 +135,65 @@ func main() {
 }
 ```
 
-The facade links the browser, so it carries goja, the JavaScript engine the
-browser runs pages with, and both programs above build to 34.6MB. A program
-that imports `github.com/HashShin/gocurlffi/requests` instead is 17.2MB; import
-`requests` when a program only makes requests.
-
-The page API is the browser package's own, because `Get` and `Options` are
-already the HTTP verbs here:
+Opening the page as an object, to read it and drive it, is the browser
+package's own API:
 
 ```go
 import "github.com/HashShin/gocurlffi/browser"
 
-p, _ := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
-defer p.Close()
-
-fmt.Println(p.Title())
-fmt.Println(p.Markdown())
-for _, l := range p.Links() {
-	fmt.Println(l.Href, l.Text)
+p, err := browser.Get("https://quotes.toscrape.com/js/", browser.Chrome131)
+if err != nil {
+	panic(err)
 }
+defer p.Close()
+```
+
+Every call below is a method on that page:
+
+| Call | What it does |
+| --- | --- |
+| `p.Title()`, `p.Text()`, `p.Markdown()`, `p.HTML()` | The document as data. |
+| `p.Links()`, `p.StructuredData()`, `p.Microdata()` | What it publishes: anchors, JSON-LD, microdata. |
+| `p.Query(sel)`, `p.QueryAll(sel)`, `p.XPath(expr)` | Elements, by CSS selector or XPath. |
+| `p.Click(sel)`, `p.Fill(sel, v)`, `p.Type(sel, v)`, `p.Select(sel, v)`, `p.Check(sel, on)`, `p.Press(key)`, `p.Scroll(sel)` | Drive the page. |
+| `p.WaitForSelector(sel, d)`, `p.WaitForScript(js, d)`, `p.WaitForNetworkIdle(quiet, d)`, `p.WaitForTime(d)` | Wait for it to settle. |
+| `p.Screenshot(opts)`, `p.PDF(opts)` | Pixels, and paper. |
+| `p.Eval(js)`, `p.Runtime()` | JavaScript, and the engine running it. |
+| `p.Frames()`, `p.ShadowRoots()` | Iframes, and shadow DOM. |
+| `p.Console()`, `p.StyleSheets()` | What the page logged, and what it drew with. |
+| `p.Response()` | The HTTP response the document came from. |
+
+The calls run in the order they are written, so a login and a screenshot are one
+sequence:
+
+```go
+p.Fill("#user", "me")
+p.Fill("#pass", "secret")
+p.Click("button[type=submit]")
+p.WaitForSelector("#account", 5*time.Second)
+
+png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
+os.WriteFile("page.png", png, 0o644)
+```
+
+Options that outlive one page - the fingerprint, a proxy, robots.txt, and a hook
+that blocks or answers requests - go on the browser:
+
+```go
+b := browser.New(browser.Options{
+	Impersonate: browser.Chrome131,
+	Proxy:       proxy,
+	ObeyRobots:  true,
+	Intercept: func(r *browser.Request) *browser.Response {
+		if r.ResourceType == "image" {
+			return browser.Block()
+		}
+		return nil
+	},
+})
+defer b.Close()
+
+p, _ := b.Open(url)
 ```
 
 The two paths sit side by side on one session, and the name says which is which:
@@ -161,15 +201,6 @@ The two paths sit side by side on one session, and the name says which is which:
 ```go
 rsp, err := sess.Send(url)  // impersonated HTTP
 rsp, err = sess.Browse(url) // the same URL, rendered
-```
-
-```go
-png, _ := p.Screenshot(browser.ScreenshotOptions{Width: 1280})
-os.WriteFile("page.png", png, 0o644)
-
-p.Fill("#user", "me")
-p.Click("button[type=submit]")
-p.WaitForSelector("#account", 5*time.Second)
 ```
 
 ---
