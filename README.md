@@ -13,22 +13,10 @@ No cgo, no C, no code generation. Cross-compiles, including to Android/Termux.
 go get github.com/HashShin/gocurlffi
 
 go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
-```
 
-The repository is private, so a remote install needs credentials and
-`GOPRIVATE=github.com/HashShin/*`. A checkout needs neither:
-
-```sh
 make build                     # -> bin/gocurlffi
 make install                   # -> /usr/local/bin
 make install PREFIX=$HOME/.local
-```
-
-If the Go toolchain is not on `PATH`, set `GOPATH` and let Go use its downloaded
-one:
-
-```sh
-export GOPATH=/tmp/gopath GOMODCACHE=/tmp/gopath/pkg/mod GOCACHE=/tmp/gocache
 ```
 
 ---
