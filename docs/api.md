@@ -100,7 +100,10 @@ sent. It is a GET of a URL and nothing else: a method or a body is an
 `*InterfaceError`, and it is orders of magnitude slower than the fast client.
 
 ```go
-rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
+rsp, err := Browse(Request{
+	URL:         "https://quotes.toscrape.com/js/",
+	Impersonate: DefaultChrome,
+})
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
@@ -123,19 +126,21 @@ The option form is the same path:
 rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
 ```
 
-`Browse` is the URL-taking form, the counterpart of `Get`:
+`Browse` takes the same `Request` literal `Send` does, so both paths read
+identically and only the name says which is which:
 
 ```go
-rsp, err := sess.Get(url, WithImpersonate(DefaultChrome)) // impersonated HTTP
-rsp, err = sess.Browse(url, WithImpersonate(DefaultChrome)) // the same URL, rendered
+req := Request{URL: url, Impersonate: DefaultChrome}
+
+rsp, err := sess.Send(req)   // impersonated HTTP
+rsp, err = sess.Browse(req)  // the same request, rendered
 ```
 
-It is `Get` with `WithBrowser` and nothing else, on the same session, with the
-same cookies and fingerprint, so no spelling can drift from another. Four
-spellings, one path: the URL and options helpers, `Browse`, the `Browser` field
-on a `Request`, and `WithBrowser`. Take whichever makes the call site read
-best - the `Request` field is the one that lets a single value be sent down
-either path.
+`Browse` is `Send` with `Browser` set, on the same session, with the same
+cookies and fingerprint. Four spellings, one path: `Send` with the field,
+`Browse`, the URL-and-options helpers with `WithBrowser`, and `Get` with
+`WithBrowser`. Take whichever makes the call site read best - the `Request`
+field is the one that lets a single value be sent down either path.
 
 `Browser` is a field on the request, not a mode on the session, so the two paths
 sit side by side: a program renders the pages that need their scripts and

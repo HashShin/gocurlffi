@@ -286,53 +286,61 @@ func TestPathsRunConcurrently(t *testing.T) {
 	wg.Wait()
 }
 
-// Browse is Get in the browser, taking a URL and options like the other
-// helpers, so a site that mixes the two paths says which is which at the call
-// site without a Request literal.
-func TestBrowseIsGetInTheBrowser(t *testing.T) {
-	var gotUA, gotHeader string
+// Browse loads a request in the browser: the same literal as Send, with the
+// name saying which path it takes, so both paths read the same at the call
+// site. Get with WithBrowser reaches the same page without a literal.
+func TestBrowseTakesTheSameRequestAsSend(t *testing.T) {
+	var gotHeader string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotUA, gotHeader = r.UserAgent(), r.Header.Get("X-Test")
+		gotHeader = r.Header.Get("X-Test")
 		_, _ = w.Write([]byte(`<!doctype html><html><body><p id="out">raw</p>
 			<script>document.getElementById('out').textContent = 'rendered';</script>
 			</body></html>`))
 	}))
 	defer srv.Close()
 
-	fast, err := requests.Get(srv.URL)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !strings.Contains(fast.Text(), `id="out">raw`) {
-		t.Errorf("Get ran scripts:\n%s", fast.Text())
+	req := requests.Request{
+		URL:         srv.URL,
+		Impersonate: "chrome150",
+		Headers:     []string{"X-Test: yes"},
 	}
 
-	// Options still apply, and the caller's slice is not written through.
-	opts := []requests.Option{
-		requests.WithImpersonate("chrome150"),
-		requests.WithHeader("X-Test", "yes"),
+	// The same value, sent both ways: Send is the fast path, Browse the browser.
+	fast, err := requests.Send(req)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
 	}
-	sess := requests.NewSession()
-	defer sess.Close()
-	rendered, err := sess.Browse(srv.URL, opts...)
+	if !strings.Contains(fast.Text(), `id="out">raw`) {
+		t.Errorf("Send ran scripts:\n%s", fast.Text())
+	}
+
+	rendered, err := requests.Browse(req)
 	if err != nil {
 		t.Fatalf("Browse: %v", err)
 	}
 	if !strings.Contains(rendered.Text(), `id="out">rendered`) {
 		t.Errorf("Browse did not run scripts:\n%s", rendered.Text())
 	}
-	if gotUA == "" || !strings.Contains(gotUA, "Chrome/") {
-		t.Errorf("user agent = %q, want the impersonated one", gotUA)
-	}
 	if gotHeader != "yes" {
-		t.Errorf("X-Test = %q, want the option's header", gotHeader)
+		t.Errorf("X-Test = %q, want the request's header", gotHeader)
 	}
-	if len(opts) != 2 {
-		t.Errorf("the caller's option slice grew to %d", len(opts))
+	// Browse sets the field on its own copy.
+	if req.Browser {
+		t.Errorf("Browse set Browser on the caller's request")
 	}
 
-	// The same thing without a session, by URL.
-	if _, err := requests.Browse(srv.URL); err != nil {
-		t.Fatalf("package-level Browse: %v", err)
+	sess := requests.NewSession()
+	defer sess.Close()
+	if _, err := sess.Browse(req); err != nil {
+		t.Fatalf("sess.Browse: %v", err)
+	}
+
+	// The URL-and-options spelling is the same path.
+	opt, err := requests.Get(srv.URL, requests.WithBrowser())
+	if err != nil {
+		t.Fatalf("Get with WithBrowser: %v", err)
+	}
+	if !strings.Contains(opt.Text(), `id="out">rendered`) {
+		t.Errorf("Get with WithBrowser did not run scripts:\n%s", opt.Text())
 	}
 }

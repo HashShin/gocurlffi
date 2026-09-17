@@ -52,7 +52,8 @@ gocurlffi post httpbin.org/post -j '{"a":1}'
 `browser` fetches through the same impersonating transport and then runs the
 page's scripts, so client-rendered pages can be read too.
 
-For a single page there is `Browse`, the same shape as `Get`:
+For a single page there is `Browse`: the same `Request` literal, with the path
+in the name:
 
 ```go
 package main
@@ -65,7 +66,10 @@ import (
 )
 
 func main() {
-	rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
+	rsp, err := Browse(Request{
+		URL:         "https://quotes.toscrape.com/js/",
+		Impersonate: DefaultChrome,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -73,16 +77,18 @@ func main() {
 }
 ```
 
-`Browse` is `Get` in the browser, so the two paths sit side by side on one
-session and the call says which is which:
+The two paths then sit side by side on one session, and the call says which is
+which:
 
 ```go
-rsp, err := sess.Get(url)                          // impersonated HTTP
-rsp, err = sess.Browse(url, WithImpersonate(Chrome131)) // the same URL, rendered
+req := Request{URL: url, Impersonate: DefaultChrome}
+
+rsp, err := sess.Send(req)   // impersonated HTTP
+rsp, err = sess.Browse(req)  // the same request, rendered
 ```
 
-A `Request` value works too, with `Browser` set either way; the field is what
-lets one value be sent down either path.
+`Send` with `Browser` set and `Get` with `WithBrowser()` are the same two paths,
+spelled the other ways round.
 
 The browser is linked by importing it: the root package does not pull a
 JavaScript engine into a program that only makes requests, which would double

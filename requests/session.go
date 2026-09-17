@@ -79,14 +79,17 @@ func (s *Session) UserAgent() string {
 	return ""
 }
 
-// Browse loads a URL in the browser, which is Get with WithBrowser: the page's
-// scripts run and the response body is the document as it settled. It is the
-// short form for a site that mixes the two paths, so the call site says which
-// is which without a Request literal.
+// Browse loads a request in the browser. It takes the same Request literal Send
+// does - the fields read the same, with URL and Impersonate where they always
+// are - and the name says which path it takes:
 //
-//	sess.Browse(url, WithImpersonate(DefaultChrome))
-func (s *Session) Browse(rawURL string, opts ...Option) (*Response, error) {
-	return s.Request("GET", rawURL, withBrowser(opts)...)
+//	sess.Browse(Request{URL: url, Impersonate: DefaultChrome})
+//
+// The URL-and-options spelling is Get with WithBrowser, and Browse is Send with
+// Browser set; all three reach the same page.
+func (s *Session) Browse(req Request) (*Response, error) {
+	req.Browser = true
+	return s.Send(req)
 }
 
 // sendBrowser loads a request in the browser the browser package installed,
@@ -627,22 +630,14 @@ func Send(req Request) (*Response, error) {
 	return s.Send(req)
 }
 
-// Browse loads a URL in the browser in a throwaway session, the short form of
-// Get with WithBrowser. It needs the browser package imported, which is what
-// installs it:
+// Browse loads a request in the browser in a throwaway session, spelled like
+// Send with the path in the name. It needs the browser package imported, which
+// is what installs it:
 //
-//	rsp, err := Browse("https://quotes.toscrape.com/js/", WithImpersonate(DefaultChrome))
-func Browse(rawURL string, opts ...Option) (*Response, error) {
-	return oneShot("GET", rawURL, withBrowser(opts)...)
-}
-
-// withBrowser appends the browser option to a caller's options without writing
-// through their slice: append on a slice with spare capacity would land in the
-// caller's array.
-func withBrowser(opts []Option) []Option {
-	out := make([]Option, 0, len(opts)+1)
-	out = append(out, opts...)
-	return append(out, WithBrowser())
+//	rsp, err := Browse(Request{URL: url, Impersonate: DefaultChrome})
+func Browse(req Request) (*Response, error) {
+	req.Browser = true
+	return Send(req)
 }
 
 // Get sends a GET request in a throwaway session.
