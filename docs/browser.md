@@ -21,6 +21,10 @@ page fetches, the document and its subresources alike. Only a GET of a URL has a
 browser path. A `Session` keeps one browser, so pages and plain requests on that
 session share cookies.
 
+`Browser` is per request, so the two paths stand side by side: the same session
+renders one URL and scrapes the next, and flipping the field is the switch
+between them.
+
 ```go
 package main
 

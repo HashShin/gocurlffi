@@ -123,6 +123,25 @@ The option form is the same path:
 rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
 ```
 
+`Browser` is a field on the request, not a mode on the session, so the two paths
+sit side by side: a program renders the pages that need their scripts and
+scrapes the rest with the same client, the same cookies and the same import.
+Flipping the field is the whole switch.
+
+```go
+sess := NewSession()
+defer sess.Close()
+
+page := Request{URL: quotes, Impersonate: DefaultChrome}
+rsp, err := sess.Send(page) // fast: the script-built list is not there
+
+page.Browser = true
+rsp, err = sess.Send(page) // the same URL, rendered
+
+page.Browser, page.URL = false, next
+rsp, err = sess.Send(page) // fast again, on the same session
+```
+
 The fingerprint target can be named two ways:
 
 ```go

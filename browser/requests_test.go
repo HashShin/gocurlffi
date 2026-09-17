@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/HashShin/gocurlffi/requests"
@@ -169,4 +170,118 @@ func TestWithBrowserOptionRenders(t *testing.T) {
 	if !strings.Contains(rsp.Text(), "after") {
 		t.Errorf("body = %q, want the script's output", rsp.Text())
 	}
+}
+
+// A browser request and a fast one sit side by side on one session: which path
+// a request takes is a field on the request, so a program renders one page and
+// scrapes the next without a second client, a second import, or a re-login.
+// The same URL is fetched both ways here, so the raw body proves the field
+// decided and not the session's state.
+func TestBrowserAndFastPathsInterleave(t *testing.T) {
+	const page = `<!doctype html><html><body><p id="out">raw</p>
+		<script>document.getElementById('out').textContent = 'rendered';</script>
+		</body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+
+	// A base request: the whole switch is one field.
+	base := requests.Request{URL: srv.URL, Impersonate: "chrome150"}
+
+	fast, err := sess.Send(base)
+	if err != nil {
+		t.Fatalf("fast Send: %v", err)
+	}
+	if !strings.Contains(fast.Text(), `id="out">raw`) {
+		t.Errorf("the plain request is not the bytes the server sent:\n%s", fast.Text())
+	}
+
+	base.Browser = true
+	rendered, err := sess.Send(base)
+	if err != nil {
+		t.Fatalf("browser Send: %v", err)
+	}
+	if !strings.Contains(rendered.Text(), `id="out">rendered`) {
+		t.Errorf("the browser request did not run scripts:\n%s", rendered.Text())
+	}
+
+	// Back to the fast path on the same session, and it must still be fast: a
+	// session that has loaded a browser page does not become one.
+	base.Browser = false
+	again, err := sess.Send(base)
+	if err != nil {
+		t.Fatalf("second fast Send: %v", err)
+	}
+	if !strings.Contains(again.Text(), `id="out">raw`) {
+		t.Errorf("the fast path rendered after a browser load:\n%s", again.Text())
+	}
+	if again.URL != srv.URL || again.StatusCode != 200 {
+		t.Errorf("fast response = %s %d, want the page", again.URL, again.StatusCode)
+	}
+}
+
+// The two paths agree on what they send: the same request, with only the
+// Browser field flipped, must carry the same user agent and headers. Otherwise
+// switching a request between the paths would change its fingerprint.
+func TestSwitchingPathsKeepsTheRequestIdentical(t *testing.T) {
+	type seen struct{ ua, accept string }
+	got := make(chan seen, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{ua: r.UserAgent(), accept: r.Header.Get("Accept")}
+		_, _ = w.Write([]byte("<!doctype html><html><body>hi</body></html>"))
+	}))
+	defer srv.Close()
+
+	base := requests.Request{URL: srv.URL, Impersonate: "chrome150", Headers: []string{"Accept: text/plain"}}
+	if _, err := requests.Send(base); err != nil {
+		t.Fatalf("fast Send: %v", err)
+	}
+	base.Browser = true
+	if _, err := requests.Send(base); err != nil {
+		t.Fatalf("browser Send: %v", err)
+	}
+	fast, rendered := <-got, <-got
+	if fast.ua != rendered.ua {
+		t.Errorf("user agent: fast %q, browser %q", fast.ua, rendered.ua)
+	}
+	if fast.accept != rendered.accept {
+		t.Errorf("Accept: fast %q, browser %q", fast.accept, rendered.accept)
+	}
+}
+
+// Side by side also means at the same time: a browser load and a fast request
+// can run on one session concurrently, which is the shape of a crawler that
+// renders some pages and scrapes the rest.
+func TestPathsRunConcurrently(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<!doctype html><html><body>ok</body></html>"))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			rsp, err := sess.Send(requests.Request{URL: srv.URL})
+			if err != nil || rsp.StatusCode != 200 {
+				t.Errorf("fast: %v %v", rsp, err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			rsp, err := sess.Send(requests.Request{URL: srv.URL, Browser: true})
+			if err != nil || rsp.StatusCode != 200 {
+				t.Errorf("browser: %v %v", rsp, err)
+			}
+		}()
+	}
+	wg.Wait()
 }

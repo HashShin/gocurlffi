@@ -73,6 +73,10 @@ func main() {
 }
 ```
 
+It is a field on the request, so the two paths sit side by side on one session:
+render the pages that need their scripts, scrape the rest, and flip `Browser` to
+change which is which.
+
 The browser is linked by importing it: the root package does not pull a
 JavaScript engine into a program that only makes requests, which would double
 its size. A `Browser` request without that import reports which one is missing.
