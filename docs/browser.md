@@ -8,6 +8,19 @@ surface; this page is the orientation.
 that render client-side can be scraped too. It re-exports the impersonation
 targets, so one import is enough, and importing it dotted needs no prefix:
 
+For one page, a request can ask for it directly, with no browser API at all:
+
+```go
+rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+```
+
+`Request.Browser` is served by this package, which installs itself behind it
+when imported. The body is then the rendered document, and `Impersonate`,
+`Proxy`, `Timeout` and `Headers` on the same request apply to every resource the
+page fetches, the document and its subresources alike. Only a GET of a URL has a
+browser path. A `Session` keeps one browser, so pages and plain requests on that
+session share cookies.
+
 ```go
 package main
 

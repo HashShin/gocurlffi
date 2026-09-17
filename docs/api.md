@@ -72,6 +72,7 @@ back to the session when it is left empty, so a zero `Timeout` or an empty
 | --- | --- |
 | `Method` | HTTP method. Empty means GET. |
 | `URL` | Target. A URL with no scheme defaults to https. |
+| `Browser` | Load the URL in the full browser instead of the fast client. |
 | `Headers` | `Headers`, `[]string`, `[]HeaderPair`, `map[string]string`, or `*Headers`. |
 | `Params` | Query parameters, appended to any already in the URL. |
 | `Cookies` | Cookies for this request. |
@@ -92,6 +93,29 @@ rsp, err := sess.Post("https://httpbin.org/post",
 	WithTimeoutSeconds(15),
 )
 ```
+
+`Browser` is the one-word way to ask for the browser, which runs the page's
+scripts and returns the document as it settled rather than the bytes the server
+sent. It is a GET of a URL and nothing else: a method or a body is an
+`*InterfaceError`, and it is orders of magnitude slower than the fast client.
+
+```go
+rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
+```
+
+The browser is linked by importing its package, which a program that renders
+pages wants anyway:
+
+```go
+import (
+	. "github.com/HashShin/gocurlffi"
+	_ "github.com/HashShin/gocurlffi/browser" // Browser: true needs this
+)
+```
+
+A `Request` with `Browser` set, sent on a session, uses one browser per session,
+so pages and plain requests on that session share cookies.
 
 The fingerprint target can be named two ways:
 

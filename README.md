@@ -52,6 +52,33 @@ gocurlffi post httpbin.org/post -j '{"a":1}'
 `browser` fetches through the same impersonating transport and then runs the
 page's scripts, so client-rendered pages can be read too.
 
+For a single page, the same `Send` takes a `Browser` option:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	. "github.com/HashShin/gocurlffi"
+	_ "github.com/HashShin/gocurlffi/browser" // links the browser in
+)
+
+func main() {
+	rsp, err := Send(Request{URL: "https://quotes.toscrape.com/js/", Browser: true})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(rsp.Text()) // the rendered document, after the scripts have run
+}
+```
+
+The browser is linked by importing it: the root package does not pull a
+JavaScript engine into a program that only makes requests, which would double
+its size. A `Browser` request without that import reports which one is missing.
+
+The `browser` package itself gives the page:
+
 ```go
 package main
 

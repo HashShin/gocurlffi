@@ -73,6 +73,21 @@ type Options struct {
 	// and authenticated http:// proxies work.
 	Proxy string
 
+	// LoadOptions are passed to every request a page makes, the document and
+	// its subresources alike. They are how a fingerprint asked for on one
+	// request reaches the whole load, and they are applied per request, so a
+	// browser can share its session and still honour them.
+	LoadOptions []requests.Option
+
+	// Session is the requests session the browser fetches through, which is
+	// what lets a page and a plain request share cookies: it is how
+	// Request.Browser reuses the session its request was sent on. Nil creates
+	// one, which Close then closes; a session set here belongs to its creator
+	// and is left open. The options that shape the session itself -
+	// Impersonate, Timeout, Insecure, MaxRedirects and Proxy - apply only when
+	// the browser creates its own.
+	Session *requests.Session
+
 	// ObeyRobots makes the browser honour robots.txt: before any request it
 	// fetches and caches the origin's robots.txt and skips a disallowed URL,
 	// yielding a synthetic 403 that does not stop the load. Off by default,
@@ -119,6 +134,10 @@ func (o Options) scriptsEnabled() bool { return o.RunScripts == nil || *o.RunScr
 type Browser struct {
 	opts Options
 	sess *requests.Session
+	// ownsSession records that this browser created its session, and so is the
+	// one to close it: a session handed in through Options belongs to whoever
+	// made it.
+	ownsSession bool
 
 	// robots caches one parsed robots.txt per origin, only consulted when
 	// Options.ObeyRobots is set.
@@ -150,15 +169,26 @@ func New(opts Options) *Browser {
 	if opts.Proxy != "" {
 		sopts = append(sopts, requests.WithProxy(opts.Proxy))
 	}
+	sess := opts.Session
+	owns := sess == nil
+	if owns {
+		sess = requests.NewSession(sopts...)
+	}
 	return &Browser{
-		opts:   opts,
-		sess:   requests.NewSession(sopts...),
-		robots: map[string]*robotsRules{},
+		opts:        opts,
+		sess:        sess,
+		ownsSession: owns,
+		robots:      map[string]*robotsRules{},
 	}
 }
 
-// Close releases the underlying HTTP session.
-func (b *Browser) Close() { b.sess.Close() }
+// Close releases the underlying HTTP session, unless it was handed in through
+// Options.Session: that one belongs to its creator.
+func (b *Browser) Close() {
+	if b.ownsSession {
+		b.sess.Close()
+	}
+}
 
 // Get opens one page in a Browser of its own, so a single page takes one call
 // rather than a Browser and an Open:
@@ -236,7 +266,8 @@ func (b *Browser) request(method, rawURL string, headers map[string]string, body
 		resp.Ok = false
 		return resp, nil
 	}
-	opts := []requests.Option{}
+	opts := make([]requests.Option, 0, len(b.opts.LoadOptions)+2)
+	opts = append(opts, b.opts.LoadOptions...)
 	if len(headers) > 0 {
 		opts = append(opts, requests.WithHeaders(headers))
 	}

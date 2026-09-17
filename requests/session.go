@@ -22,6 +22,9 @@ type Session struct {
 	jar     *Cookies
 	clients map[clientKey]httpDoer
 	closed  bool
+	// browser is the renderer installed by the browser package, created on the
+	// first Request that sets Browser and closed with the session.
+	browser BrowserRenderer
 }
 
 // NewSession creates a Session. Options set here become defaults for every
@@ -76,6 +79,50 @@ func (s *Session) UserAgent() string {
 	return ""
 }
 
+// sendBrowser loads a request in the browser the browser package installed,
+// creating it for this session on first use so pages and plain requests share
+// one cookie jar.
+func (s *Session) sendBrowser(req Request) (*Response, error) {
+	if method := strings.ToUpper(strings.TrimSpace(req.Method)); method != "" && method != "GET" {
+		return nil, &InterfaceError{newError(
+			"Request.Browser loads a URL: it does not send a "+method, 0, nil)}
+	}
+	if len(req.Body) > 0 || req.JSON != nil {
+		return nil, &InterfaceError{newError(
+			"Request.Browser loads a URL: a request body has no browser path", 0, nil)}
+	}
+	url := req.URL
+	if req.Params != nil {
+		// The browser loads a URL, so the query has to be on it before the
+		// renderer sees the request.
+		withParams, err := applyParams(url, toParams(req.Params))
+		if err != nil {
+			return nil, err
+		}
+		req.URL = withParams
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, &SessionClosed{newError("session is closed", 0, nil)}
+	}
+	renderer := s.browser
+	if renderer == nil {
+		factory := browserRenderer()
+		if factory == nil {
+			s.mu.Unlock()
+			return nil, &InterfaceError{newError(
+				"Request.Browser needs the browser package: import github.com/HashShin/gocurlffi/browser", 0, nil)}
+		}
+		renderer = factory(s)
+		s.browser = renderer
+	}
+	s.mu.Unlock()
+
+	return renderer.Send(req)
+}
+
 // Close releases idle connections held by the session.
 func (s *Session) Close() {
 	s.mu.Lock()
@@ -88,6 +135,10 @@ func (s *Session) Close() {
 		c.CloseIdleConnections()
 	}
 	s.clients = map[clientKey]httpDoer{}
+	if s.browser != nil {
+		s.browser.Close()
+		s.browser = nil
+	}
 }
 
 // Cookies returns the live session cookie jar.
@@ -484,6 +535,9 @@ func (s *Session) Trace(rawURL string, opts ...Option) (*Response, error) {
 // Fields left at their zero value fall back to the session's defaults, so an
 // empty Method means GET and an empty Timeout means the session timeout.
 func (s *Session) Send(req Request) (*Response, error) {
+	if req.Browser {
+		return s.sendBrowser(req)
+	}
 	method := req.Method
 	if method == "" {
 		method = "GET"

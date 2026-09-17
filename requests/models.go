@@ -36,6 +36,15 @@ type Request struct {
 	// JSON is marshalled as the request body and sets application/json.
 	JSON any
 
+	// Browser loads the URL in the full browser instead of the fast client:
+	// scripts run, the page settles, and the response body is the document as
+	// it ended up. It needs the browser package linked in, which importing the
+	// module root does; a program that imports requests alone is told so.
+	//
+	// Only a GET of a URL has a browser path, and it is slower by orders of
+	// magnitude, so leave it off unless the page needs scripts.
+	Browser bool
+
 	// Impersonate selects the fingerprint target, for example
 	// impersonate.Chrome131. Empty uses the session default.
 	Impersonate string

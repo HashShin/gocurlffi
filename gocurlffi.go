@@ -33,6 +33,20 @@
 // function, and the two can be mixed freely. There is nothing to choose
 // between them but spelling.
 //
+// A request can also be loaded in the browser, which runs the page's scripts
+// and returns the document as it settled:
+//
+//	rsp, err := Send(Request{URL: "https://example.com/", Browser: true})
+//
+// That needs the browser package linked into the program, since it is the one
+// that brings a JavaScript engine:
+//
+//	import _ "github.com/HashShin/gocurlffi/browser"
+//
+// Importing it here instead would double the size of every program that only
+// makes requests, so the browser stays opt-in. A Browser request without it
+// reports the import that is missing.
+//
 // A dot import is a deliberate trade. Go's tooling discourages it, and
 // staticcheck reports it as ST1001, because a dotted package puts every name it
 // exports into the file: this one brings in 32 types, 51 functions and 49
@@ -50,6 +64,7 @@ import "github.com/HashShin/gocurlffi/requests"
 // Types, aliased so that a value of one is a value of the other.
 type (
 	BasicAuth              = requests.BasicAuth
+	BrowserRenderer        = requests.BrowserRenderer
 	CertificateVerifyError = requests.CertificateVerifyError
 	ClientCert             = requests.ClientCert
 	ConnectionError        = requests.ConnectionError
@@ -101,6 +116,10 @@ var (
 	Put                 = requests.Put
 	Send                = requests.Send
 	Trace               = requests.Trace
+	// UseBrowser installs the renderer a Browser request delegates to. The
+	// browser package calls it from its init, so this is only for a program
+	// that brings a browser of its own.
+	UseBrowser = requests.UseBrowser
 )
 
 // Request options.
