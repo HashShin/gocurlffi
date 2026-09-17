@@ -94,16 +94,21 @@ rsp, err := sess.Post("https://httpbin.org/post",
 )
 ```
 
+`Send` and `Browse` accept a `Request`, a `*Request` or a URL string, so the
+common case needs no literal and the path is named by the call:
+
+```go
+sess.Send("https://example.com/")   // impersonated HTTP
+sess.Browse("https://example.com/") // the same URL, rendered
+```
+
 `Browser` is the one-word way to ask for the browser, which runs the page's
 scripts and returns the document as it settled rather than the bytes the server
 sent. It is a GET of a URL and nothing else: a method or a body is an
 `*InterfaceError`, and it is orders of magnitude slower than the fast client.
 
 ```go
-rsp, err := Browse(Request{
-	URL:         "https://quotes.toscrape.com/js/",
-	Impersonate: DefaultChrome,
-})
+rsp, err := Browse("https://quotes.toscrape.com/js/")
 fmt.Println(rsp.Text()) // rendered, after the page's scripts have run
 ```
 
@@ -126,14 +131,15 @@ The option form is the same path:
 rsp, err := Get("https://quotes.toscrape.com/js/", WithBrowser())
 ```
 
-`Browse` takes the same `Request` literal `Send` does, so both paths read
-identically and only the name says which is which:
+`Browse` takes what `Send` takes, so both paths read identically and only the
+name says which is which:
 
 ```go
 req := Request{URL: url, Impersonate: DefaultChrome}
 
-rsp, err := sess.Send(req)   // impersonated HTTP
-rsp, err = sess.Browse(req)  // the same request, rendered
+rsp, err := sess.Send(req)          // impersonated HTTP
+rsp, err = sess.Browse(req)         // the same request, rendered
+rsp, err = sess.Browse("https://example.com/") // or a URL on its own
 ```
 
 `Browse` is `Send` with `Browser` set, on the same session, with the same

@@ -344,3 +344,57 @@ func TestBrowseTakesTheSameRequestAsSend(t *testing.T) {
 		t.Errorf("Get with WithBrowser did not run scripts:\n%s", opt.Text())
 	}
 }
+
+// The one-word forms: a URL goes straight in, and the name of the call says
+// which path it takes. A Request literal is still a Request literal.
+func TestOneWordForms(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<!doctype html><html><body><p id="out">raw</p>
+			<script>document.getElementById('out').textContent = 'rendered';</script>
+			</body></html>`))
+	}))
+	defer srv.Close()
+
+	sess := requests.NewSession()
+	defer sess.Close()
+
+	fast, err := sess.Send(srv.URL)
+	if err != nil {
+		t.Fatalf("Send(url): %v", err)
+	}
+	if !strings.Contains(fast.Text(), `id="out">raw`) {
+		t.Errorf("Send(url) ran scripts:\n%s", fast.Text())
+	}
+
+	rendered, err := sess.Browse(srv.URL)
+	if err != nil {
+		t.Fatalf("Browse(url): %v", err)
+	}
+	if !strings.Contains(rendered.Text(), `id="out">rendered`) {
+		t.Errorf("Browse(url) did not run scripts:\n%s", rendered.Text())
+	}
+
+	// A pointer to a request built elsewhere.
+	req := requests.Request{URL: srv.URL}
+	if _, err := sess.Browse(&req); err != nil {
+		t.Fatalf("Browse(&req): %v", err)
+	}
+	if req.Browser {
+		t.Errorf("Browse(&req) set Browser on the caller's request")
+	}
+
+	// Package level, both paths.
+	if _, err := requests.Send(srv.URL); err != nil {
+		t.Fatalf("Send(url): %v", err)
+	}
+	if _, err := requests.Browse(srv.URL); err != nil {
+		t.Fatalf("Browse(url): %v", err)
+	}
+
+	// Anything else is refused by name.
+	if _, err := requests.Send(42); err == nil {
+		t.Errorf("Send(42) was accepted")
+	} else if !strings.Contains(err.Error(), "int") {
+		t.Errorf("error %q does not name the type it got", err)
+	}
+}

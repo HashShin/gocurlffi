@@ -25,10 +25,12 @@ func main() {
 }
 ```
 
-`Send` takes a `Request`. `Get` and its siblings take a URL and options:
+`Send` takes a `Request`, or just a URL, which is a GET with the session's
+defaults. `Get` and its siblings take a URL and options:
 
 ```go
-rsp, err := Get("https://tls.browserleaks.com/json", WithImpersonate(DefaultChrome))
+rsp, err := Send("https://tls.browserleaks.com/json")
+rsp, err = Get("https://tls.browserleaks.com/json", WithImpersonate(DefaultChrome))
 ```
 
 Reuse a session to keep cookies and connections:
@@ -52,8 +54,8 @@ gocurlffi post httpbin.org/post -j '{"a":1}'
 `browser` fetches through the same impersonating transport and then runs the
 page's scripts, so client-rendered pages can be read too.
 
-For a single page there is `Browse`: the same `Request` literal, with the path
-in the name:
+For a single page there is `Browse`, which is `Send` with the path in the name,
+and takes the same things:
 
 ```go
 package main
@@ -66,10 +68,7 @@ import (
 )
 
 func main() {
-	rsp, err := Browse(Request{
-		URL:         "https://quotes.toscrape.com/js/",
-		Impersonate: DefaultChrome,
-	})
+	rsp, err := Browse("https://quotes.toscrape.com/js/")
 	if err != nil {
 		panic(err)
 	}
@@ -81,14 +80,14 @@ The two paths then sit side by side on one session, and the call says which is
 which:
 
 ```go
-req := Request{URL: url, Impersonate: DefaultChrome}
-
-rsp, err := sess.Send(req)   // impersonated HTTP
-rsp, err = sess.Browse(req)  // the same request, rendered
+rsp, err := sess.Send("https://example.com/")   // impersonated HTTP
+rsp, err = sess.Browse("https://example.com/")  // the same URL, rendered
 ```
 
-`Send` with `Browser` set and `Get` with `WithBrowser()` are the same two paths,
-spelled the other ways round.
+A `Request` value works too, which is what to use when several fields are set:
+`Send` and `Browse` take a `Request`, a `*Request` or a URL. `Send` with
+`Browser` set and `Get` with `WithBrowser()` are the same two paths, spelled the
+other ways round.
 
 The browser is linked by importing it: the root package does not pull a
 JavaScript engine into a program that only makes requests, which would double

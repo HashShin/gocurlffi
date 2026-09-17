@@ -79,17 +79,20 @@ func (s *Session) UserAgent() string {
 	return ""
 }
 
-// Browse loads a request in the browser. It takes the same Request literal Send
-// does - the fields read the same, with URL and Impersonate where they always
-// are - and the name says which path it takes:
+// Browse loads a request in the browser, which is Send with Browser set: the
+// name says which path it takes, so the two read alike:
 //
-//	sess.Browse(Request{URL: url, Impersonate: DefaultChrome})
+//	sess.Send("https://example.com/")    // impersonated HTTP
+//	sess.Browse("https://example.com/")  // the same URL, rendered
 //
-// The URL-and-options spelling is Get with WithBrowser, and Browse is Send with
-// Browser set; all three reach the same page.
-func (s *Session) Browse(req Request) (*Response, error) {
-	req.Browser = true
-	return s.Send(req)
+// It takes anything Send does, and Get with WithBrowser reaches the same page.
+func (s *Session) Browse(req RequestTypes) (*Response, error) {
+	r, err := toRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	r.Browser = true
+	return s.send(r)
 }
 
 // sendBrowser loads a request in the browser the browser package installed,
@@ -561,7 +564,17 @@ func (s *Session) Trace(rawURL string, opts ...Option) (*Response, error) {
 //
 // Fields left at their zero value fall back to the session's defaults, so an
 // empty Method means GET and an empty Timeout means the session timeout.
-func (s *Session) Send(req Request) (*Response, error) {
+func (s *Session) Send(req RequestTypes) (*Response, error) {
+	r, err := toRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	return s.send(r)
+}
+
+// send performs one Request, which is what Send has always done: the accepted
+// input shapes are resolved before it is called.
+func (s *Session) send(req Request) (*Response, error) {
 	if req.Browser {
 		return s.sendBrowser(req)
 	}
@@ -624,7 +637,7 @@ func Do(method, rawURL string, opts ...Option) (*Response, error) {
 // It reads the whole body before returning, like the other helpers here. Use
 // Session.Send instead when cookies and connections should be reused across
 // requests.
-func Send(req Request) (*Response, error) {
+func Send(req RequestTypes) (*Response, error) {
 	s := NewSession()
 	defer s.Close()
 	return s.Send(req)
@@ -634,10 +647,9 @@ func Send(req Request) (*Response, error) {
 // Send with the path in the name. It needs the browser package imported, which
 // is what installs it:
 //
-//	rsp, err := Browse(Request{URL: url, Impersonate: DefaultChrome})
-func Browse(req Request) (*Response, error) {
-	req.Browser = true
-	return Send(req)
+//	rsp, err := Browse("https://quotes.toscrape.com/js/")
+func Browse(req RequestTypes) (*Response, error) {
+	return NewSession().Browse(req)
 }
 
 // Get sends a GET request in a throwaway session.

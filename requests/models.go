@@ -2,6 +2,7 @@ package requests
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -303,4 +304,31 @@ func (r *Response) String() string {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+// RequestTypes is the set of accepted request inputs: a [Request] value, a
+// *[Request], or a URL string, which means a GET with the session's defaults.
+//
+// It exists so the common case needs no literal - Send(url) and Browse(url) are
+// one word each - while a request that sets several fields is still written as
+// one. The other inputs in this package take several shapes the same way:
+// [HeaderTypes], [CookieTypes] and [Params].
+type RequestTypes interface{}
+
+// toRequest turns an accepted request input into a Request.
+func toRequest(v RequestTypes) (Request, error) {
+	switch r := v.(type) {
+	case Request:
+		return r, nil
+	case *Request:
+		if r == nil {
+			return Request{}, &InterfaceError{newError("requests: Send was given a nil *Request", 0, nil)}
+		}
+		return *r, nil
+	case string:
+		return Request{URL: r}, nil
+	default:
+		return Request{}, &InterfaceError{newError(fmt.Sprintf(
+			"requests: cannot send %T: pass a Request, a *Request or a URL string", v), 0, nil)}
+	}
 }

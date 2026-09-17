@@ -114,3 +114,45 @@ func TestBrowserRequestOnAClosedSession(t *testing.T) {
 		t.Fatalf("error = %v, want a *SessionClosed", err)
 	}
 }
+
+// Send and Browse take the same three inputs, so the common one-liner needs no
+// literal and a request built elsewhere is passed as it is.
+func TestRequestInputShapes(t *testing.T) {
+	req := Request{URL: "https://example.test/", Impersonate: "chrome150"}
+	for _, tc := range []struct {
+		name string
+		in   RequestTypes
+	}{
+		{"a URL string", "https://example.test/"},
+		{"a Request", req},
+		{"a *Request", &req},
+	} {
+		got, err := toRequest(tc.in)
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if got.URL != "https://example.test/" {
+			t.Errorf("%s: URL = %q", tc.name, got.URL)
+		}
+		if tc.name != "a URL string" && got.Impersonate != "chrome150" {
+			t.Errorf("%s: Impersonate = %q, want the request's", tc.name, got.Impersonate)
+		}
+	}
+
+	// A nil interface lands in the type switch's default, and a nil *Request
+	// has to be reported rather than dereferenced.
+	for _, bad := range []RequestTypes{42, nil, []string{"u"}} {
+		if _, err := toRequest(bad); err == nil {
+			t.Errorf("toRequest(%#v) accepted a type it cannot send", bad)
+		} else {
+			var ie *InterfaceError
+			if !errors.As(err, &ie) {
+				t.Errorf("toRequest(%#v) error = %v, want an *InterfaceError", bad, err)
+			}
+		}
+	}
+	if _, err := toRequest((*Request)(nil)); err == nil {
+		t.Errorf("a nil *Request was accepted")
+	}
+}

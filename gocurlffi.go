@@ -87,6 +87,7 @@ type (
 	Params                 = requests.Params
 	ProxyError             = requests.ProxyError
 	Request                = requests.Request
+	RequestTypes           = requests.RequestTypes
 	RequestException       = requests.RequestException
 	Response               = requests.Response
 	SSLError               = requests.SSLError
