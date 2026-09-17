@@ -102,42 +102,14 @@ func main() {
 ```
 
 `Send` is the fast path. The rest of the HTTP API - options, sessions, TLS - is
-in [`docs/api.md`](docs/api.md), and the page API behind `Browse` is in
+in [`docs/api.md`](docs/api.md), and the browser's page API is in
 [`docs/browser.md`](docs/browser.md).
 
 ### Browser
 
 The same request with the page's scripts run. One import does it: the facade
-links the browser in.
-
-```go
-package main
-
-import (
-	"fmt"
-
-	. "github.com/HashShin/gocurlffi"
-)
-
-func main() {
-	rsp, err := Browse(Request{
-		Method: "GET",
-		URL:    "https://quotes.toscrape.com/js/",
-		Headers: Headers{
-			"Accept: text/html",
-		},
-		Impersonate: DefaultChrome,
-	})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(rsp.StatusCode, rsp.Text()) // rendered, after the scripts have run
-}
-```
-
-The same literal opens the page object, when the page is to be read and driven
-rather than printed. `Browse` answers with the rendered bytes, `Open` with the
-page they came from:
+links the browser in. `Browse` answers with the rendered bytes, `Open` with the
+page, so a page can be read and driven:
 
 ```go
 package main
@@ -176,31 +148,10 @@ func main() {
 }
 ```
 
-Every call is a method on the page, and a click carries its own meaning: it
-submits the form a submit button belongs to, or follows the link it is on, so
-filling, clicking, waiting and shooting is one sequence.
-
-Options that outlive one page - the fingerprint, a proxy, robots.txt, a hook
-that blocks or answers requests - go on the browser:
-
-```go
-b := New(BrowserOptions{
-	Impersonate: Chrome131,
-	Proxy:       proxy,
-	ObeyRobots:  true,
-	Intercept: func(r *BrowserRequest) *BrowserResponse {
-		if r.ResourceType == "image" {
-			return Block()
-		}
-		return nil
-	},
-})
-defer b.Close()
-```
-
-`Get`, `Options`, `Request` and `Response` stay the HTTP verbs and messages in
-this namespace, so the browser package's page shortcuts of those names -
-`browser.Get`, `browser.Options` - are reached by importing it.
+Every call is a method on the page, in the order written, and a click carries
+its own meaning: it submits the form a submit button belongs to, or follows the
+link it is on. Options that outlive one page - a proxy, robots.txt, a hook that
+blocks or answers requests - go on the browser from `New`.
 
 ---
 
