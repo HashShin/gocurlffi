@@ -32,6 +32,45 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
+// driveStep is one page interaction, kept in the order its flag was given: a
+// flow is scripted from the command line, so --fill before --click has to run
+// before it.
+type driveStep struct {
+	kind  string // click, type, fill or select
+	value string
+}
+
+// driveFlags are the page interactions of the browser path. Each kind keeps its
+// own list, which the generated flag help prints, and they share one ordered
+// log, which the driver runs.
+type driveFlags struct {
+	clicks  stringList
+	types   stringList
+	fills   stringList
+	selects stringList
+	steps   []driveStep
+}
+
+// value returns the flag.Value for one kind, appending to both the kind's list
+// and the ordered log.
+func (d *driveFlags) value(kind string, list *stringList) flag.Value {
+	return driveValue{drive: d, kind: kind, list: list}
+}
+
+type driveValue struct {
+	drive *driveFlags
+	kind  string
+	list  *stringList
+}
+
+func (v driveValue) String() string { return v.list.String() }
+
+func (v driveValue) Set(s string) error {
+	*v.list = append(*v.list, s)
+	v.drive.steps = append(v.drive.steps, driveStep{kind: v.kind, value: s})
+	return nil
+}
+
 // newFlagSet builds a flag set that prints its own usage. Parsing stops at the
 // first problem and reports it instead of exiting, so the caller decides the
 // exit status. The synopsis and invocation are shown above the generated flag

@@ -139,6 +139,12 @@ Driving the page, applied in the order the flags appear:
 | `--fill` | Set a control's value, as `selector=value`. Repeatable. |
 | `--select` | Choose an option, as `selector=value`. Repeatable. |
 
+A click carries its default action, as it does in a browser: it follows the link
+it is on, and it submits the form a submit button belongs to. The driving runs
+before `--wait`, so `--fill ... --click 'button[type=submit]' --wait '#account'`
+waits for the page the click produced. `--screenshot` and `--pdf` come after
+both, so the picture is of the driven page.
+
 Diagnostics:
 
 | Flag | Meaning |

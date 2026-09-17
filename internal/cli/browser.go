@@ -168,10 +168,7 @@ type browserGetFlags struct {
 
 	headers stringList
 	blocks  stringList
-	clicks  stringList
-	types   stringList
-	fills   stringList
-	selects stringList
+	actions driveFlags
 }
 
 // RunBrowserGet loads one URL in the browser and prints the result.
@@ -223,10 +220,13 @@ func RunBrowserGet(args []string) int {
 	if strings.EqualFold(g.waitUntil, "networkidle0") || strings.EqualFold(g.waitUntil, "networkidle") {
 		p.WaitForNetworkIdle(500*time.Millisecond, g.timeout)
 	}
-	g.waitFor(p)
 	if rc := g.drive(p); rc != exitOK {
 		return rc
 	}
+	// The waits come after the driving, so "--fill ... --click ... --wait
+	// '#account'" waits for what the click brought about. A click that
+	// navigates leaves the page on the new document.
+	g.waitFor(p)
 	if g.listSheets {
 		reportStyleSheets(p, float64(g.width))
 	}
@@ -265,10 +265,10 @@ func (g *browserGetFlags) register(fs *flag.FlagSet) {
 	fs.Var(&g.headers, "H", "extra request header as \"Name: Value\" (repeatable)")
 	fs.Var(&g.headers, "header", "alias for -H")
 	fs.Var(&g.blocks, "block", "block requests matching this glob (repeatable)")
-	fs.Var(&g.clicks, "click", "click the matching element (repeatable)")
-	fs.Var(&g.types, "type", "type text into a control as \"selector=text\" (repeatable)")
-	fs.Var(&g.fills, "fill", "set a control's value as \"selector=value\" (repeatable)")
-	fs.Var(&g.selects, "select", "choose an option as \"selector=value\" (repeatable)")
+	fs.Var(g.actions.value("click", &g.actions.clicks), "click", "click the matching element (repeatable)")
+	fs.Var(g.actions.value("type", &g.actions.types), "type", "type text into a control as \"selector=text\" (repeatable)")
+	fs.Var(g.actions.value("fill", &g.actions.fills), "fill", "set a control's value as \"selector=value\" (repeatable)")
+	fs.Var(g.actions.value("select", &g.actions.selects), "select", "choose an option as \"selector=value\" (repeatable)")
 }
 
 // finishOptions adds the options that come from repeatable flags or need
@@ -329,33 +329,32 @@ func (g *browserGetFlags) waitFor(p *browser.Page) {
 	}
 }
 
-// drive performs the scripted interactions, in the order the flags appear, so a
-// flow can be scripted from the command line.
+// drive performs the scripted interactions in the order the flags were given,
+// which is what a flow scripted from the command line needs: --fill before
+// --click has to happen before it, not after.
 func (g *browserGetFlags) drive(p *browser.Page) int {
-	for _, sel := range g.clicks {
-		if err := p.Click(sel); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: click %s: %v\n", sel, err)
-		}
-	}
-	sets := []struct {
-		flag  string
-		items stringList
-		set   func(sel, value string) error
-	}{
-		{"type", g.types, p.Type},
-		{"fill", g.fills, p.Fill},
-		{"select", g.selects, p.Select},
-	}
-	for _, s := range sets {
-		for _, kv := range s.items {
-			sel, value, ok := strings.Cut(kv, "=")
+	for _, step := range g.actions.steps {
+		var err error
+		switch step.kind {
+		case "click":
+			err = p.Click(step.value)
+		case "type", "fill", "select":
+			sel, value, ok := strings.Cut(step.value, "=")
 			if !ok {
-				fmt.Fprintf(os.Stderr, "error: --%s wants \"selector=value\", got %q\n", s.flag, kv)
+				fmt.Fprintf(os.Stderr, "error: --%s wants \"selector=value\", got %q\n", step.kind, step.value)
 				return exitUsage
 			}
-			if err := s.set(sel, value); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %s %s: %v\n", s.flag, sel, err)
+			switch step.kind {
+			case "type":
+				err = p.Type(sel, value)
+			case "fill":
+				err = p.Fill(sel, value)
+			default:
+				err = p.Select(sel, value)
 			}
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s %s: %v\n", step.kind, step.value, err)
 		}
 	}
 	return exitOK
