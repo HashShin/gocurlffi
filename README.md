@@ -37,10 +37,15 @@ import (
 )
 
 func main() {
-	rsp, err := Send("https://httpbun.com/get",
-		WithImpersonate(DefaultChrome),
-		WithHeader("Accept", "application/json"),
-	)
+	rsp, err := Send(Request{
+		Method: "GET",
+		URL:    "https://httpbun.com/get",
+		Headers: Headers{
+			"Accept: application/json",
+			"X-Custom: value",
+		},
+		Impersonate: DefaultChrome,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -51,15 +56,19 @@ func main() {
 Every other sample is a fragment of that program: the same import, then the
 lines that differ.
 
-### As a value
+### One request, sent more than once
 
 ```go
-rsp, err := Send(Request{URL: url, Impersonate: DefaultChrome})
+req := Request{URL: url, Impersonate: DefaultChrome}
+
+rsp, err := Send(req)                // as a value
+rsp, err = sess.Send(req, WithTimeout(5*time.Second)) // with an option on top
+rsp, err = sess.Browse(req)          // or rendered, same request
 ```
 
-A request can be built in one place and sent in another, logged, or queued.
-Options work on top of it, and a later option wins over the field it names:
-`Send(req, WithTimeout(5*time.Second))`.
+A request is a value, so it can be built in one place, logged, queued, and sent
+either way. Options work on top of it, and a later option wins over the field it
+names.
 
 ### Headers, params, timeout, proxy
 
