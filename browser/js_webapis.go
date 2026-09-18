@@ -25,13 +25,13 @@ import (
 // back through Export() gives the pointer, so a JS value can be recognised
 // without a parallel registry.
 const (
-	blobMark     = "__gocurlffiBlob"
-	headersMark  = "__gocurlffiHeaders"
-	formDataMark = "__gocurlffiFormData"
-	requestMark  = "__gocurlffiRequest"
-	responseMark = "__gocurlffiResponse"
-	streamMark   = "__gocurlffiStream"
-	abortMark    = "__gocurlffiAbortSignal"
+	blobMark     = "__shadeBlob"
+	headersMark  = "__shadeHeaders"
+	formDataMark = "__shadeFormData"
+	requestMark  = "__shadeRequest"
+	responseMark = "__shadeResponse"
+	streamMark   = "__shadeStream"
+	abortMark    = "__shadeAbortSignal"
 )
 
 func (e *jsEnv) mark(o *goja.Object, name string, v any) {
@@ -646,7 +646,7 @@ func (fd *formData) encode() (body []byte, contentType string) {
 	}
 	var b [12]byte
 	_, _ = rand.Read(b[:])
-	boundary := "----gocurlffi" + hex.EncodeToString(b[:])
+	boundary := "----shade" + hex.EncodeToString(b[:])
 	var sb strings.Builder
 	for _, x := range fd.entries {
 		sb.WriteString("--" + boundary + "\r\n")

@@ -1,4 +1,4 @@
-// Package gocurlffi is the whole client in one namespace, written so that it
+// Package shade is the whole client in one namespace, written so that it
 // can be dot imported and a request reads without prefixes:
 //
 //	package main
@@ -6,7 +6,7 @@
 //	import (
 //		"fmt"
 //
-//		. "github.com/HashShin/gocurlffi"
+//		. "github.com/HashShin/shade"
 //	)
 //
 //	func main() {
@@ -60,7 +60,7 @@
 // the browser package's Get, Options, Request and Response are reached by
 // importing it:
 //
-//	import "github.com/HashShin/gocurlffi/browser"
+//	import "github.com/HashShin/shade/browser"
 //
 //	p, err := browser.Get("https://example.com/", browser.Chrome131)
 //
@@ -74,15 +74,15 @@
 //
 // The package declares nothing of its own: it is a facade so that the shortest
 // import path and a single namespace are available to a caller who wants them.
-package gocurlffi
+package shade
 
 import (
 	// The browser registers itself behind requests.Browser from its init and
 	// supplies the page API aliased below, so linking it here is what makes
 	// Browse work from this facade alone. It costs the JavaScript engine;
 	// import requests directly to leave it out.
-	"github.com/HashShin/gocurlffi/browser"
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/browser"
+	"github.com/HashShin/shade/requests"
 )
 
 // Types, aliased so that a value of one is a value of the other.

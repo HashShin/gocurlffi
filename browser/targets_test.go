@@ -3,7 +3,7 @@ package browser
 import (
 	"testing"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // The re-exported constants exist so a browser-only caller needs one import.

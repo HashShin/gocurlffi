@@ -1192,6 +1192,9 @@ type computedStyle struct {
 	bold   bool
 	italic bool
 	mono   bool
+	// fontFamilies is the computed font-family list in order, and fontFamily
+	// its first entry.
+	fontFamilies []string
 	// fontFamily is the first family of the computed font-family, which is the
 	// name a @font-face is matched against. Empty means the user-agent default.
 	fontFamily string
@@ -1266,6 +1269,11 @@ type computedStyle struct {
 	// normal flow: it is placed against that edge of its container, and the
 	// content after it flows beside it.
 	floatSide string
+	// containClear is the clear side of an "::after" clearfix that matches
+	// this element. The generated box is not drawn, but its one observable
+	// effect is kept: the element's own floats end with it, so it gets a
+	// height instead of letting the next block start over them.
+	containClear string
 	// gridAreaName is the item's "grid-area: <name>", which grid-template's
 	// area map resolves to a row and column.
 	gridAreaName string
@@ -1516,7 +1524,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		cs.bold, cs.weight = parent.bold, parent.weight
 		cs.italic = parent.italic
 		cs.mono = parent.mono
-		cs.fontFamily = parent.fontFamily
+		cs.fontFamily, cs.fontFamilies = parent.fontFamily, parent.fontFamilies
 		cs.whiteSpace = parent.whiteSpace
 		cs.textAlign = parent.textAlign
 		cs.visibility = parent.visibility
@@ -1554,8 +1562,16 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 		decl      cssDecl
 	}
 	var matched []applied
+	containClear := ""
 	for _, r := range e.rules {
 		if !r.sel.Match(n) {
+			continue
+		}
+		if r.containClear != "" {
+			// The declaration block styles the generated box, not this
+			// element: a "display: table" meant for "::after" must not
+			// re-display the row it clears.
+			containClear = r.containClear
 			continue
 		}
 		for _, d := range r.decls {
@@ -1629,6 +1645,7 @@ func (e *styleEngine) computeNode(n *html.Node, parent *computedStyle) *computed
 	}
 
 	e.applyDecls(&cs, declared, parent)
+	cs.containClear = containClear
 	return &cs
 }
 
@@ -1718,7 +1735,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 			cs.italic = parent.italic
 		case "font-family":
 			cs.mono = parent.mono
-			cs.fontFamily = parent.fontFamily
+			cs.fontFamily, cs.fontFamilies = parent.fontFamily, parent.fontFamilies
 		case "text-align":
 			cs.textAlign = parent.textAlign
 		case "line-height":
@@ -1791,7 +1808,7 @@ func (e *styleEngine) applyDecls(cs *computedStyle, d map[string]string, parent 
 	}
 	if v, ok := d["font-family"]; ok {
 		cs.mono = cssFamilyIsMono(v)
-		cs.fontFamily = cssFirstFamily(v)
+		cs.fontFamily, cs.fontFamilies = cssFirstFamily(v), cssFamilyList(v)
 	}
 	if v, ok := d["text-decoration-line"]; ok {
 		lv := strings.ToLower(v)

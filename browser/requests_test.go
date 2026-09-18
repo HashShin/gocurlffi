@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // Send with Browser set loads the page in the browser: the body is the document

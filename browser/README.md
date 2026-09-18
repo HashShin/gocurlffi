@@ -39,7 +39,7 @@ dotted needs no prefix either:
 import (
     "fmt"
 
-    . "github.com/HashShin/gocurlffi/browser"
+    . "github.com/HashShin/shade/browser"
 )
 
 // Get gives the page a Browser of its own, which Close releases.
@@ -86,13 +86,13 @@ CLI:
 
 ```sh
 make build
-./bin/gocurlffi get https://react.dev/ --render -f markdown -i chrome131
-./bin/gocurlffi get https://quotes.toscrape.com/js/ --render --eval 'document.title'
-./bin/gocurlffi open https://example.com/ -f text --status
+./bin/shade get https://react.dev/ --render -f markdown -i chrome131
+./bin/shade get https://quotes.toscrape.com/js/ --render --eval 'document.title'
+./bin/shade open https://example.com/ -f text --status
 ```
 
 `open` is shorthand for `get --render`. Every flag is listed in
-[`../docs/cli.md`](../docs/cli.md), or run `gocurlffi help open`.
+[`../docs/cli.md`](../docs/cli.md), or run `shade help open`.
 
 ## What works
 
@@ -111,7 +111,7 @@ make build
   each one with its size and rule count, or the reason it was not applied:
 
   ```sh
-  ./bin/gocurlffi get --render https://brave.com/ --sheets
+  ./bin/shade get --render https://brave.com/ --sheets
   applied      https://brave.com/static-assets/css/main.min.25ad059cc...css  2332 rules, 415249 bytes
   applied      https://brave.com/static-assets/css/fonts-latin.min.e...css     2 rules, 16677 bytes
   applied      inline <style>                                                  1 rules, 69 bytes
@@ -243,9 +243,9 @@ make build
   named and namespace forms), re-exports, side-effect imports, an import map
   for bare specifiers, and dynamic `import()`, all loaded and evaluated in
   dependency order.
-- A Chrome DevTools Protocol server (`gocurlffi serve`) and WebDriver BiDi on
+- A Chrome DevTools Protocol server (`shade serve`) and WebDriver BiDi on
   the same port, so Puppeteer, Playwright and chromedp can drive it.
-- An MCP (Model Context Protocol) tool server (`gocurlffi mcp`) over stdio or
+- An MCP (Model Context Protocol) tool server (`shade mcp`) over stdio or
   HTTP, exposing navigate, get_content, evaluate, screenshot, click, type and
   structured_data to an AI agent.
 - Structured data: `Page.StructuredData()` returns every JSON-LD object the
@@ -333,7 +333,7 @@ make build
 
 ### MCP server
 
-`gocurlffi mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
+`shade mcp` speaks MCP JSON-RPC 2.0 over stdio, and over HTTP with
 `--port`. Each HTTP session gets its own browsing context -- its own page,
 cookies and memory -- so several agents can share one server without clobbering
 each other. A client that `initialize`s without an `Mcp-Session-Id` header is
@@ -348,7 +348,7 @@ Point an MCP client at it:
 ```json
 {
   "mcpServers": {
-    "gocurlffi": { "command": "/path/to/gocurlffi", "args": ["mcp"] }
+    "shade": { "command": "/path/to/shade", "args": ["mcp"] }
   }
 }
 ```
@@ -387,11 +387,11 @@ transport, and it is a good check that the two stay consistent.
 
 ## Speed against a real Chromium
 
-`scripts/bench_browser.sh` loads the same pages with `gocurlffi` and with a
+`scripts/bench_browser.sh` loads the same pages with `shade` and with a
 Chromium CLI (`--headless=new --dump-dom`) and reports wall time and rendered
 bytes. Measured on Termux/arm64 against Chromium 149:
 
-| Page | Chromium | gocurlffi | Chromium bytes | gocurlffi bytes |
+| Page | Chromium | shade | Chromium bytes | shade bytes |
 | --- | --- | --- | --- | --- |
 | `about:blank` | ~0.95 s | - | 40 | - |
 | `quotes.toscrape.com/js/` | 3.7 / 2.6 s | **2.0 / 1.9 s** | 8 987 | 9 005 |
@@ -401,20 +401,20 @@ bytes. Measured on Termux/arm64 against Chromium 149:
 
 Reading it honestly:
 
-- gocurlffi is faster on every page tested, and several times faster on heavy
+- shade is faster on every page tested, and several times faster on heavy
   pages, because there is no browser startup (~1 s before Chromium even starts
   loading) and no per-page process to launch.
 - On `react.dev` the two are level: that much JavaScript interpreted without a
   JIT costs about what Chromium spends starting up and compiling.
 - Chromium renders **more** bytes on heavy pages (roughly 2x on gocomics). It is
   a real browser: it runs more scripts to completion and normalizes the DOM. So
-  gocurlffi being faster is partly "does less".
+  shade being faster is partly "does less".
 
 Caveats, so the numbers are not over-read:
 
 - Chromium needs a warmed `--user-data-dir` here; its first run with a cold
   profile hangs. The warmup is untimed, and timed runs hit a URL the profile has
-  not cached, which is the closest match to gocurlffi's always-cold behaviour.
+  not cached, which is the closest match to shade's always-cold behaviour.
 - Chromium is bounded with `--virtual-time-budget` because `--dump-dom` never
   returns on pages that do not reach network idle. That budget is virtual, not
   wall-clock, so its time is a floor rather than a full time-to-interactive.
@@ -424,7 +424,7 @@ Caveats, so the numbers are not over-read:
 ```sh
 bash scripts/bench_browser.sh -n 3
 bash scripts/bench_browser.sh https://your-site.example/
-GOCURLFFI_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
+SHADE_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 ```
 
 ## Screenshots
@@ -467,7 +467,7 @@ never collapses, as in a browser.
 
 `tools/cssdiff` compares this package's computed styles with a real Chromium,
 element by element, on the same page: Chromium answers over CDP, the Go browser
-answers through `gocurlffi get --render --eval`, and the two are matched by DOM position.
+answers through `shade get --render --eval`, and the two are matched by DOM position.
 It is a separate module, so its one dependency (chromedp) never reaches the
 browser package.
 
@@ -494,8 +494,17 @@ grid layout the renderer does not use.
 png, err := p.Screenshot(browser.ScreenshotOptions{Width: 1280, Scale: 2})
 ```
 
+`Scale` multiplies the image (2 is a HiDPI capture: the boxes and the glyphs
+both come out twice the pixels). `FontScale` instead multiplies only the text,
+the way a browser's text-only zoom does: every rendered font size and the line
+height that goes with it are scaled, while boxes, padding and margins keep the
+page's sizes and `getComputedStyle` still reports them. Text then wraps against
+the smaller boxes, exactly as it does in a browser zoomed that way. The CLI
+renders text at 2x by default, so a screenshot is readable at a glance; pass
+`--font-scale 1` for the page's own sizes.
+
 ```sh
-./bin/gocurlffi get --render https://quotes.toscrape.com/js/ --screenshot page.png --width 900
+./bin/shade get --render https://quotes.toscrape.com/js/ --screenshot page.png --width 900
 ```
 
 `--debug` reports what the styling actually did, which is the first thing to
@@ -545,10 +554,14 @@ same honest limits:
 - Native form controls are drawn, not left blank: checkbox and radio (with
   their checked state), range, and color swatch show a graphic, while text
   inputs, textareas, buttons, file and select show their value, placeholder or
-  selected option inside a box. A control's uniform border and `min-height` are
-  drawn, so an empty textarea is still the tall box the page asked for. Text is
-  centered inside a button, and a column flex container's `align-items: center`
-  centers its children.
+  selected option inside a box. A control's uniform border, `min-height` and
+  declared `height` are drawn, so an empty textarea is still the tall box the
+  page asked for and a "height: 40px" field is 40px. A `width: 100%` field is
+  as wide as its containing block, padding and `box-sizing` included, and a
+  submit control is inline-block: it shrinks to its label and is rounded by its
+  `border-radius`, like a `<button>`, unless it declares a width (`.btn-block`).
+  Text is centered inside a button, and a column flex container's
+  `align-items: center` centers its children.
 - Positioning: `position: relative`/`sticky` keeps the element in flow (its
   inset offsets shift it), and `absolute`/`fixed` take it out of flow. An
   absolute/fixed box is placed from its nearest positioned ancestor using
@@ -563,7 +576,10 @@ same honest limits:
 - Element decoration: a block with a `background-color`, `border` or
   `border-radius` is drawn once as a rectangle (rounded when it has a radius,
   with anti-aliased corners) rather than per line, and nested boxes paint
-  parent-first. `opacity` scales the element's own colours, and `box-shadow`
+  parent-first. An inline element has no box of its own, so its background is
+  drawn behind each of its runs as their rounded rectangle, grown by its
+  padding and with the horizontal padding added to the run's width: that is a
+  tag pill. `opacity` scales the element's own colours, and `box-shadow`
   (the first shadow) draws as a soft rectangle behind the box. `transform` and
   `filter` are not drawn.
 - Block sizing: `width`, `max-width`, `max-height`, `height` (as a minimum) and
@@ -590,22 +606,49 @@ same honest limits:
   `--debug` prints how many rules each sheet produced and lists the first
   unsupported selectors. On a real site most of those are `::before`/`::after`
   and vendor pseudo-elements, which carry no element styling, so the number
-  overstates the loss. `:is()`, `:where()` and `:has()` are not supported.
+  overstates the loss. One of them is not a loss at all: an `::after` clearfix
+  (`content` plus `clear: both`, Bootstrap's `.row:after`) generates a box
+  whose only visible job is to end the floats inside its element, so the clear
+  is applied to that element and the next block starts below the floats
+  instead of over them. `:is()`, `:where()` and `:has()` are not supported.
 - Web fonts are applied from the page's own `@font-face` rules, including font
   providers reached through `<link>` or `@import`: a matching run is drawn with
   the page's file rather than an embedded one, at the closest weight and slope.
   Only raw sfnt (TTF and OTF) is decoded. A face offered only as WOFF or WOFF2
   is recorded and reported under `--debug`, then falls back to the embedded Go
-  fonts (Go regular/bold/italic and Go Mono), and there is no synthetic bolding
-  or oblique.
+  fonts (Go regular, Go bold and Go Mono). A webfont is used per glyph, not per
+  run: a rune the page's face has no shape for is drawn from the embedded font,
+  which is what a browser's own font fallback does. Raleway carries no "→", so
+  the pager button on quotes.toscrape.com drew a missing-glyph box until this
+  landed. Italic runs of an embedded font are sheared from the upright face
+  rather than set in Go Italic, which is a serif design: a "sans-serif" page in
+  italic came out with serifs and ran about 2% wider than the browser's own
+  oblique, so text wrapped a word early. There is still no synthetic bolding.
+- The machine's own fonts are used before the embedded ones, because "the text
+  does not look like the browser" is mostly a question of which face was drawn.
+  The families are indexed from the usual font directories on first use - names
+  only; a face is read and parsed the first time it is drawn with - and a run's
+  whole `font-family` list is tried in order, so `Georgia, "Times New Roman",
+  Times, serif` reaches the serif the machine actually has. The generic families
+  stand for what a browser's own default settings resolve to: `sans-serif` is
+  Liberation Sans (what fontconfig answers Arial with), `serif` is Liberation
+  Serif and `monospace` is DejaVu Sans Mono. On this machine that took the
+  quotes.toscrape render from every quote wrapping a word early to every card
+  landing on the same pixel row as Chromium's. Where a machine has no fonts at
+  all - a scratch container, a phone without font packages - the embedded Go
+  fonts are still what is drawn, so the renderer keeps working with none
+  installed.
 - Not pixel-identical to a browser: glyph metrics differ from the browser's own
   text shaping, and layout is still the text-flow model below.
 
 **Cost, measured on Termux/arm64:** loading is unaffected, because font parsing
 is behind a `sync.Once`, faces are built lazily and nothing runs unless
-`Screenshot` is called. A `quotes.toscrape.com` render at 900px adds only a few
-milliseconds; a tall 900x3500 page takes ~115 ms, most of it PNG encoding and
-pixel work rather than layout.
+`Screenshot` is called. The system font directories are walked once, on the
+first run that needs a family the page does not provide, and only the name table
+of each file is read then: a face is parsed when it is first drawn with. A
+`quotes.toscrape.com` render at 900px adds only a few milliseconds; a tall
+900x3500 page takes ~115 ms, most of it PNG encoding and pixel work rather than
+layout.
 
 ## Measuring layout against a live page
 
@@ -624,7 +667,7 @@ of named areas, a padded flex row, a float and wrapping text. Rendering it in
 both engines and comparing the PNGs row by row is the acceptance test:
 
 ```sh
-./bin/gocurlffi get --render http://127.0.0.1:8000/accept.html --screenshot ours.png --width 800
+./bin/shade get --render http://127.0.0.1:8000/accept.html --screenshot ours.png --width 800
 cd tools/cssdiff && go run ./probe -url http://127.0.0.1:8000/accept.html -width 800 -out chrome.png -js '0'
 ```
 
@@ -647,12 +690,12 @@ Two traps, both of which cost real time here:
 
 ## Driving it as a browser (CDP and WebDriver BiDi)
 
-`gocurlffi serve` starts a Chrome DevTools Protocol server on `--host`/`--port`
+`shade serve` starts a Chrome DevTools Protocol server on `--host`/`--port`
 (default `127.0.0.1:9222`), so an existing automation client drives this browser
 the way it drives Chrome:
 
 ```sh
-./bin/gocurlffi serve --port 9222
+./bin/shade serve --port 9222
 # then, from Puppeteer:
 #   puppeteer.connect({ browserWSEndpoint: "ws://127.0.0.1:9222" })
 ```
@@ -749,8 +792,8 @@ it is enough.
   for pending timers, so a timer-driven page can finish rendering.
 - Rendering is much slower than the plain HTTP client by design: it issues one
   request per script (a large site can be 30-40), executes them in a pure-Go
-  interpreter with no JIT, and re-serializes the DOM. Use `gocurlffi get` when
-  the HTML is server-rendered and `gocurlffi get --render` only when scripts are
+  interpreter with no JIT, and re-serializes the DOM. Use `shade get` when
+  the HTML is server-rendered and `shade get --render` only when scripts are
   required: they are the same binary, so the fast path is a flag away, but
   linking the browser is what makes the binary about 37 MB instead of 18 MB.
 - All network traffic, including `fetch`, `XMLHttpRequest` and external
@@ -802,10 +845,10 @@ Every flag is documented in [`../docs/cli.md`](../docs/cli.md). The generated
 list is the source of truth:
 
 ```sh
-gocurlffi help open     # the browser path
-gocurlffi help get      # the fast path
-gocurlffi help serve    # CDP + WebDriver BiDi
-gocurlffi help mcp      # MCP
+shade help open     # the browser path
+shade help get      # the fast path
+shade help serve    # CDP + WebDriver BiDi
+shade help mcp      # MCP
 ```
 
 The flags most specific to this package, in one place:
@@ -817,7 +860,7 @@ The flags most specific to this package, in one place:
 | `--wait-script JS` | Poll an expression until it is truthy. |
 | `--wait SELECTOR` | Wait for an element before extracting. |
 | `--timer-budget D` | How long a load waits for pending timers. Lower is faster. |
-| `--screenshot FILE` | Render the page to a PNG. `--width`, `--scale`, `--max-height`, `--no-images` control it. |
+| `--screenshot FILE` | Render the page to a PNG. `--width`, `--scale`, `--font-scale` (2x by default), `--max-height`, `--no-images` control it. |
 | `--pdf FILE` | Render the page to a PDF. |
 | `--sheets` | Report the page's own stylesheets, and whether each was applied. |
 | `--block GLOB` | Block requests matching a glob. Repeatable. |

@@ -2146,3 +2146,407 @@ func TestFlexItemWithoutABoxStartsAtItsColumn(t *testing.T) {
 		t.Errorf("the buttons are %g and %g wide, want equal shares", a.Width, b.Width)
 	}
 }
+
+// A Bootstrap grid row floats its columns and closes with a generated
+// "::after" box that clears them. The engine generates no pseudo-element
+// boxes, so the clear is attached to the row itself: without it the row had
+// no height and the block after it started at the top of the page, over the
+// row. That is what quotes.toscrape.com's header row did to the first quote.
+func TestAfterClearfixContainsFloats(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.row:before, .row:after { display: table; content: " " }
+		.row:after { clear: both }
+		.col { float: left; width: 200px; height: 60px; background: #ddd }
+	</style></head><body>
+		<div class="row"><div class="col"></div><div class="col"></div></div>
+		<p>after</p>
+	</body></html>`, 400)
+	if len(doc.lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %+v", len(doc.lines), doc.lines)
+	}
+	// The two 200px floats fit side by side, so the row is 60px tall and the
+	// block after it starts below them.
+	if y := doc.lines[0].y; diff(y, 60) > 0.5 {
+		t.Errorf("the block after the row starts at y=%g, want 60 (below the floats)", y)
+	}
+}
+
+// A block that follows floats filling the column has no line box beside them,
+// so it moves down instead of wrapping its text into a sliver past the floats'
+// right edge. quotes.toscrape.com's first quote lost its opening words that
+// way: "The world as" was laid out at x=1026 on a 1000px page.
+func TestBlockUnderFullWidthFloatsDropsBelowThem(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.a { float: left; width: 240px; height: 50px }
+		.b { float: left; width: 160px; height: 50px }
+	</style></head><body>
+		<div class="a"></div><div class="b"></div>
+		<p>alpha beta gamma delta epsilon</p>
+	</body></html>`, 400)
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	if y := doc.lines[0].y; diff(y, 50) > 0.5 {
+		t.Errorf("the first line is at y=%g, want 50 (below the floats)", y)
+	}
+	if x := doc.lines[0].runs[0].x; diff(x, 0) > 0.5 {
+		t.Errorf("the first line starts at x=%g, want 0: with no room beside the floats it drops", x)
+	}
+}
+
+// An inline element's padding is part of the run's box, so it widens the run
+// and the next run starts past it. A tag pill is "padding: 2px 5px", and
+// without this the pill hugged its text and the pills touched.
+func TestInlinePaddingWidensTheRun(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace }
+		.tag { padding: 2px 10px; background: #7ca3e6; color: #fff }
+	</style></head><body>Tags: <span class="tag">tag</span></body></html>`, 400)
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	line := doc.lines[0]
+	tag := line.runs[len(line.runs)-1]
+	got := spanAdvance(renderSpan{text: tag.text, style: tag.style})
+	want := textWidth(tag.style, "tag") + 20
+	if diff(got, want) > 0.6 {
+		t.Errorf("the tag run advances %g, want %g: 10px of padding either side", got, want)
+	}
+}
+
+// An inline element's background is painted as a rounded box around its
+// content and padding, not a plain rectangle of the text's width. This is the
+// tag pill on quotes.toscrape.com, whose "border-radius: 5px" the renderer
+// parsed but never drew.
+func TestInlineRadiusPaintsARoundedPill(t *testing.T) {
+	img := screenshotOf(t, `<html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace; background: #fff }
+		.tag { background: #7ca3e6; color: #fff; border-radius: 6px; padding: 2px 10px }
+	</style></head><body>Tags: <span class="tag">tag</span></body></html>`,
+		ScreenshotOptions{Width: 200, NoImages: true})
+
+	blue := func(c color.RGBA) bool { return c.B > 190 && c.R < 180 && c.G > 120 }
+	minX, minY, maxX, maxY := 1<<30, 1<<30, -1, -1
+	for y := 0; y < 60; y++ {
+		for x := 0; x < 200; x++ {
+			if !blue(pixelAt(img, x, y)) {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+	if maxX < 0 {
+		t.Fatal("no pill pixels found")
+	}
+	// The corner is cut away by the radius, the middle of the left edge is not.
+	if blue(pixelAt(img, minX, minY)) {
+		t.Errorf("pixel %d,%d carries the background: the corner is square, want it rounded",
+			minX, minY)
+	}
+	if !blue(pixelAt(img, minX, (minY+maxY)/2)) {
+		t.Errorf("pixel %d,%d is not the background: the pill's left edge is missing",
+			minX, (minY+maxY)/2)
+	}
+	// The pill is wider than the three-character text, by its 10px sides.
+	if w := maxX - minX + 1; w < 40 {
+		t.Errorf("the pill is %dpx wide, want its text plus 20px of padding", w)
+	}
+}
+
+// A submit control is inline-block and shrinks to its label, the way a
+// <button> does. Left to fill the line, quotes.toscrape.com's "Login" button
+// was drawn the width of the whole form: a square bar where Bootstrap's
+// ".btn" is a rounded box around its text.
+func TestSubmitControlShrinksToItsLabel(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { font: 16px/20px monospace }
+		form { width: 600px }
+		.btn { padding: 8px 12px; border: 1px solid #4582ec; border-radius: 4px;
+			background: #4582ec; color: #fff }
+	</style></head><body><form>
+		<input type="submit" class="btn" value="Login">
+	</form></body></html>`, 600)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want the one button: %+v", len(doc.boxes), doc.boxes)
+	}
+	b := doc.boxes[0]
+	if b.w > 200 {
+		t.Errorf("the submit button is %g wide, want its label plus padding, not the form's 600", b.w)
+	}
+	if b.w < 40 {
+		t.Errorf("the submit button is %g wide, want its label plus 24px of padding", b.w)
+	}
+}
+
+// A "width: 100%" field inside a padded column is as wide as the column's
+// content box. The control used to be stretched from its own edge to the
+// frame's right edge, which made quotes.toscrape.com's login fields one
+// column padding too wide.
+func TestControlWidthInsidePaddedColumn(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0; box-sizing: border-box }
+		body { font: 16px/20px monospace }
+		.col { float: left; width: 25%; padding: 0 15px }
+		.form-control { display: block; width: 100%; height: 40px;
+			padding: 8px 12px; border: 1px solid #ddd; background: #eee }
+	</style></head><body>
+		<div class="col"><input class="form-control"></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want the one field: %+v", len(doc.boxes), doc.boxes)
+	}
+	b := doc.boxes[0]
+	// 25% of the 400px column is 100, less the column's 15px sides.
+	if diff(b.w, 70) > 0.6 {
+		t.Errorf("the field is %g wide, want the column's 70px content box", b.w)
+	}
+	if diff(b.h, 40) > 0.6 {
+		t.Errorf("the field is %g tall, want its declared 40px", b.h)
+	}
+}
+
+// An empty control carries a zero-width space so it still lays out a line, and
+// the fonts have no glyph for it. Drawing that glyph put a missing-glyph box
+// inside every empty field on the page.
+func TestEmptyFormControlDrawsNoGlyph(t *testing.T) {
+	img := screenshotOf(t, `<html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/20px monospace; background: #fff }
+		.field { width: 200px; height: 30px; border: 1px solid #ccc; background: #fff }
+	</style></head><body><input class="field"></body></html>`,
+		ScreenshotOptions{Width: 300, NoImages: true})
+
+	// Inside the border, which is the part the missing-glyph box occupied.
+	for y := 4; y < 26; y++ {
+		for x := 4; x < 196; x++ {
+			if c := pixelAt(img, x, y); c.R < 200 && c.G < 200 && c.B < 200 {
+				t.Fatalf("pixel %d,%d is %v: an empty control drew a glyph", x, y, c)
+			}
+		}
+	}
+}
+
+// A page's webfont carries only the glyphs it was subset for, and a browser
+// falls back to another font for the rest. quotes.toscrape.com's Raleway has
+// no "→", so the pager button drew the font's missing-glyph box: the fallback
+// face is what makes it an arrow.
+func TestRunesMissingFromAWebFontFallBack(t *testing.T) {
+	loadRenderFonts()
+	if renderRegular == nil {
+		t.Skip("the embedded fonts did not parse")
+	}
+	s := defaultRenderStyle()
+	s.size = 16
+	s.font = renderRegular
+	var got []string
+	forEachFaceSegment(s, "a\u25beb", func(k faceKey, seg string) {
+		if k.font == nil {
+			got = append(got, "fallback:"+seg)
+		} else {
+			got = append(got, "own:"+seg)
+		}
+	})
+	want := []string{"own:a", "fallback:\u25be", "own:b"}
+	if len(got) != len(want) {
+		t.Fatalf("segments = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("segments = %q, want %q", got, want)
+		}
+	}
+}
+
+// A line's baseline sits its content area's ascent below the half leading, so
+// the glyphs are centred in the line box. The baseline used to be placed a
+// whole descender lower - the font's full height was taken as the ascent -
+// which hung every line of text below its box and cut the descenders off
+// large text in a tight line-height: quotes.toscrape.com's 41px h1 was drawn
+// 10px low with its "g", "j" and "y" clipped by the page edge.
+func TestLineBaselineIsTheAscentBelowTheHalfLeading(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font-family: sans-serif }
+		p { font-size: 16px; line-height: 30px }
+	</style></head><body><p>Hgjy</p></body></html>`, 400)
+	if len(doc.lines) == 0 {
+		t.Fatal("no text drawn")
+	}
+	ln := doc.lines[0]
+	ascent, descent, h := lineMetrics(styleKey(ln.runs[0].style))
+	want := ln.y + ascent + (ln.height-h)/2
+	if diff(ln.baseline, want) > 0.01 {
+		t.Errorf("baseline = %g, want %g: the ascent plus the half leading above it",
+			ln.baseline, want)
+	}
+	if ln.baseline > ln.y+ln.height-descent+0.01 {
+		t.Errorf("baseline %g leaves only %g of %g for the descender",
+			ln.baseline, ln.y+ln.height-ln.baseline, descent)
+	}
+}
+
+// A container's border belongs to its top and bottom edges, not to the space
+// between the blocks it covers. Counted on every block it added 2px at each
+// child boundary, which made quotes.toscrape.com's quote cards - one 1px
+// border over three blocks - 4px taller than a browser's, on every card.
+func TestBorderedContainerCountsItsBorderOnce(t *testing.T) {
+	doc := layoutDoc(t, `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/1.42857143 sans-serif }
+		.card { border: 1px solid #333; padding: 10px; width: 200px }
+		.card > div { height: 20px }
+	</style></head><body>
+		<div class="card"><div></div><div></div></div>
+	</body></html>`, 400)
+	if len(doc.boxes) != 1 {
+		t.Fatalf("got %d boxes, want the one card: %+v", len(doc.boxes), doc.boxes)
+	}
+	// 1px border, 10px padding, 20px, 20px, 10px padding, 1px border.
+	if h := doc.boxes[0].h; diff(h, 62) > 0.5 {
+		t.Errorf("the card is %g tall, want 62: its border belongs at its two edges only", h)
+	}
+}
+
+// An italic run of an embedded font is the upright face sheared to the right,
+// the way a browser synthesizes an oblique for a family that has no italic of
+// its own. Go Italic is a serif design, so a "sans-serif" page in italic came
+// out with serifs and about 2% wider than the browser's oblique, which wrapped
+// quotes.toscrape.com's first quote a word early.
+func TestItalicIsAShearedUprightFace(t *testing.T) {
+	img := screenshotOf(t, `<html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 40px/1.4 sans-serif; font-style: italic; background: #fff }
+	</style></head><body>l</body></html>`, ScreenshotOptions{Width: 200, NoImages: true})
+
+	// The stem of the "l" leans: its ink on the top row sits to the right of
+	// its ink on the bottom row.
+	rowInk := func(y int) (minX, maxX int, found bool) {
+		minX, maxX = 1<<30, -1
+		for x := 0; x < 200; x++ {
+			if c := pixelAt(img, x, y); c.R < 128 {
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				found = true
+			}
+		}
+		return minX, maxX, found
+	}
+	first, last := -1, -1
+	for y := 0; y < img.Bounds().Dy(); y++ {
+		if _, _, ok := rowInk(y); ok {
+			if first < 0 {
+				first = y
+			}
+			last = y
+		}
+	}
+	if first < 0 {
+		t.Fatal("no text drawn")
+	}
+	topMin, _, _ := rowInk(first)
+	botMin, _, _ := rowInk(last)
+	// 40px of height sheared by 12 degrees leans about 8px; the ascender is
+	// most of that, so a few pixels is the least to expect.
+	if topMin-botMin < 3 {
+		t.Errorf("the stem's top is %dpx right of its foot over %d rows, want it sheared",
+			topMin-botMin, last-first)
+	}
+}
+
+// A screenshot at a scale rasterizes its glyphs at the device size. The boxes
+// grew with the image but the text did not, so a 2x capture came out with
+// half-size text - the opposite of what a HiDPI screenshot is for.
+func TestScreenshotScaleScalesTheGlyphs(t *testing.T) {
+	const html = `<html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 40px/1.4 sans-serif; background: #fff }
+	</style></head><body>Hg</body></html>`
+	ink := func(opts ScreenshotOptions) (int, int) {
+		img := screenshotOf(t, html, opts)
+		minX, minY, maxX, maxY := 1<<30, 1<<30, -1, -1
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if c := pixelAt(img, x, y); c.R > 128 {
+					continue
+				}
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+		return maxX - minX + 1, maxY - minY + 1
+	}
+	w1, h1 := ink(ScreenshotOptions{Width: 200, NoImages: true})
+	w2, h2 := ink(ScreenshotOptions{Width: 200, Scale: 2, NoImages: true})
+	if diff(float64(w2), 2*float64(w1)) > 2 || diff(float64(h2), 2*float64(h1)) > 2 {
+		t.Errorf("the 2x ink is %dx%d, want twice the 1x ink %dx%d", w2, h2, w1, h1)
+	}
+}
+
+// FontScale is a text-only zoom: the glyphs are drawn twice as large while the
+// boxes around them keep the page's own sizes. The CSS cascade is untouched,
+// so getComputedStyle still reports the page's real font sizes.
+func TestFontScaleGrowsOnlyTheText(t *testing.T) {
+	const html = `<!doctype html><html><head><style>
+		* { margin: 0; padding: 0 }
+		body { font: 16px/2 sans-serif }
+		.card { width: 300px; height: 200px; border: 1px solid #333; padding: 10px }
+	</style></head><body><div class="card">Hg</div></body></html>`
+
+	lay := func(scale float64) *renderDoc {
+		p := flexPage(t, html)
+		doc, _, err := p.layOut(ScreenshotOptions{Width: 400, NoImages: true, FontScale: scale})
+		if err != nil {
+			t.Fatalf("layOut: %v", err)
+		}
+		return doc
+	}
+	one, two := lay(1), lay(2)
+	if len(one.lines) != 1 || len(two.lines) != 1 {
+		t.Fatalf("lines = %d and %d, want one line each", len(one.lines), len(two.lines))
+	}
+	// "font: 16px/2" is a 32px line; doubling the font doubles the line with it.
+	if diff(one.lines[0].height, 32) > 0.5 || diff(two.lines[0].height, 64) > 0.5 {
+		t.Errorf("line heights = %g and %g, want 32 and 64", one.lines[0].height, two.lines[0].height)
+	}
+	// The card does not follow the text: 1px border, 10px padding, 200px, again.
+	if len(one.boxes) != 1 || len(two.boxes) != 1 {
+		t.Fatalf("boxes = %d and %d, want the one card", len(one.boxes), len(two.boxes))
+	}
+	if diff(one.boxes[0].h, 222) > 0.5 || diff(two.boxes[0].h, 222) > 0.5 {
+		t.Errorf("card heights = %g and %g, want 222 both",
+			one.boxes[0].h, two.boxes[0].h)
+	}
+}

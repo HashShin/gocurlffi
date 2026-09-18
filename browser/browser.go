@@ -8,7 +8,7 @@
 //   - HTML5 parsing + serialization: golang.org/x/net/html
 //   - CSS selectors: github.com/andybalholm/cascadia
 //   - JavaScript: github.com/dop251/goja (an ECMAScript engine in pure Go)
-//   - Network: gocurlffi/requests, so pages are fetched with real browser
+//   - Network: shade/requests, so pages are fetched with real browser
 //     TLS/JA3 and HTTP/2 fingerprints.
 //
 // The DOM is the x/net/html node tree itself. That keeps the port small and
@@ -20,13 +20,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // Options configure a Browser or a one-off Page.
 type Options struct {
 	// Impersonate selects the TLS/HTTP fingerprint target (see
-	// gocurlffi/impersonate). Empty means the requests default.
+	// shade/impersonate). Empty means the requests default.
 	Impersonate string
 
 	// UserAgent overrides navigator.userAgent and the request UA. When empty

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // CORS enforcement for fetch and XHR, enabled by Options.CORS. The browser is a

@@ -7,14 +7,14 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // The "curl" target reproduces the OpenSSL 3.x ClientHello and HTTP/2 settings
 // that the system curl sends over HTTP/2. Some bot managers (for example
 // Akamai rules protecting adidas' product API) allow a generic OpenSSL/curl
 // client class over HTTP/2 while challenging browser-shaped fingerprints that
-// lack their sensor cookie, so this gives gocurlffi a way to look like curl.
+// lack their sensor cookie, so this gives shade a way to look like curl.
 //
 // Every value below was captured from a live curl ClientHello with
 // `go run ./internal/capturehello 'curl -s --http2 -k -o /dev/null %s'`.

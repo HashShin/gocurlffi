@@ -4,7 +4,7 @@
 // It exists because "the CSS did not load" is not something to argue about: it
 // is a set of computed values to compare. Chromium is driven over CDP with
 // getComputedStyle; the Go browser answers with its own getComputedStyle
-// through `gocurlffi get --render --eval`. Every fidelity fix in browser/style.go was
+// through `shade get --render --eval`. Every fidelity fix in browser/style.go was
 // found and verified with this tool.
 //
 // This is a separate module on purpose: it is a development tool, and its only
@@ -21,7 +21,7 @@
 // exist. Flags:
 //
 //	-chromium BIN   Chromium binary (default chromium-browser)
-//	-go BIN         gocurlffi binary to use (default: built into a temp dir)
+//	-go BIN         shade binary to use (default: built into a temp dir)
 //	-wait DUR       how long Chromium waits after load (default 6s)
 //	-impersonate T  impersonation target (default custom)
 package main
@@ -96,7 +96,7 @@ type element struct {
 func main() {
 	var (
 		chromiumBin = flag.String("chromium", "", "Chromium binary")
-		goBin       = flag.String("go", "", "gocurlffi binary (default: built into a temp dir)")
+		goBin       = flag.String("go", "", "shade binary (default: built into a temp dir)")
 		wait        = flag.Duration("wait", 6*time.Second, "wait after load in Chromium")
 		impersonate = flag.String("impersonate", "custom", "impersonation target")
 		keep        = flag.Bool("keep", false, "keep the two JSON dumps")
@@ -140,7 +140,7 @@ func main() {
 	}
 	ours, err := dumpGoBrowser(*goBin, *impersonate, url, filepath.Join(dir, "ours.json"))
 	if err != nil {
-		fatal("gocurlffi: %v", err)
+		fatal("shade: %v", err)
 	}
 	if *keep {
 		writeJSON(filepath.Join(dir, "chromium.json"), chrome)
@@ -187,12 +187,12 @@ func dumpGoBrowser(bin, impersonate, url, outPath string) ([]element, error) {
 		if err != nil {
 			return nil, err
 		}
-		bin = filepath.Join(os.TempDir(), "cssdiff-gocurlffi")
-		build := exec.Command("go", "build", "-o", bin, "./cmd/gocurlffi")
+		bin = filepath.Join(os.TempDir(), "cssdiff-shade")
+		build := exec.Command("go", "build", "-o", bin, "./cmd/shade")
 		build.Dir = root
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
-			return nil, fmt.Errorf("build gocurlffi: %w", err)
+			return nil, fmt.Errorf("build shade: %w", err)
 		}
 	}
 	cmd := exec.Command(bin, "get", url, "--render", "-i", impersonate, "--eval", dumpJS, "-o", outPath)
@@ -206,12 +206,12 @@ func dumpGoBrowser(bin, impersonate, url, outPath string) ([]element, error) {
 	}
 	var out []element
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("parse gocurlffi output: %w", err)
+		return nil, fmt.Errorf("parse shade output: %w", err)
 	}
 	return out, nil
 }
 
-// repoRoot walks up from the working directory to the gocurlffi module.
+// repoRoot walks up from the working directory to the shade module.
 func repoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -219,12 +219,12 @@ func repoRoot() (string, error) {
 	}
 	for {
 		b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(b), "module github.com/HashShin/gocurlffi") {
+		if err == nil && strings.Contains(string(b), "module github.com/HashShin/shade") {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("gocurlffi module not found above %s", dir)
+			return "", fmt.Errorf("shade module not found above %s", dir)
 		}
 		dir = parent
 	}
@@ -255,7 +255,7 @@ var fields = []struct {
 
 func report(url string, chrome, ours []element) {
 	fmt.Printf("url: %s\n", url)
-	fmt.Printf("elements: chromium %d, gocurlffi %d\n", len(chrome), len(ours))
+	fmt.Printf("elements: chromium %d, shade %d\n", len(chrome), len(ours))
 
 	cg, og := map[string][]element{}, map[string][]element{}
 	for _, e := range chrome {
@@ -278,7 +278,7 @@ func report(url string, chrome, ours []element) {
 		}
 		total += len(a)
 	}
-	fmt.Printf("comparable elements: %d (chromium-only keys %d, gocurlffi-only keys %d)\n",
+	fmt.Printf("comparable elements: %d (chromium-only keys %d, shade-only keys %d)\n",
 		total, len(cg)-len(common), len(og)-len(common))
 
 	bad := 0
@@ -297,7 +297,7 @@ func report(url string, chrome, ours []element) {
 				mismatch++
 				if shown < 5 {
 					shown++
-					fmt.Printf("  %s: %s#%s.%s chromium %q gocurlffi %q %q\n",
+					fmt.Printf("  %s: %s#%s.%s chromium %q shade %q %q\n",
 						f.name, a[i].Tag, a[i].ID, truncate(a[i].Class, 24),
 						f.norm(f.get(a[i])), f.norm(f.get(b[i])), truncate(a[i].Text, 24))
 				}

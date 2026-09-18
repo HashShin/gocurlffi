@@ -13,7 +13,7 @@
 #   -i, --targets LIST   comma-separated impersonation targets
 #                        (default: native,curl,custom,chrome131,chrome136,
 #                         safari2601,firefox147,edge101,chrome131_android)
-#       --all-targets    use every target from `gocurlffi list`
+#       --all-targets    use every target from `shade list`
 #   -t, --timeout SECS   per-request timeout (default 30)
 #   -m, --method METHOD  HTTP method (default GET)
 #   -B, --browser        use the pure-Go headless browser ("get --render") and
@@ -25,7 +25,7 @@
 #   -h, --help           show this help
 #
 # Environment:
-#   GOCURLFFI_BIN   path to the gocurlffi binary (default: <repo>/bin/gocurlffi,
+#   SHADE_BIN   path to the shade binary (default: <repo>/bin/shade,
 #                   built automatically if missing)
 #
 # Examples:
@@ -91,11 +91,11 @@ done
 
 # --- locate or build the binary -------------------------------------------
 # Both modes use the one binary; -B only changes the flags it is called with.
-BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
+BIN="${SHADE_BIN:-$ROOT_DIR/bin/shade}"
 if [ ! -x "$BIN" ]; then
-  echo "building gocurlffi..." >&2
-  (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
-  BIN="$ROOT_DIR/bin/gocurlffi"
+  echo "building shade..." >&2
+  (cd "$ROOT_DIR" && go build -o bin/shade ./cmd/shade) || exit 1
+  BIN="$ROOT_DIR/bin/shade"
 fi
 
 # A hard wall-clock guard for browser mode, where a page loads many

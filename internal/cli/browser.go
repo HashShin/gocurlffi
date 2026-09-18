@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/HashShin/gocurlffi/browser"
-	"github.com/HashShin/gocurlffi/server"
+	"github.com/HashShin/shade/browser"
+	"github.com/HashShin/shade/server"
 )
 
 // browserFlags are the page-loading options every browser subcommand shares, so
@@ -60,8 +60,8 @@ func (b *browserFlags) apply(opts *browser.Options) {
 // the browser over ws://host:port. Chrome DevTools Protocol and WebDriver BiDi
 // are always served on the same port.
 func RunServe(args []string) int {
-	fs := newFlagSet("serve", "gocurlffi serve [flags]",
-		"gocurlffi serve - drive the browser over CDP and WebDriver BiDi")
+	fs := newFlagSet("serve", "shade serve [flags]",
+		"shade serve - drive the browser over CDP and WebDriver BiDi")
 	var (
 		host = fs.String("host", "127.0.0.1", "interface to bind")
 		port = fs.Int("port", 9222, "port to listen on")
@@ -93,8 +93,8 @@ func RunServe(args []string) int {
 
 // RunMCP starts the MCP tool server, over stdio by default or HTTP with --port.
 func RunMCP(args []string) int {
-	fs := newFlagSet("mcp", "gocurlffi mcp [flags]",
-		"gocurlffi mcp - expose the browser as Model Context Protocol tools")
+	fs := newFlagSet("mcp", "shade mcp [flags]",
+		"shade mcp - expose the browser as Model Context Protocol tools")
 	var (
 		host = fs.String("host", "127.0.0.1", "interface to bind for the HTTP transport")
 		port = fs.Int("port", 0, "serve over HTTP on this port (0 = stdio)")
@@ -160,6 +160,7 @@ type browserGetFlags struct {
 	pdfOut      string
 	width       int
 	scale       float64
+	fontScale   float64
 	maxHeight   int
 	showConsole bool
 	showStatus  bool
@@ -173,8 +174,8 @@ type browserGetFlags struct {
 
 // RunBrowserGet loads one URL in the browser and prints the result.
 func RunBrowserGet(args []string) int {
-	fs := newFlagSet("get --render", "gocurlffi get <url> --render [flags]",
-		"gocurlffi open - load a URL in the pure-Go browser and extract from it")
+	fs := newFlagSet("get --render", "shade get <url> --render [flags]",
+		"shade open - load a URL in the pure-Go browser and extract from it")
 	g := &browserGetFlags{}
 	g.register(fs)
 
@@ -256,7 +257,8 @@ func (g *browserGetFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&g.screenshot, "screenshot", "", "render the page to a PNG at this path")
 	fs.StringVar(&g.pdfOut, "pdf", "", "render the page to a PDF at this path")
 	fs.IntVar(&g.width, "width", 1280, "screenshot layout width in pixels")
-	fs.Float64Var(&g.scale, "scale", 1, "screenshot scale factor")
+	fs.Float64Var(&g.scale, "scale", 1, "screenshot scale factor: 2 is one image pixel per device pixel, 1 is CSS pixels")
+	fs.Float64Var(&g.fontScale, "font-scale", 2, "multiply rendered font sizes: 2 draws the text twice as large, 1 is the page's own size")
 	fs.IntVar(&g.maxHeight, "max-height", 20000, "screenshot height cap in pixels")
 	fs.BoolVar(&g.noImages, "no-images", false, "do not draw the page's images (faster, text only)")
 	fs.BoolVar(&g.showConsole, "console", false, "print page console output to stderr")
@@ -365,7 +367,8 @@ func (g *browserGetFlags) drive(p *browser.Page) int {
 // one of those flags it writes nothing and leaves the exit status alone.
 func (g *browserGetFlags) writeArtifacts(p *browser.Page) (done bool, code int) {
 	shots := browser.ScreenshotOptions{
-		Width: g.width, Scale: g.scale, MaxHeight: g.maxHeight, NoImages: g.noImages,
+		Width: g.width, Scale: g.scale, FontScale: g.fontScale,
+		MaxHeight: g.maxHeight, NoImages: g.noImages,
 	}
 	if g.pdfOut != "" {
 		data, err := p.PDF(shots)
@@ -383,13 +386,13 @@ func (g *browserGetFlags) writeArtifacts(p *browser.Page) (done bool, code int) 
 	if g.screenshot == "" {
 		return false, exitOK
 	}
+	if g.output == "" {
+		g.output = g.screenshot
+	}
 	png, err := p.Screenshot(shots)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "screenshot error: %v\n", err)
 		return true, exitError
-	}
-	if g.output == "" {
-		g.output = g.screenshot
 	}
 	if err := os.WriteFile(g.output, png, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", g.output, err)

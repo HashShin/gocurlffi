@@ -1,4 +1,4 @@
-// Package cli implements the gocurlffi command line: one binary with two
+// Package cli implements the shade command line: one binary with two
 // request paths and the servers that expose the browser to other tools.
 //
 // The fast path (RunFetch) performs a single HTTP request through the
@@ -18,7 +18,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // Version is the commit the binary was built from, injected by the Makefile
@@ -56,7 +56,7 @@ func takeRenderFlag(args *[]string) bool {
 
 // httpMethod reports whether cmd names an HTTP method, and returns it
 // upper-cased. A bare method is accepted as a command so that
-// `gocurlffi post URL -j '{}'` works without a `get`-style verb.
+// `shade post URL -j '{}'` works without a `get`-style verb.
 func httpMethod(cmd string) (string, bool) {
 	switch strings.ToUpper(cmd) {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
@@ -66,7 +66,7 @@ func httpMethod(cmd string) (string, bool) {
 }
 
 // helpTargets maps a command name to the subcommand whose flags explain it, so
-// `gocurlffi help post` prints the fast-path flags.
+// `shade help post` prints the fast-path flags.
 func helpTargets(cmd string) []string {
 	switch cmd {
 	case "get", "fetch":
@@ -122,7 +122,7 @@ func Main(args []string) int {
 		return exitOK
 
 	case "version", "--version", "-V":
-		fmt.Printf("gocurlffi %s (%s)\n", Semver, Version)
+		fmt.Printf("shade %s (%s)\n", Semver, Version)
 		return exitOK
 
 	case "help", "--help", "-h":

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // Get is the one-call form for a single page: a Browser and an Open collapsed

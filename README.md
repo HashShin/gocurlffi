@@ -1,4 +1,4 @@
-# gocurlffi
+# shade
 
 Pure-Go HTTP client that impersonates real browsers' TLS/JA3, HTTP/2 and HTTP/3
 fingerprints, plus a headless browser that runs page JavaScript.
@@ -10,11 +10,11 @@ No cgo, no C, no code generation. Cross-compiles, including to Android/Termux.
 ## Install
 
 ```sh
-go get github.com/HashShin/gocurlffi
+go get github.com/HashShin/shade
 
-go install github.com/HashShin/gocurlffi/cmd/gocurlffi@latest
+go install github.com/HashShin/shade/cmd/shade@latest
 
-make build                     # -> bin/gocurlffi
+make build                     # -> bin/shade
 make install                   # -> /usr/local/bin
 make install PREFIX=$HOME/.local
 ```
@@ -23,8 +23,8 @@ make install PREFIX=$HOME/.local
 
 ## Commands
 
-One binary, `bin/gocurlffi`, carries both request paths and both servers.
-`gocurlffi help <command>` prints a command's flags; the list is generated from
+One binary, `bin/shade`, carries both request paths and both servers.
+`shade help <command>` prints a command's flags; the list is generated from
 the definitions, so it cannot drift from what the command accepts.
 
 | Command | What it does |
@@ -37,19 +37,19 @@ the definitions, so it cannot drift from what the command accepts.
 | `targets` | List every impersonation target. |
 | `version`, `help` | Print the version, or a command's flags. |
 
-A bare method name is a command, so `gocurlffi post ...` is `gocurlffi get -X
+A bare method name is a command, so `shade post ...` is `shade get -X
 POST ...`. `fetch`, `browse`, `render` and `list` are kept as aliases.
 
 ```sh
-gocurlffi get tls.browserleaks.com/json -i chrome150
-gocurlffi post httpbin.org/post -j '{"a":1}'
+shade get tls.browserleaks.com/json -i chrome150
+shade post httpbin.org/post -j '{"a":1}'
 
-gocurlffi get https://quotes.toscrape.com/js/ --render --format text
-gocurlffi open example.com --screenshot page.png
-gocurlffi open example.com/login --fill '#user=me' --click 'button[type=submit]'
+shade get https://quotes.toscrape.com/js/ --render --format text
+shade open example.com --screenshot page.png
+shade open example.com/login --fill '#user=me' --click 'button[type=submit]'
 
-gocurlffi serve --port 9222
-gocurlffi mcp --port 9223
+shade serve --port 9222
+shade mcp --port 9223
 ```
 
 `--render` is refused for `post`, `put`, `patch`, `delete`, `head`, `options`
@@ -81,7 +81,7 @@ package main
 import (
 	"fmt"
 
-	. "github.com/HashShin/gocurlffi"
+	. "github.com/HashShin/shade"
 )
 
 func main() {
@@ -119,7 +119,7 @@ import (
 	"os"
 	"time"
 
-	. "github.com/HashShin/gocurlffi"
+	. "github.com/HashShin/shade"
 )
 
 func main() {

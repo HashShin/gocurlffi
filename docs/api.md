@@ -6,7 +6,7 @@ unqualified from the module root; see the README for that spelling.
 
 ## Impersonation targets
 
-`gocurlffi targets` lists every one. Besides the browser presets there are three
+`shade targets` lists every one. Besides the browser presets there are three
 non-browser targets:
 
 **`native`** (also `none`, `go`, or simply no impersonation) uses Go's own TLS
@@ -40,7 +40,7 @@ priority: u=0, i
 ```
 
 ```sh
-gocurlffi get 'https://www.adidas.co.uk/api/products/IS811/availability' -i custom --headers
+shade get 'https://www.adidas.co.uk/api/products/IS811/availability' -i custom --headers
 ```
 
 Verified: against that endpoint `-i custom` returns the same backend response
@@ -48,7 +48,7 @@ Verified: against that endpoint `-i custom` returns the same backend response
 
 ## API
 
-`import . "github.com/HashShin/gocurlffi"` brings the whole client into one
+`import . "github.com/HashShin/shade"` brings the whole client into one
 namespace, which is how the examples here are written. Every name it provides is
 an alias of the same name in the `requests` package, so the unqualified and the
 qualified spelling refer to the same values, types and functions.

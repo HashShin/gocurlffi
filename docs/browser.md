@@ -38,7 +38,7 @@ package main
 import (
 	"fmt"
 
-	. "github.com/HashShin/gocurlffi/browser"
+	. "github.com/HashShin/shade/browser"
 )
 
 func main() {
@@ -115,9 +115,9 @@ that way needs `Page.Load`, or the form's request on the HTTP path.
 The same thing from the shell, where `--render` selects this path:
 
 ```sh
-gocurlffi get https://quotes.toscrape.com/js/ --render --format text
-gocurlffi open example.com --screenshot page.png
-gocurlffi open example.com/login \
+shade get https://quotes.toscrape.com/js/ --render --format text
+shade open example.com --screenshot page.png
+shade open example.com/login \
   --fill '#user=me' --fill '#pass=secret' --click 'button[type=submit]' \
   --wait '#account'
 ```
@@ -126,8 +126,8 @@ It can also be driven by real browser tooling over CDP and WebDriver BiDi, or
 exposed to an agent over MCP:
 
 ```sh
-gocurlffi serve            # ws://127.0.0.1:9222
-gocurlffi mcp --port 9223  # http://127.0.0.1:9223/mcp
+shade serve            # ws://127.0.0.1:9222
+shade mcp --port 9223  # http://127.0.0.1:9223/mcp
 ```
 
 See [`browser/README.md`](../browser/README.md) for the full surface and

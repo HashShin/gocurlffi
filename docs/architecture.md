@@ -1,6 +1,6 @@
 # Architecture
 
-`gocurlffi` is one Go module with two request paths that share a transport, plus
+`shade` is one Go module with two request paths that share a transport, plus
 a server that exposes the slower one to other tools. This document explains how
 the pieces fit and how the source tree is laid out. For the command line itself
 see [`cli.md`](cli.md); for what the browser does not do yet see
@@ -10,14 +10,14 @@ see [`cli.md`](cli.md); for what the browser does not do yet see
 
 ```
                     ┌──────────────────────────────┐
-  gocurlffi get ───▶│ requests.Session             │──▶ impersonating transport
+  shade get ───▶│ requests.Session             │──▶ impersonating transport
    (fast path)      │ options, cookies, redirects  │    (uTLS + fhttp + HTTP/3)
                     └──────────────────────────────┘
                                     ▲
                                     │ same transport, so the same
                                     │ TLS/JA3 and HTTP/2 fingerprint
                     ┌───────────────┴──────────────┐
-  gocurlffi get     │ browser.Browser              │──▶ goja + DOM + layout
+  shade get     │ browser.Browser              │──▶ goja + DOM + layout
    --render ───────▶│ Page: script, extract, render│
    (browser path)   └───────────────┬──────────────┘
                                     │
@@ -35,14 +35,14 @@ order to the server as the fast path would.
 The other property is that the fast path constructs no JavaScript engine. Merging
 the two commands into one binary costs size, not speed: linking `browser` pulls
 in goja and the layout engine whether or not `--render` is used, which is why
-`bin/gocurlffi` is around 37 MB. A plain `gocurlffi get` still allocates no VM
+`bin/shade` is around 37 MB. A plain `shade get` still allocates no VM
 and makes no extra request.
 
 ## Packages
 
 | Package | Role |
 | --- | --- |
-| `cmd/gocurlffi` | The only executable. A thin wrapper that sets the version and calls `cli.Main`. |
+| `cmd/shade` | The only executable. A thin wrapper that sets the version and calls `cli.Main`. |
 | `internal/cli` | Both command paths, the servers' subcommands, and all flag handling. |
 | `requests` | The `requests`-style HTTP API: `Session`, options, `Request`/`Response`, `Headers`, `Cookies`. |
 | `impersonate` | Fingerprint presets, name/alias resolution, and the mapping from a preset to a TLS/HTTP2/HTTP3 profile. |

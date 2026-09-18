@@ -71,7 +71,7 @@ func TestMainVersion(t *testing.T) {
 
 // A request that fails must not report success. This regressed once: Main
 // discarded the status returned by the command functions and always returned 0,
-// so `gocurlffi get <bad-host>` exited 0 with the error on stderr and a script
+// so `shade get <bad-host>` exited 0 with the error on stderr and a script
 // could not tell that it had failed. Port 1 on the loopback address refuses the
 // connection immediately, so this needs no network.
 func TestMainPropagatesRequestFailure(t *testing.T) {

@@ -26,6 +26,11 @@ type cssRule struct {
 	decls []cssDecl
 	// text is the selector text, kept for document.styleSheets.
 	text string
+	// containClear is set on a rule rewritten from an "::after" clearfix:
+	// the element it matches contains the floats inside it instead of the
+	// generated box doing the clearing. It is the clear side ("both",
+	// "left" or "right"), and empty on an ordinary rule.
+	containClear string
 }
 
 // cssStats counts what a stylesheet contained, so a caller can tell whether a
@@ -378,6 +383,26 @@ func (p *cssParser) readBlockInto(prelude string, out *[]cssRule) {
 			continue
 		}
 		p.selectors++
+		// A clearfix is a generated "::after" box whose only observable job
+		// is to clear the floats its element contains. The engine generates
+		// no pseudo-element boxes, so the clear is attached to the element
+		// itself as "the floats inside it end with it". Bootstrap writes it
+		// in two rules - ".row:before,.row:after{display:table;content:' '}"
+		// and ".row:after{clear:both}" - so the clear cannot require content
+		// alongside it. Without this a floated row had no height and the
+		// block after it started at the top of the page, over the row.
+		if origin := afterPseudoOrigin(selText); origin != "" {
+			if side, ok := clearSideOf(decls); ok {
+				if sel, err := cascadia.Compile(origin); err == nil {
+					*p.order++
+					*out = append(*out, cssRule{
+						sel: sel, spec: cssSpecificity(origin), order: *p.order,
+						decls: decls, containClear: side, text: selText,
+					})
+					continue
+				}
+			}
+		}
 		// A single class selector whose name holds escapes cascadia cannot
 		// match (it compiles them but never matches): Tailwind writes
 		// ".font-\[\'Poppins\'\2c sans\]". Those are matched by name
@@ -1066,12 +1091,25 @@ func parseFontFace(body string) (fontFace, bool) {
 // quotes: `"Geist Mono", sans-serif` yields "Geist Mono". The first name is the
 // one a browser uses, and the one a @font-face is matched against.
 func cssFirstFamily(v string) string {
-	for _, part := range splitTopLevel(v, ',') {
-		if name := strings.Trim(strings.TrimSpace(part), "'\""); name != "" {
-			return name
-		}
+	if list := cssFamilyList(v); len(list) > 0 {
+		return list[0]
 	}
 	return ""
+}
+
+// cssFamilyList splits a font-family value into its families in order, with the
+// quotes stripped. A renderer that keeps only the first one cannot fall through
+// "Georgia, 'Times New Roman', Times, serif" to a face the machine actually
+// has, so every text run whose first choice is missing is drawn in the wrong
+// font.
+func cssFamilyList(v string) []string {
+	var out []string
+	for _, part := range splitTopLevel(v, ',') {
+		if name := strings.Trim(strings.TrimSpace(part), "'\""); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // cssWeightValue resolves a font-weight descriptor: a number, a keyword, or a
@@ -1445,4 +1483,34 @@ func targetsPseudoElement(sel string) bool {
 		}
 	}
 	return false
+}
+
+// afterPseudoOrigin returns the element part of a selector whose subject is
+// the "::after" pseudo-element, or "" when it targets something else. Both
+// spellings are accepted: CSS2 wrote the pseudo-element with one colon, and
+// Bootstrap 3's clearfix uses ":after".
+func afterPseudoOrigin(sel string) string {
+	s := strings.TrimSpace(sel)
+	for _, suffix := range []string{"::after", ":after"} {
+		if len(s) > len(suffix) && strings.EqualFold(s[len(s)-len(suffix):], suffix) {
+			return strings.TrimSpace(s[:len(s)-len(suffix)])
+		}
+	}
+	return ""
+}
+
+// clearSideOf reports the side a declaration block clears. A missing
+// declaration and "clear: none" both clear nothing, and the two-value sides
+// ("inline-start") are left alone.
+func clearSideOf(decls []cssDecl) (string, bool) {
+	for _, d := range decls {
+		if d.prop != "clear" {
+			continue
+		}
+		switch v := strings.ToLower(strings.TrimSpace(d.val)); v {
+		case "both", "left", "right":
+			return v, true
+		}
+	}
+	return "", false
 }

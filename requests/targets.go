@@ -1,6 +1,6 @@
 package requests
 
-import "github.com/HashShin/gocurlffi/impersonate"
+import "github.com/HashShin/shade/impersonate"
 
 // Impersonation targets, re-exported from the impersonate package so that a
 // request needs one import rather than two:

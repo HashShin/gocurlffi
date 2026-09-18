@@ -3,7 +3,7 @@ package browser
 import (
 	"testing"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // Open takes what Browse takes and answers with the page object instead of the

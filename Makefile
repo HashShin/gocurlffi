@@ -1,6 +1,6 @@
-# gocurlffi - Go port of curl_cffi
+# shade - Go port of curl_cffi
 
-BIN := bin/gocurlffi
+BIN := bin/shade
 
 .PHONY: all build install install-go uninstall fmt vet test test-browser test-race test-live sites capture lint clean
 
@@ -11,11 +11,11 @@ all: build
 VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X main.version=$(VERSION)
 
-# One binary for both paths: "gocurlffi get" is the fast HTTP client with
-# TLS/JA3 impersonation, "gocurlffi get --render" (or "open") is the pure-Go
+# One binary for both paths: "shade get" is the fast HTTP client with
+# TLS/JA3 impersonation, "shade get --render" (or "open") is the pure-Go
 # headless browser, and serve/mcp/targets share the same file. See browser/README.md.
 build:
-	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gocurlffi
+	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/shade
 
 # Install the command onto PATH. PREFIX defaults to /usr/local, so
 # "sudo make install" puts it in /usr/local/bin. Override for a user-local
@@ -23,16 +23,16 @@ build:
 PREFIX ?= /usr/local
 install: build
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/gocurlffi
-	@echo "installed $(DESTDIR)$(PREFIX)/bin/gocurlffi"
+	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/shade
+	@echo "installed $(DESTDIR)$(PREFIX)/bin/shade"
 
 # Install with the Go toolchain instead, into GOBIN or GOPATH/bin.
 install-go:
-	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/gocurlffi
+	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/shade
 	@echo "installed with go install; ensure $$(go env GOPATH)/bin is on PATH"
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/gocurlffi
+	rm -f $(DESTDIR)$(PREFIX)/bin/shade
 
 fmt:
 	gofmt -w .

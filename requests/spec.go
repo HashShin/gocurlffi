@@ -7,7 +7,7 @@ import (
 
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // chromeDefaultCurves and chromeDefaultSigAlgs are the values BoringSSL uses

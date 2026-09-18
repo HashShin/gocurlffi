@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // The re-exported constants are a convenience, so the risk they carry is that

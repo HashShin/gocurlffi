@@ -2,7 +2,7 @@ package cli
 
 // The fast path: fetch URLs with browser TLS and HTTP fingerprint
 // impersonation, without a JavaScript engine. This is the curl_cffi-shaped
-// command, and it is what `gocurlffi get` runs unless --render is given.
+// command, and it is what `shade get` runs unless --render is given.
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // output modes. body is the default; the other two are selected by --headers
@@ -55,8 +55,8 @@ type fetchFlags struct {
 // RunFetch is the fast path: one request through the impersonating transport,
 // with no JavaScript engine involved. method is the upper-case HTTP verb.
 func RunFetch(method string, args []string) int {
-	fs := newFlagSet("get", "gocurlffi "+strings.ToLower(method)+" <url> [flags]",
-		"gocurlffi get - HTTP client with browser impersonation (Go port of curl_cffi)")
+	fs := newFlagSet("get", "shade "+strings.ToLower(method)+" <url> [flags]",
+		"shade get - HTTP client with browser impersonation (Go port of curl_cffi)")
 	f := &fetchFlags{}
 	f.register(fs)
 

@@ -1,4 +1,4 @@
-package gocurlffi
+package shade
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HashShin/gocurlffi/browser"
+	"github.com/HashShin/shade/browser"
 )
 
 // The facade is a list of aliases with no code of its own, so its one failure
@@ -52,7 +52,7 @@ func TestFacadeCoversRequests(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("these exported names exist in requests but are not aliased in gocurlffi.go: %v\n"+
+		t.Errorf("these exported names exist in requests but are not aliased in shade.go: %v\n"+
 			"add them, or add them to skip with a reason", missing)
 	}
 
@@ -82,7 +82,7 @@ func TestFacadeCarriesThePageAPI(t *testing.T) {
 		"BrowserRequest", "BrowserResponse", "Block", "Fulfill",
 	} {
 		if !facade[name] {
-			t.Errorf("gocurlffi.go no longer aliases %s, which the README's page sample needs", name)
+			t.Errorf("shade.go no longer aliases %s, which the README's page sample needs", name)
 		}
 	}
 }
@@ -185,7 +185,7 @@ func exportedNames(t *testing.T, dir string) map[string]bool {
 // or return the values the rest of the library does.
 func TestFacadeUsesAliasesNotNewTypes(t *testing.T) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "gocurlffi.go", nil, 0)
+	file, err := parser.ParseFile(fset, "shade.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -55,6 +55,19 @@ func (p *Page) hasFontFace(f fontFace) bool {
 // slope, or nil to fall back to the embedded Go fonts. It never fails loudly:
 // a font that cannot be fetched or decoded is reported once under --debug and
 // the run is drawn with the built-in face.
+// fontFor resolves a run's font-family list. A face the page provides wins
+// over one the machine has, and each family in the list is tried in turn, so
+// "Georgia, 'Times New Roman', Times, serif" falls through to whatever the
+// system can draw. Nil means the embedded Go fonts.
+func (p *Page) fontFor(families []string, weight int, italic bool) *webFont {
+	for _, family := range families {
+		if f := p.pageFont(family, weight, italic); f != nil {
+			return f
+		}
+	}
+	return systemFace(families, weight, italic)
+}
+
 func (p *Page) pageFont(family string, weight int, italic bool) *webFont {
 	if family == "" || len(p.fontFaces) == 0 {
 		return nil

@@ -1,7 +1,7 @@
 # Google's JavaScript gate and BotGuard: what was measured
 
 This is the record of an investigation, kept because the measurements are worth
-more than the conclusion. The short version: **`gocurlffi` cannot search Google,
+more than the conclusion. The short version: **`shade` cannot search Google,
 and the reason is not the fingerprint, the JavaScript engine, or the token
 handling.** A real Chromium from the same host is refused the same way.
 
@@ -10,7 +10,7 @@ handling.** A real Chromium from the same host is refused the same way.
 `https://www.google.com/search?q=...` returns a "Turn on JavaScript to keep
 searching" page (about 92 KB) to every client that does not execute scripts.
 Plain `curl` receives the same page, so this is not a client bug and no
-impersonation target changes it. The `gocurlffi` CLI detects the interstitial
+impersonation target changes it. The `shade` CLI detects the interstitial
 and prints a `warning:` rather than letting it be mistaken for content.
 
 Server-rendered alternatives that do return linkable HTML:

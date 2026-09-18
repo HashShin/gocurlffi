@@ -95,7 +95,7 @@ func TestBrowserRequestWithoutTheBrowserPackage(t *testing.T) {
 	if !errors.As(err, &ie) {
 		t.Fatalf("error = %v, want an *InterfaceError", err)
 	}
-	if !strings.Contains(ie.Error(), "gocurlffi/browser") {
+	if !strings.Contains(ie.Error(), "shade/browser") {
 		t.Errorf("error %q does not name the package to import", ie.Error())
 	}
 }

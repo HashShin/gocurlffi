@@ -50,9 +50,9 @@ func (e *jsEnv) v8Stack() string {
 //
 //	Function.prototype.toString.call(btoa)
 //
-// reads "function gocurlffi/browser.(*jsEnv).setupGlobals.func25() { [native
+// reads "function shade/browser.(*jsEnv).setupGlobals.func25() { [native
 // code] }" rather than "function btoa() { [native code] }", and btoa.name reads
-// "github.com/HashShin/gocurlffi/browser.(*jsEnv).setupGlobals.func25".
+// "github.com/HashShin/shade/browser.(*jsEnv).setupGlobals.func25".
 //
 // No browser produces that, so a page can tell it is not talking to one with a
 // single regex - and this one also names the library it is talking to instead.

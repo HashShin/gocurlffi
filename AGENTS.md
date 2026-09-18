@@ -13,7 +13,7 @@ generation. It cross-compiles, including to Android/Termux.
 ## Commands
 
 ```sh
-make build        # -> bin/gocurlffi
+make build        # -> bin/shade
 make test         # unit tests, no network
 make test-race    # the same under the race detector
 make test-live    # live fingerprints vs the recorded curl_cffi baseline (network)
@@ -42,7 +42,7 @@ staticcheck ./browser        # the slow one, tens of seconds
 
 | Path | What it is |
 | --- | --- |
-| `gocurlffi.go` | The facade at the module root: the whole client re-exported unqualified. |
+| `shade.go` | The facade at the module root: the whole client re-exported unqualified. |
 | `requests/` | The HTTP API: `Session`, `Request`, `Response`, `Headers`, options, transport. |
 | `impersonate/` | The preset table, target constants, alias resolution. |
 | `browser/` | The headless browser. Files are grouped by prefix; see `docs/architecture.md`. |
@@ -65,9 +65,9 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
   browser's ClientHello, HTTP/2 settings and header order. There is no generator
   and no C file any more: this Go table is the source of truth. Treat an edit
   there as a change to the fingerprint.
-- **Everything in `gocurlffi.go` is an alias**, never a defined type, and it must
+- **Everything in `shade.go` is an alias**, never a defined type, and it must
   cover `requests` completely. `facade_test.go` checks both, in both directions.
-- **The module root links the browser.** `gocurlffi.go` blank-imports `browser`
+- **The module root links the browser.** `shade.go` blank-imports `browser`
   so that one import is enough for `Browse` and `Request.Browser`. Removing that
   import to shrink the facade would break the documented one-import promise;
   `requests` is the package for a program that wants the smaller binary.
@@ -79,8 +79,8 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
   cat > go.mod <<'EOF'
   module ex
   go 1.26.0
-  require github.com/HashShin/gocurlffi v0.0.0
-  replace github.com/HashShin/gocurlffi => /path/to/gocurlffi
+  require github.com/HashShin/shade v0.0.0
+  replace github.com/HashShin/shade => /path/to/shade
   EOF
   ```
   This has caught real breakage twice.
@@ -96,9 +96,9 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
 | Adding | Also update |
 | --- | --- |
 | A preset or target | `impersonate/presets.go`, `impersonate/targets.go`, and the re-exports in `requests/targets.go` and `browser/targets.go` (the tests there name what is missing) |
-| A public function or type in `requests` | `gocurlffi.go` (the facade test names what is missing) |
+| A public function or type in `requests` | `shade.go` (the facade test names what is missing) |
 | An option | `requests/options.go`, `docs/api.md` |
-| A CLI flag | `internal/cli/` only; `gocurlffi help <cmd>` is generated from the definitions |
+| A CLI flag | `internal/cli/` only; `shade help <cmd>` is generated from the definitions |
 | A web API in the browser | `browser/js_*`, and the "Not implemented" list in `browser/README.md` |
 
 ## Gotchas
@@ -111,7 +111,7 @@ These are load-bearing. A change that breaks one is a bug, not a preference.
   time out under the detector; that is what happened to the recursion test, and
   a runaway script consuming the `LoadTimeout` is by design, not a bug.
 - **`pkill -f` kills the invoking shell** if the pattern matches the command
-  line. Build the pattern at runtime, e.g. `P=$(printf 'gocurl%s' 'ffi serve')`.
+  line. Build the pattern at runtime, e.g. `P=$(printf 'sha%s' 'de serve')`.
 - **A dot import is deliberate here.** The root facade exists to be dot
   imported. `staticcheck` reports it as `ST1001`; that is expected and
   documented in the README rather than worked around.

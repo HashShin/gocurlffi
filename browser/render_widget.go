@@ -66,6 +66,14 @@ func (p *Page) rasterWidget(kind string, w, h float64, checked bool, accent colo
 	case "color":
 		strokeRect(dst, 0, 0, rw, rh, max1(rw/24), widgetBorder)
 		fillRectI(dst, 1, 1, rw-2, rh-2, accent)
+	case "caret":
+		// The downward triangle a select shows. It is drawn rather than set
+		// in a glyph: the fonts have no "\u25be", so every select used to
+		// show a missing-glyph box where its arrow belongs.
+		for y := 0; y < rh; y++ {
+			half := (rw / 2) * (rh - y) / rh
+			fillRectI(dst, rw/2-half, y, 2*half, 1, accent)
+		}
 	default:
 		return nil
 	}
@@ -175,14 +183,29 @@ func maxF(a, b float64) float64 {
 // emitFormControl writes a form control's visible content as spans: a widget
 // graphic for the box-like controls, and text for the ones that show a value.
 func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string) bool {
+	// A control's padding belongs to the box the layout draws around its
+	// value, so its own text runs must not carry it too: the run and the box
+	// would each add it, and the control came out padding wider than a
+	// browser's.
+	style := c.style
+	style.padLeft, style.padRight, style.padTop, style.padBottom, style.hasPad = 0, 0, 0, 0, false
+	// The box carries the control's background too, so a run behind the text
+	// would paint it a second time and darken a translucent colour.
+	style.hasBG = false
 	typ := strings.ToLower(strings.TrimSpace(attrOf(el, "type")))
 	switch tag {
 	case "select":
 		idx := c.controlBlock(cs)
 		if label := selectedOptionText(el); label != "" {
-			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: label, style: c.style})
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: label, style: style})
 		}
-		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: " \u25be", style: c.style})
+		// The arrow is a drawn triangle, not the "\u25be" the fonts have no
+		// glyph for; that character drew a missing-glyph box on every page
+		// with a select.
+		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: " ", style: style})
+		if pic := c.page.rasterWidget("caret", 9, 5, false, style.color); pic != nil {
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{pic: pic, picW: 9, picH: 5})
+		}
 		return true
 	case "textarea":
 		idx := c.controlBlock(cs)
@@ -192,9 +215,9 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 			v = attrOf(el, "placeholder")
 		}
 		if v != "" {
-			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: style})
 		}
-		c.controlPlaceholder(idx)
+		c.controlPlaceholder(idx, style)
 		return true
 	case "input":
 		switch typ {
@@ -226,7 +249,7 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 			return true
 		case "file":
 			idx := c.controlBlock(cs)
-			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "Choose File", style: c.style})
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "Choose File", style: style})
 			return true
 		case "submit", "button", "reset":
 			v := attrOf(el, "value")
@@ -234,7 +257,16 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 				v = strings.ToUpper(typ)
 			}
 			idx := c.controlBlock(cs)
-			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
+			c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: style})
+			// A submit control is inline-block and shrinks to its label, like
+			// a <button>. Left to fill the line, quotes.toscrape.com's
+			// "Login" button was drawn the width of the whole form, where
+			// Bootstrap's ".btn" is a rounded box around its text. A declared
+			// width (".btn-block") still wins.
+			if !cs.hasWidth && !c.flexItem(el) {
+				c.blocks[idx].inlineBox = true
+				c.blocks[idx].boxAlign = c.placeAlign(el)
+			}
 			return true
 		default:
 			// A text-like input shows its value, or its placeholder. An empty
@@ -245,9 +277,9 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 			}
 			idx := c.controlBlock(cs)
 			if v != "" {
-				c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: c.style})
+				c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: v, style: style})
 			}
-			c.controlPlaceholder(idx)
+			c.controlPlaceholder(idx, style)
 			return true
 		}
 	}
@@ -255,10 +287,12 @@ func (c *collector) emitFormControl(el *html.Node, cs *computedStyle, tag string
 }
 
 // controlPlaceholder gives an otherwise empty control block a zero-width span so
-// it still lays out one line, and therefore draws its box.
-func (c *collector) controlPlaceholder(idx int) {
+// it still lays out one line, and therefore draws its box. The painter skips
+// the character itself: the embedded fonts have no U+200B and drew a
+// missing-glyph box inside every empty field.
+func (c *collector) controlPlaceholder(idx int, style renderStyle) {
 	if len(c.blocks[idx].spans) == 0 {
-		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "\u200b", style: c.style})
+		c.blocks[idx].spans = append(c.blocks[idx].spans, renderSpan{text: "\u200b", style: style})
 	}
 }
 

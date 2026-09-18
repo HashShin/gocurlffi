@@ -1,19 +1,19 @@
 # Command line
 
-One binary, `bin/gocurlffi`, built with `make build`. It has two request paths
-and two servers. Run `gocurlffi help <command>` for any command's flags, or
-`gocurlffi <command> --help`. The flag list is generated from the definitions in
+One binary, `bin/shade`, built with `make build`. It has two request paths
+and two servers. Run `shade help <command>` for any command's flags, or
+`shade <command> --help`. The flag list is generated from the definitions in
 `internal/cli`, so it cannot drift from what the command accepts.
 
 ```
-gocurlffi get <url> [flags]            fast HTTP client with browser TLS/JA3
-gocurlffi get <url> --render [flags]   load the URL in the pure-Go browser
-gocurlffi open <url> [flags]           shorthand for "get --render"
-gocurlffi serve [flags]                CDP + WebDriver BiDi server
-gocurlffi mcp [flags]                  MCP tool server (stdio, or --port for HTTP)
-gocurlffi targets                      list impersonation targets
-gocurlffi version                      print the version
-gocurlffi help [command]               this overview, or a command's flags
+shade get <url> [flags]            fast HTTP client with browser TLS/JA3
+shade get <url> --render [flags]   load the URL in the pure-Go browser
+shade open <url> [flags]           shorthand for "get --render"
+shade serve [flags]                CDP + WebDriver BiDi server
+shade mcp [flags]                  MCP tool server (stdio, or --port for HTTP)
+shade targets                      list impersonation targets
+shade version                      print the version
+shade help [command]               this overview, or a command's flags
 ```
 
 Exit status is `0` for success, `1` when the command ran and failed, and `2`
@@ -32,9 +32,9 @@ CPU and memory, not an extra request: the browser fetches through the same
 transport, so the fingerprint is identical.
 
 ```sh
-gocurlffi get tls.browserleaks.com/json -i chrome150
-gocurlffi get quotes.toscrape.com/js/ --render --format text
-gocurlffi open example.com --screenshot page.png
+shade get tls.browserleaks.com/json -i chrome150
+shade get quotes.toscrape.com/js/ --render --format text
+shade open example.com --screenshot page.png
 ```
 
 There is no browser path for a request that carries a body, so `--render` is
@@ -45,16 +45,16 @@ rejected for `post`, `put`, `patch`, `delete`, `head`, `options` and `trace`.
 A bare method is a command, so the fast path also reads as:
 
 ```sh
-gocurlffi post httpbin.org/post -j '{"a":1}'
-gocurlffi put example.com/thing -d 'name=value'
-gocurlffi head example.com -v
+shade post httpbin.org/post -j '{"a":1}'
+shade put example.com/thing -d 'name=value'
+shade head example.com -v
 ```
 
 Equivalently, name the method explicitly. This is useful when a script builds
 the method dynamically:
 
 ```sh
-gocurlffi get example.com -X POST -d 'name=value'
+shade get example.com -X POST -d 'name=value'
 ```
 
 ## Fast-path flags (`get`, and every bare method)
@@ -126,7 +126,8 @@ Rendering:
 | `--screenshot` | | Render the page to a PNG at this path. |
 | `--pdf` | | Render the page to a PDF at this path. |
 | `--width` | `1280` | Screenshot layout width in pixels. |
-| `--scale` | `1` | Screenshot scale factor. |
+| `--scale` | `1` | Screenshot scale factor. 2 renders at 2x, one image pixel per device pixel, which is what a browser on a HiDPI screen shows; 1 gives CSS pixels. |
+| `--font-scale` | `2` | Multiply rendered font sizes, like a browser's text-only zoom: 2 draws the text twice as large while boxes and padding keep the page's sizes. Use 1 for the page's own sizes. |
 | `--max-height` | `20000` | Screenshot height cap in pixels. |
 | `--no-images` | `false` | Do not draw the page's images. Faster, text only. |
 

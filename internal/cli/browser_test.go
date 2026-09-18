@@ -61,7 +61,7 @@ func TestReorderFlags(t *testing.T) {
 // before it clicks, so the click has something to submit.
 func TestDriveFlagsKeepOrder(t *testing.T) {
 	g := &browserGetFlags{}
-	fs := newFlagSet("get --render", "gocurlffi get <url> --render", "test")
+	fs := newFlagSet("get --render", "shade get <url> --render", "test")
 	g.register(fs)
 
 	if err := fs.Parse([]string{"--click", "#a", "--fill", "#b=1", "--click", "#c", "--type", "#d=x"}); err != nil {

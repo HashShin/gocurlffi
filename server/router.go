@@ -9,7 +9,7 @@ import (
 
 // debugCDP logs incoming commands and outgoing events when the environment
 // variable is set, which turns a stuck client into a readable transcript.
-var debugCDP = os.Getenv("GOCURLFFI_CDP_DEBUG") != ""
+var debugCDP = os.Getenv("SHADE_CDP_DEBUG") != ""
 
 // request is one CDP command.
 type request struct {
@@ -87,7 +87,7 @@ func (c *conn) dispatch(t *target, method string, params json.RawMessage) (any, 
 	case "Browser.getVersion":
 		return map[string]any{
 			"protocolVersion": "1.3",
-			"product":         "github.com/HashShin/gocurlffi/" + version,
+			"product":         "github.com/HashShin/shade/" + version,
 			"revision":        "",
 			"userAgent":       userAgent(c),
 			"jsVersion":       "goja",

@@ -14,7 +14,6 @@ import (
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
-	"golang.org/x/image/font/gofont/goitalic"
 	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
@@ -49,6 +48,17 @@ type renderStyle struct {
 	// background at all.
 	bg    color.RGBA
 	hasBG bool
+	// radiusPx/radiusPct and the padding are an inline element's box: a
+	// browser paints its background as a rounded box around content plus
+	// padding, and adds the horizontal padding to the run's advance. Without
+	// them a tag pill was a square of exactly the text's width.
+	radiusPx  [4]float64
+	radiusPct [4]float64
+	padLeft   float64
+	padRight  float64
+	padTop    float64
+	padBottom float64
+	hasPad    bool
 	// font is the page's webfont for this run, or nil to use the embedded Go
 	// font. It already carries the weight and slope the family asked for.
 	font *webFont
@@ -92,7 +102,6 @@ var (
 	renderFontsOnce sync.Once
 	renderRegular   *opentype.Font
 	renderBold      *opentype.Font
-	renderItalic    *opentype.Font
 	renderMono      *opentype.Font
 
 	renderFaceMu sync.Mutex
@@ -110,7 +119,6 @@ func loadRenderFonts() {
 		}
 		renderRegular = parse(goregular.TTF)
 		renderBold = parse(gobold.TTF)
-		renderItalic = parse(goitalic.TTF)
 		renderMono = parse(gomono.TTF)
 	})
 }
@@ -130,9 +138,11 @@ func renderFace(k faceKey) font.Face {
 		src = renderMono
 	case k.bold && renderBold != nil:
 		src = renderBold
-	case k.italic && renderItalic != nil:
-		src = renderItalic
 	}
+	// An italic run is drawn by shearing this face rather than from a face of
+	// its own: the embedded Go Italic is a serif design, so a sans-serif page
+	// set in italic came out with serifs, and it runs about 2% wider than the
+	// upright face, which wrapped text a word early.
 	if src == nil {
 		return nil
 	}
@@ -164,11 +174,127 @@ func measureText(k faceKey, s string) float64 {
 // adds after every character. Every measurement in layout goes through it so
 // the drawn text and the wrap width agree.
 func textWidth(s renderStyle, text string) float64 {
-	w := measureText(styleKey(s), text)
+	w := 0.0
+	if s.font != nil && hasNonASCII(text) {
+		// A page's webfont often carries only the text it was subset for,
+		// and a browser falls back to another font for the rest: quotes.
+		// toscrape.com's Raleway has no "→", and the pager button drew the
+		// font's missing-glyph box instead of an arrow.
+		w = measureWithFallback(s, text)
+	} else {
+		w = measureText(styleKey(s), text)
+	}
 	if s.letterSpacing != 0 && text != "" {
 		w += s.letterSpacing * float64(len([]rune(text)))
 	}
 	return w
+}
+
+// hasNonASCII reports whether text holds a rune outside ASCII, the only case
+// where a run's own face can be missing a glyph. Almost every measurement is
+// plain ASCII, so the fallback scan is skipped for it.
+func hasNonASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+
+// faceHasRune reports whether a face has a glyph for r. Whitespace is always
+// the face's own, so it never pulls in a fallback face.
+func faceHasRune(f font.Face, r rune) bool {
+	if f == nil {
+		return false
+	}
+	switch r {
+	case ' ', '\t', '\n', '\r', '\f', '\v', '\u00a0':
+		return true
+	}
+	_, ok := f.GlyphAdvance(r)
+	return ok
+}
+
+// runeKey is the face a rune is drawn with: the run's own face when it has
+// the glyph, otherwise the embedded Go font. ownFace is the run's face, which
+// the caller resolves once for the whole run.
+func runeKey(s renderStyle, own faceKey, ownFace font.Face, r rune) faceKey {
+	if s.font == nil || faceHasRune(ownFace, r) {
+		return own
+	}
+	own.font = nil
+	return own
+}
+
+// forEachFaceSegment splits text into consecutive runes that share a face, so
+// a run is measured and drawn in the pieces a browser would use.
+func forEachFaceSegment(s renderStyle, text string, f func(faceKey, string)) {
+	own := styleKey(s)
+	var ownFace font.Face
+	if s.font != nil {
+		ownFace = renderFace(own)
+	}
+	var b strings.Builder
+	var key faceKey
+	started := false
+	flush := func() {
+		if b.Len() > 0 {
+			f(key, b.String())
+			b.Reset()
+		}
+	}
+	for _, r := range text {
+		k := runeKey(s, own, ownFace, r)
+		if started && k != key {
+			flush()
+		}
+		key, started = k, true
+		b.WriteRune(r)
+	}
+	flush()
+}
+
+func measureWithFallback(s renderStyle, text string) float64 {
+	w := 0.0
+	forEachFaceSegment(s, text, func(k faceKey, seg string) {
+		w += measureText(k, seg)
+	})
+	return w
+}
+
+// drawTextWithFallback draws a run whose face is missing some of its runes,
+// switching faces mid-run the way a browser does.
+func drawTextWithFallback(img *image.RGBA, x, baseline float64, text string, style renderStyle, spacing float64) {
+	forEachFaceSegment(style, text, func(k faceKey, seg string) {
+		if k.font == nil && style.italic {
+			drawOblique(img, x, baseline, seg, k, style.color, spacing)
+		} else {
+			drawString(img, x, baseline, seg, k, style.color)
+		}
+		x += measureText(k, seg)
+		if spacing != 0 {
+			x += spacing * float64(len([]rune(seg)))
+		}
+	})
+}
+
+// invisibleText reports whether a run is only zero-width characters, which are
+// layout markers rather than text and must not be drawn. The embedded fonts
+// have no glyph for them, so drawing one produced the missing-glyph box that
+// appeared inside every empty form field.
+func invisibleText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch r {
+		case '\u200b', '\ufeff':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // styleKey maps a text style to the font face that renders it.
@@ -277,7 +403,8 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 			fillRect(img, s(ln.indent-10), s(ln.y), 3*scale, s(ln.height), renderQuoteBar)
 		}
 		if ln.marker != "" {
-			drawString(img, s(ln.markerX), s(ln.baseline), ln.marker, faceKey{size: doc.baseSize}, renderTextColor)
+			drawString(img, s(ln.markerX), s(ln.baseline), ln.marker,
+				faceKey{size: doc.baseSize * scale}, renderTextColor)
 		}
 		for _, r := range ln.runs {
 			if r.img != nil {
@@ -285,19 +412,45 @@ func renderPNG(doc *renderDoc, scale float64, pageBG color.RGBA) ([]byte, error)
 				drawScaledImage(img, r.img, s(r.x), s(ln.baseline)-h, s(r.imgW), h, scale)
 				continue
 			}
-			wpx := textWidth(r.style, r.text)
-			if r.style.hasBG && wpx > 0 {
-				// The font's content box, which is the area an inline
-				// background covers before padding and line-height.
-				asc, desc, _ := lineMetrics(styleKey(r.style))
-				fillRect(img, s(r.x), s(ln.baseline)-s(asc), s(wpx), s(asc+desc), r.style.bg)
+			// A zero-width space is a layout marker, not text: an empty form
+			// control carries one so it still lays out a line, and the fonts
+			// have no such glyph, so drawing it put a missing-glyph box
+			// inside every empty field.
+			if invisibleText(r.text) {
+				continue
 			}
-			drawRunText(img, s(r.x), s(ln.baseline), r.text, r.style, s(r.style.letterSpacing))
+			wpx := textWidth(r.style, r.text)
+			tx := s(r.x) + s(r.style.padLeft)
+			if r.style.hasBG && wpx > 0 {
+				// The inline box's background covers the font's content box
+				// plus its padding, rounded when the element declares a
+				// radius. Without the padding a tag pill hugged its text
+				// exactly; without the radius it was a plain rectangle.
+				asc, desc, _ := lineMetrics(styleKey(r.style))
+				bx := s(r.x)
+				by := s(ln.baseline) - s(asc) - s(r.style.padTop)
+				bw := s(r.style.padLeft + wpx + r.style.padRight)
+				bh := s(asc+desc) + s(r.style.padTop+r.style.padBottom)
+				radii := r.style.radiusPx
+				for i := range radii {
+					radii[i] += r.style.radiusPct[i] * math.Min(asc+desc+r.style.padTop+r.style.padBottom, r.style.padLeft+wpx+r.style.padRight)
+					radii[i] *= scale
+				}
+				if rounded(radii) {
+					roundRectMaskDraw(img, bx, by, bw, bh, radii, 0, r.style.bg)
+				} else {
+					fillRect(img, bx, by, bw, bh, r.style.bg)
+				}
+			}
+			// The glyphs are rasterized at the device size, not the CSS one:
+			// at a 2x scale the boxes grew with the image but the text did
+			// not, so a 2x screenshot came out with half-size text.
+			drawRunText(img, tx, s(ln.baseline), r.text, r.style, s(r.style.letterSpacing), scale)
 			if r.style.underline {
-				fillRect(img, s(r.x), s(ln.baseline)+1.5*scale, s(wpx), 1*scale, r.style.color)
+				fillRect(img, tx, s(ln.baseline)+1.5*scale, s(wpx), 1*scale, r.style.color)
 			}
 			if r.style.strike {
-				fillRect(img, s(r.x), s(ln.baseline)-s(r.style.size)*0.3, s(wpx), 1*scale, r.style.color)
+				fillRect(img, tx, s(ln.baseline)-s(r.style.size)*0.3, s(wpx), 1*scale, r.style.color)
 			}
 		}
 	}
@@ -594,7 +747,20 @@ func drawString(img *image.RGBA, x, baseline float64, text string, k faceKey, c 
 
 // drawRunText draws a run, adding letter-spacing after every character when the
 // style asks for it. spacing is already scaled to device pixels.
-func drawRunText(img *image.RGBA, x, baseline float64, text string, style renderStyle, spacing float64) {
+func drawRunText(img *image.RGBA, x, baseline float64, text string, style renderStyle, spacing, scale float64) {
+	if scale != 1 && scale > 0 {
+		// The face is built at the device size, so the glyphs match the boxes
+		// the layout scaled. The caller's own measurements stay in CSS pixels.
+		style.size *= scale
+	}
+	if style.font != nil && hasNonASCII(text) {
+		drawTextWithFallback(img, x, baseline, text, style, spacing)
+		return
+	}
+	if style.italic && style.font == nil {
+		drawOblique(img, x, baseline, text, styleKey(style), style.color, spacing)
+		return
+	}
 	if spacing == 0 {
 		drawString(img, x, baseline, text, styleKey(style), style.color)
 		return
@@ -613,6 +779,66 @@ func drawRunText(img *image.RGBA, x, baseline float64, text string, style render
 		d.DrawString(string(r))
 		d.Dot.X += fixed.Int26_6(spacing * 64)
 	}
+}
+
+// obliqueShear is the slant a synthesized italic leans by, 12 degrees: the
+// shear a browser applies to an upright face when the family has no italic of
+// its own.
+const obliqueShear = 0.2126
+
+// drawOblique draws an upright face slanted to the right. The embedded Go
+// Italic is a serif design, so a page asking for "sans-serif" in italic came
+// out with serifs - and about 2% wider than the browser's own oblique, which
+// wrapped the text a word early. Shearing the upright face matches both the
+// look and the advances, and leaves the glyph positions on the baseline where
+// the layout measured them.
+func drawOblique(img *image.RGBA, x, baseline float64, text string, k faceKey, c color.RGBA, spacing float64) {
+	f := renderFace(k)
+	if f == nil || text == "" {
+		return
+	}
+	ascent, descent, _ := lineMetrics(k)
+	pad := int(obliqueShear*float64(ascent+descent)) + 2
+	w := int(measureText(k, text)) + 2*pad + 2
+	h := int(ascent+descent) + 2
+	if w < 1 || h < 1 {
+		return
+	}
+	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	base := int(ascent) + 1
+	d := font.Drawer{
+		Dst:  mask,
+		Src:  image.NewUniform(color.Alpha{A: 0xff}),
+		Face: f,
+		Dot:  fixed.P(pad, base),
+	}
+	if spacing == 0 {
+		d.DrawString(text)
+	} else {
+		for _, r := range text {
+			d.DrawString(string(r))
+			d.Dot.X += fixed.Int26_6(spacing * 64)
+		}
+	}
+	// Lean the mask row by row: rows above the baseline move right and rows
+	// below it move left, so the advances are untouched.
+	sheared := image.NewAlpha(image.Rect(0, 0, w, h))
+	for row := 0; row < h; row++ {
+		off := int(obliqueShear*float64(base-row) + 0.5)
+		src := mask.Pix[row*mask.Stride : row*mask.Stride+w]
+		dst := sheared.Pix[row*sheared.Stride : row*sheared.Stride+w]
+		for col := 0; col < w; col++ {
+			if src[col] == 0 {
+				continue
+			}
+			if at := col + off; at >= 0 && at < w && src[col] > dst[at] {
+				dst[at] = src[col]
+			}
+		}
+	}
+	draw.DrawMask(img,
+		image.Rect(int(x)-pad, int(baseline)-base, int(x)-pad+w, int(baseline)-base+h),
+		image.NewUniform(c), image.Point{}, sheared, image.Point{}, draw.Over)
 }
 
 // --- layout ---
@@ -727,6 +953,11 @@ const (
 	blockImage
 	blockFlex
 	blockFloat
+	// blockClear is the position a generated "::after" clearfix takes: the
+	// flow drops below the floats the element contains, and they end there.
+	// The collector emits one for an element whose matched ":after" rule
+	// clears.
+	blockClear
 )
 
 type renderSpan struct {
@@ -783,6 +1014,9 @@ type renderBlock struct {
 	floatPct    float64
 	hasFloatW   bool
 	floatBlocks []renderBlock
+	// clearSide is the clear side of a blockClear block: "both", "left" or
+	// "right".
+	clearSide string
 	// A grid container places its children in the tracks of grid-template
 	// columns, left to right, filling a new row when the tracks run out.
 	grid     bool
@@ -937,6 +1171,13 @@ type renderBlock struct {
 	// nesting depth, which is where the box paints.
 	boxPadRight float64
 	boxDepth    int
+	// boxTop and boxBottom mark the two blocks at the edges of the box this
+	// block carries. The border belongs there and nowhere else in the run: on
+	// every block it added the border again between each pair of a
+	// container's children, which made quotes.toscrape.com's quote cards 4px
+	// taller than a browser's.
+	boxTop    bool
+	boxBottom bool
 	// Out-of-flow children (position:absolute/fixed) placed relative to this
 	// block's content box, and the offset from position:relative.
 	abs   []absChild
@@ -1074,6 +1315,9 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		acc.started = true
 	}
 	var prevMarginBottom, prevPaddingBottom, prevBorderBottom float64
+	// prevBoxBottom records that the previous block ended the box it carried,
+	// which is where that box's bottom border belongs.
+	prevBoxBottom := false
 	havePrev := false
 	// Floated boxes in this column: the blocks after one flow beside it until
 	// its bottom passes, which is what wraps text around an image or an
@@ -1141,8 +1385,17 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		gap := b.marginTop + b.borderW + b.paddingTop
 		if havePrev {
-			gap = prevPaddingBottom + prevBorderBottom +
-				math.Max(prevMarginBottom, b.marginTop) + b.borderW + b.paddingTop
+			// Vertical margins of adjacent blocks collapse to the larger one;
+			// padding and border always add. A border is part of the box's own
+			// top and bottom edges, so it is counted where the box begins and
+			// ends and not again between the blocks inside it.
+			gap = prevPaddingBottom + math.Max(prevMarginBottom, b.marginTop) + b.paddingTop
+			if prevBoxBottom {
+				gap += prevBorderBottom
+			}
+			if b.boxTop {
+				gap += b.borderW
+			}
 		}
 		y += gap
 		if b.relDy != 0 {
@@ -1469,6 +1722,30 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			ls, h := layoutFlex(b, colX+shift, contentW+b.boxLeft, y, baseSize, boxes, g)
 			out = append(out, ls...)
 			y += h
+		case blockClear:
+			// A generated "::after" clearfix: the flow drops below every
+			// float the element contains, then those floats end. That is
+			// what gives a floated row its height, so the block after it
+			// starts below the row instead of over it.
+			if fb := floatBottom(); fb > y {
+				y = fb
+			}
+			kept := floats[:0]
+			for _, f := range floats {
+				if b.clearSide == "both" || f.side == b.clearSide {
+					continue
+				}
+				kept = append(kept, f)
+			}
+			floats = kept
+			contentTop = y
+			recordBox(b, y-b.paddingTop-b.borderW, y+b.paddingBottom+b.borderW,
+				colX+b.borderLeft+shift, 0, colX+b.borderLeft+shift, 0)
+			prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
+			prevBorderBottom = b.borderW
+			prevBoxBottom = b.boxBottom
+			havePrev = true
+			continue
 		case blockFloat:
 			// A float is sized to its content unless it declares a width,
 			// then placed against its side of the column. It does not move y:
@@ -1536,6 +1813,26 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 			if limit < 40 {
 				limit = 40
 			}
+			// A line box with no room left beside the open floats is moved
+			// down past them, which is what a browser does with a line whose
+			// available width would be zero. Without this the content of a
+			// block under floats that fill the column was wrapped to a minimum
+			// width and drawn past the page edge: quotes.toscrape.com's
+			// Bootstrap header row left two column floats across the whole
+			// column, and the first quote's opening words were laid out at
+			// x=1026 on a 1000px page, invisible.
+			for {
+				fl, fr := floatInsets(y)
+				if limit-fl-fr > 0 {
+					break
+				}
+				fb := floatBottom()
+				if fb <= y {
+					break
+				}
+				y = fb
+				contentTop = y
+			}
 			// Text beside a float is narrower until the float's bottom
 			// passes. The line height is estimated from the block's first
 			// span, which is what the wrap uses to know where the float ends.
@@ -1588,11 +1885,18 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 					lineLimit = 40
 				}
 				lineStart := textStart + li
+				// A replaced box taller than the font stands on the baseline
+				// and lifts the line's top with it. Text keeps the font's own
+				// ascent instead: the half leading below centres the content
+				// area in the line box, and a baseline a whole descender lower
+				// hung every glyph below its line and clipped the descenders of
+				// large text in a tight line-height - quotes.toscrape.com's
+				// 41px h1 was drawn 10px low with its "g", "j" and "y" cut off.
 				if ih := lineImageHeight(line, lineLimit); ih > h {
 					h = ih
-				}
-				if ascent < h {
-					ascent = h
+					if ascent < ih {
+						ascent = ih
+					}
 				}
 				// "line-height: normal" is the font's own line height, which
 				// is what the glyph raster's height already is.
@@ -1652,7 +1956,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 						continue
 					}
 					dl.runs = append(dl.runs, drawRun{x: runX, text: sp.text, style: sp.style})
-					runX += textWidth(sp.style, sp.text)
+					runX += spanAdvance(sp)
 				}
 				out = append(out, dl)
 				y += lh
@@ -1737,6 +2041,7 @@ func layoutColumn(blocks []renderBlock, colX, colW, startY, baseSize float64, bo
 		}
 		prevMarginBottom, prevPaddingBottom = b.marginBottom, b.paddingBottom
 		prevBorderBottom = b.borderW
+		prevBoxBottom = b.boxBottom
 		havePrev = true
 	}
 	if havePrev {
@@ -2622,13 +2927,19 @@ func firstStyle(spans []renderSpan) renderStyle {
 func spansIntrinsicWidth(spans []renderSpan) float64 {
 	w := 0.0
 	for _, sp := range spans {
-		if sp.pic != nil {
-			w += sp.picW
-		} else {
-			w += textWidth(sp.style, sp.text)
-		}
+		w += spanAdvance(sp)
 	}
 	return w
+}
+
+// spanAdvance is how far a run moves the line on: its text plus the inline
+// padding either side. A padded inline box is wider than its text, and the
+// next run starts past that box.
+func spanAdvance(sp renderSpan) float64 {
+	if sp.pic != nil {
+		return sp.picW
+	}
+	return textWidth(sp.style, sp.text) + sp.style.padLeft + sp.style.padRight
 }
 
 // lineWidth is the drawn width of a line: text runs plus replaced boxes.
@@ -2689,7 +3000,17 @@ func wrapSpansWidth(spans []renderSpan, limitAt func(line int) float64) [][]rend
 			if (i > 0 || lead) && len(items) > 0 {
 				spaceStyles[len(items)-1] = sp.style
 			}
-			items = append(items, item{span: renderSpan{text: w, style: sp.style}, w: textWidth(sp.style, w)})
+			// The horizontal padding belongs to the run's first and last
+			// word, so a tag pill reserves room for it and the next tag
+			// starts past the pill instead of touching its text.
+			pad := 0.0
+			if i == 0 {
+				pad += sp.style.padLeft
+			}
+			if i == len(fields)-1 {
+				pad += sp.style.padRight
+			}
+			items = append(items, item{span: renderSpan{text: w, style: sp.style}, w: textWidth(sp.style, w) + pad})
 		}
 		if trail && len(items) > 0 {
 			spaceStyles[len(items)-1] = sp.style
@@ -2760,7 +3081,9 @@ func mergeTextSpans(line []renderSpan) []renderSpan {
 	for _, sp := range line {
 		if sp.pic == nil && len(out) > 0 {
 			last := &out[len(out)-1]
-			if last.pic == nil && last.style == sp.style {
+			// A padded run is a box of its own: merging two of them would
+			// drop one run's padding from the advance.
+			if last.pic == nil && last.style == sp.style && !sp.style.hasPad {
 				last.text += sp.text
 				continue
 			}

@@ -3,7 +3,7 @@ package browser
 import (
 	"sync"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // The browser plugs itself in behind requests.Request.Browser. requests cannot

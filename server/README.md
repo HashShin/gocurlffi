@@ -16,7 +16,7 @@ exist; neither is required to embed the package directly.
 
 ### serve
 
-`gocurlffi serve` starts CDP and WebDriver BiDi on one port. Both protocols
+`shade serve` starts CDP and WebDriver BiDi on one port. Both protocols
 are always served on that port.
 
 | Flag | Default | Meaning |
@@ -40,7 +40,7 @@ so the build commit is reported by `Browser.getVersion` and by the MCP
 
 ### mcp
 
-`gocurlffi mcp` serves the MCP tool server. With no `--port` it speaks
+`shade mcp` serves the MCP tool server. With no `--port` it speaks
 JSON-RPC on stdin/stdout (`--port 0` is the default and selects stdio); with a
 non-zero `--port` it serves HTTP at `/mcp` and `/mcp/`.
 
@@ -61,7 +61,7 @@ server-initiated event stream.
 
 ## Go API
 
-Import `github.com/HashShin/gocurlffi/server`. The exported surface is small. The CDP target, MCP
+Import `github.com/HashShin/shade/server`. The exported surface is small. The CDP target, MCP
 session, and JSON-RPC response types are unexported, so external code holds
 values returned by the package and passes them back rather than naming their
 types.
@@ -138,7 +138,7 @@ if err := m.ServeStdio(os.Stdin, os.Stdout); err != nil {
 
 `Server.Handler()` registers the following routes. Unknown paths return 404;
 `/devtools/browser/` ignores the identifier after the prefix (the server
-always reports `gocurlffi`).
+always reports `shade`).
 
 | Path | Protocol | Purpose |
 | --- | --- | --- |
@@ -235,8 +235,8 @@ An MCP client that spawns a process uses the stdio transport:
 ```json
 {
   "mcpServers": {
-    "gocurlffi": {
-      "command": "/path/to/gocurlffi",
+    "shade": {
+      "command": "/path/to/shade",
       "args": ["mcp"]
     }
   }
@@ -247,13 +247,13 @@ An MCP client that speaks streamable HTTP is pointed at `/mcp`, after
 starting the server with a non-zero port:
 
 ```sh
-./bin/gocurlffi mcp --port 9223
+./bin/shade mcp --port 9223
 ```
 
 ```json
 {
   "mcpServers": {
-    "gocurlffi": {
+    "shade": {
       "url": "http://127.0.0.1:9223/mcp"
     }
   }

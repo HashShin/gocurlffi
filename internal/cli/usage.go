@@ -4,31 +4,31 @@ package cli
 // from the definitions themselves (see newFlagSet), so only the top-level
 // overview is written by hand.
 
-const rootUsage = `gocurlffi - HTTP with browser impersonation, and a pure-Go headless browser
+const rootUsage = `shade - HTTP with browser impersonation, and a pure-Go headless browser
 
 usage:
-  gocurlffi get <url> [flags]            fast HTTP client with browser TLS/JA3
-  gocurlffi get <url> --render [flags]   load the URL in the pure-Go browser
-  gocurlffi open <url> [flags]           shorthand for "get --render"
-  gocurlffi serve [flags]                CDP + WebDriver BiDi server
-  gocurlffi mcp [flags]                  MCP tool server (stdio, or --port for HTTP)
-  gocurlffi targets                      list impersonation targets
-  gocurlffi version                      print the version
-  gocurlffi help [command]               this overview, or a command's flags
+  shade get <url> [flags]            fast HTTP client with browser TLS/JA3
+  shade get <url> --render [flags]   load the URL in the pure-Go browser
+  shade open <url> [flags]           shorthand for "get --render"
+  shade serve [flags]                CDP + WebDriver BiDi server
+  shade mcp [flags]                  MCP tool server (stdio, or --port for HTTP)
+  shade targets                      list impersonation targets
+  shade version                      print the version
+  shade help [command]               this overview, or a command's flags
 
 methods:
   get, post, put, patch, delete, head, options, trace
-  A bare method is accepted as a command: "gocurlffi post <url> -d k=v".
+  A bare method is accepted as a command: "shade post <url> -d k=v".
   --render applies to get/fetch/open only; a request body has no browser path.
 
 examples:
-  gocurlffi get tls.browserleaks.com/json -i chrome150
-  gocurlffi get example.com -H 'Accept-Language: en-GB' -v
-  gocurlffi post httpbin.org/post -j '{"a":1}'
-  gocurlffi get quotes.toscrape.com/js/ --render --format text
+  shade get tls.browserleaks.com/json -i chrome150
+  shade get example.com -H 'Accept-Language: en-GB' -v
+  shade post httpbin.org/post -j '{"a":1}'
+  shade get quotes.toscrape.com/js/ --render --format text
 
 The fast path and the browser share one binary and one impersonation target.
-"gocurlffi get" constructs no JavaScript engine; --render constructs one.
+"shade get" constructs no JavaScript engine; --render constructs one.
 
-run "gocurlffi help <command>" for that command's flags.
+run "shade help <command>" for that command's flags.
 `

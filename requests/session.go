@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // Session is a requests-like client with a shared cookie jar and connection
@@ -129,7 +129,7 @@ func (s *Session) sendBrowser(req Request) (*Response, error) {
 		if factory == nil {
 			s.mu.Unlock()
 			return nil, &InterfaceError{newError(
-				"Request.Browser needs the browser package: import github.com/HashShin/gocurlffi/browser", 0, nil)}
+				"Request.Browser needs the browser package: import github.com/HashShin/shade/browser", 0, nil)}
 		}
 		renderer = factory(s)
 		s.browser = renderer

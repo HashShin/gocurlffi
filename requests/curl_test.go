@@ -6,7 +6,7 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 func TestCurlClientHelloSpecMatchesCapturedCurl(t *testing.T) {

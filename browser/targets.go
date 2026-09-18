@@ -1,11 +1,11 @@
 package browser
 
-import "github.com/HashShin/gocurlffi/impersonate"
+import "github.com/HashShin/shade/impersonate"
 
 // Impersonation targets, re-exported from the impersonate package so that a
 // caller who only drives the browser needs one import rather than two:
 //
-//	import . "github.com/HashShin/gocurlffi/browser"
+//	import . "github.com/HashShin/shade/browser"
 //
 //	p, err := Get("https://quotes.toscrape.com/js/", Chrome131)
 //

@@ -9,7 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/HashShin/gocurlffi/browser"
+	"github.com/HashShin/shade/browser"
 )
 
 // WebDriver BiDi support. BiDi is a WebSocket protocol of JSON-RPC-like
@@ -92,7 +92,7 @@ func (c *bidiConn) handle(data []byte) {
 func (c *bidiConn) dispatch(method string, params json.RawMessage) (any, *bidiError) {
 	switch method {
 	case "session.status":
-		return map[string]any{"ready": true, "message": "gocurlffi ready"}, nil
+		return map[string]any{"ready": true, "message": "shade ready"}, nil
 	case "session.new":
 		id := randomID()
 		c.sessions[id] = true
@@ -100,7 +100,7 @@ func (c *bidiConn) dispatch(method string, params json.RawMessage) (any, *bidiEr
 			"sessionId": id,
 			"capabilities": map[string]any{
 				"acceptInsecureCerts": false,
-				"browserName":         "gocurlffi",
+				"browserName":         "shade",
 				"browserVersion":      version,
 				"platformName":        "any",
 				"setWindowRect":       false,

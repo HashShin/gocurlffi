@@ -30,12 +30,12 @@
 #     so its time is a floor, not a full time-to-interactive.
 #   - the Go browser waits real time for timers (Options.TimerBudget, default
 #     2s) so timer-rendered content appears. Pass --timer-budget 0s via
-#     GOCURLFFI_ARGS to make it purely network+CPU bound.
+#     SHADE_ARGS to make it purely network+CPU bound.
 #
 # Examples:
 #   bash scripts/bench_browser.sh
 #   bash scripts/bench_browser.sh -n 3 https://react.dev/ https://example.com/
-#   GOCURLFFI_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
+#   SHADE_ARGS="--timer-budget 0s" bash scripts/bench_browser.sh
 
 set -u
 
@@ -53,7 +53,7 @@ CHROMIUM_BIN="chromium-browser"
 RUN_TIMEOUT=90
 VIRTUAL_MS=15000
 URLS=()
-GOCURLFFI_ARGS="${GOCURLFFI_ARGS:-}"
+SHADE_ARGS="${SHADE_ARGS:-}"
 
 usage() {
   awk 'NR==1 { next }
@@ -82,16 +82,16 @@ if ! command -v "$CHROMIUM_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-GOCURLFFI_BIN="${GOCURLFFI_BIN:-$ROOT_DIR/bin/gocurlffi}"
-if [ ! -x "$GOCURLFFI_BIN" ]; then
-  echo "building gocurlffi..." >&2
-  (cd "$ROOT_DIR" && go build -o bin/gocurlffi ./cmd/gocurlffi) || exit 1
+SHADE_BIN="${SHADE_BIN:-$ROOT_DIR/bin/shade}"
+if [ ! -x "$SHADE_BIN" ]; then
+  echo "building shade..." >&2
+  (cd "$ROOT_DIR" && go build -o bin/shade ./cmd/shade) || exit 1
 fi
 
-PROFILE="${CHROMIUM_PROFILE:-${TMPDIR:-$ROOT_DIR}/gocurlffi-bench-profile}"
+PROFILE="${CHROMIUM_PROFILE:-${TMPDIR:-$ROOT_DIR}/shade-bench-profile}"
 mkdir -p "$PROFILE" 2>/dev/null || true
 
-TIME_FILE="${TMPDIR:-$ROOT_DIR}/gocurlffi-bench.out"
+TIME_FILE="${TMPDIR:-$ROOT_DIR}/shade-bench.out"
 
 # run <label> <timeout-secs> <command...>
 run() {
@@ -112,10 +112,10 @@ run_chromium() {
     --virtual-time-budget="$VIRTUAL_MS" --user-data-dir="$PROFILE" --dump-dom "$url"
 }
 
-run_gocurlffi() {
+run_shade() {
   local url="$1" tag="$2"
   # shellcheck disable=SC2086
-  run "gocurlffi $tag" "$RUN_TIMEOUT" "$GOCURLFFI_BIN" get "$url" --render -f html -i "$IMPERSONATE" $GOCURLFFI_ARGS
+  run "shade $tag" "$RUN_TIMEOUT" "$SHADE_BIN" get "$url" --render -f html -i "$IMPERSONATE" $SHADE_ARGS
 }
 
 echo "warming the Chromium profile (untimed; a cold profile can take ~40s)..."
@@ -129,7 +129,7 @@ for url in "${URLS[@]}"; do
   echo "=== $url ==="
   for i in $(seq 1 "$ITERATIONS"); do
     run_chromium "$url" "run$i"
-    run_gocurlffi "$url" "run$i"
+    run_shade "$url" "run$i"
   done
   echo
 done

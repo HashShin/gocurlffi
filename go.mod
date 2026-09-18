@@ -1,4 +1,4 @@
-module github.com/HashShin/gocurlffi
+module github.com/HashShin/shade
 
 go 1.26.0
 

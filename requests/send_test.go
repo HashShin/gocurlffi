@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/HashShin/gocurlffi/impersonate"
+	"github.com/HashShin/shade/impersonate"
 )
 
 // Send is the struct-shaped entry point: the same request can be built as a

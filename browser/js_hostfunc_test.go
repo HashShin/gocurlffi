@@ -6,7 +6,7 @@ import (
 )
 
 // A host function must not publish the Go symbol that implements it. A browser
-// never produces "function gocurlffi/browser.(*jsEnv)...() { [native code] }",
+// never produces "function shade/browser.(*jsEnv)...() { [native code] }",
 // and both Function.prototype.toString and .name exposed it on every function
 // in the environment.
 func TestHostFunctionsLookNative(t *testing.T) {
@@ -42,7 +42,7 @@ func TestNoHostFunctionLeaksGoSymbol(t *testing.T) {
 				try { v = obj[k]; } catch (e) { continue; }
 				if (typeof v !== "function") { continue; }
 				var s = Function.prototype.toString.call(v) + "|" + String(v.name);
-				if (s.indexOf("gocurlffi") >= 0 || s.indexOf("/browser") >= 0) {
+				if (s.indexOf("shade") >= 0 || s.indexOf("/browser") >= 0) {
 					bad.push(label + "." + k);
 				}
 			}

@@ -19,6 +19,13 @@ type ScreenshotOptions struct {
 	// Scale multiplies the output size (2 gives a 2x image). Default 1.
 	Scale float64
 
+	// FontScale multiplies every rendered font size, and the line height that
+	// goes with it, the way a browser's text-only zoom does. Boxes, padding
+	// and margins keep the page's own sizes, and getComputedStyle still
+	// reports them, so this changes only how large the text is drawn.
+	// Default 1, the page's own sizes.
+	FontScale float64
+
 	// MaxHeight bounds the output height in CSS px, so a very long page cannot
 	// produce a huge image. Default 20000. The content is cropped.
 	MaxHeight int
@@ -112,7 +119,8 @@ func (p *Page) layOut(opts ScreenshotOptions) (*renderDoc, color.RGBA, error) {
 	root := &absFrame{}
 	// Seed the containing-block content width with the page column, so a
 	// percentage width at the top of the document resolves against it.
-	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width), hasContW: true}
+	c := &collector{page: p, engine: eng, absOwner: root, contW: float64(width), hasContW: true,
+		fontScale: textScale(opts.FontScale)}
 	if p.geomOn {
 		c.geom = true
 		c.geomNodes = map[int]*html.Node{}
@@ -499,6 +507,11 @@ type collector struct {
 	pre     bool
 	lists   []listState
 	marker  string
+	// fontScale multiplies every rendered font size and the line height that
+	// goes with it, the way a browser's text-only zoom does. Boxes, padding
+	// and margins keep the page's own sizes, and getComputedStyle still
+	// reports the page's real values.
+	fontScale float64
 
 	// bg is the background inherited from the nearest ancestor block that has
 	// one; a descendant block paints it too, which is how a parent's
@@ -592,6 +605,36 @@ type collector struct {
 	// was declared in, so the context's available width can be measured from
 	// the column without a container inside it shrinking the box.
 	sizeInset float64
+}
+
+// textScale turns a screenshot's FontScale into the multiplier the collector
+// renders with. Unset (or nonsensical) is 1, the page's own sizes.
+func textScale(f float64) float64 {
+	switch {
+	case f <= 0 || f != f:
+		return 1
+	case f > 8:
+		return 8
+	}
+	return f
+}
+
+// fontSize is an element's computed font size as it will be drawn.
+func (c *collector) fontSize(cs *computedStyle) float64 {
+	if c.fontScale == 1 {
+		return cs.fontSize
+	}
+	return cs.fontSize * c.fontScale
+}
+
+// textLine is an element's computed line height as it will be drawn, so a
+// scaled font keeps its leading. Zero is "normal", which the layout takes
+// from the font face and so scales with it.
+func (c *collector) textLine(cs *computedStyle) float64 {
+	if c.fontScale == 1 || cs.lineHeight <= 0 {
+		return cs.lineHeight
+	}
+	return cs.lineHeight * c.fontScale
 }
 
 // finishBlock applies an element's box edges, sizing context and box to the
@@ -702,11 +745,16 @@ func (c *collector) nextGeomID() int {
 func (c *collector) assignBox(start int, cs *computedStyle) {
 	gid := c.nextBoxID()
 	left := c.content - cs.paddingLeft - cs.borderW
+	first, last := -1, -1
 	for i := start; i < len(c.blocks); i++ {
 		b := &c.blocks[i]
 		if b.boxID != 0 {
 			continue
 		}
+		if first < 0 {
+			first = i
+		}
+		last = i
 		b.boxID = gid
 		b.borderLeft = left
 		b.boxPadRight = cs.paddingRight + cs.borderW
@@ -730,6 +778,13 @@ func (c *collector) assignBox(start int, cs *computedStyle) {
 		b.shadowX, b.shadowY = cs.shadowX, cs.shadowY
 		b.shadowBlur, b.shadowSpread = cs.shadowBlur, cs.shadowSpread
 		b.shadowColor, b.hasShadow = scaleAlpha(cs.shadowColor, cs.opacity), cs.hasShadow
+	}
+	// The border sits at the box's two edges, so only the blocks that end up
+	// there carry it: the gap between two blocks inside the box is their
+	// margins, not another border.
+	if first >= 0 {
+		c.blocks[first].boxTop = true
+		c.blocks[last].boxBottom = true
 	}
 }
 
@@ -852,7 +907,7 @@ func (c *collector) ensure(cs *computedStyle) *renderBlock {
 		c.stampRight(b)
 		if cs != nil {
 			b.align = cs.textAlign
-			b.lineH = cs.lineHeight
+			b.lineH = c.textLine(cs)
 		} else {
 			// A text node: its line height is the one it inherited from the
 			// element it sits in. go.dev's footer links are "display: flex"
@@ -925,6 +980,11 @@ func (c *collector) walkElement(el *html.Node) {
 				return
 			}
 			for i := geomStart; i < len(c.blocks); i++ {
+				// A synthetic clearfix block is a position, not a box on
+				// the page, so it must not widen the element's rectangle.
+				if c.blocks[i].kind == blockClear {
+					continue
+				}
 				c.blocks[i].geomIDs = append(c.blocks[i].geomIDs, geomID)
 			}
 		}()
@@ -977,7 +1037,7 @@ func (c *collector) walkElement(el *html.Node) {
 	}
 
 	c.style = renderStyle{
-		size:          cs.fontSize,
+		size:          c.fontSize(cs),
 		bold:          cs.bold,
 		italic:        cs.italic,
 		mono:          cs.mono,
@@ -985,20 +1045,30 @@ func (c *collector) walkElement(el *html.Node) {
 		underline:     cs.underline,
 		strike:        cs.strike,
 		color:         scaleAlpha(cs.textColor, cs.opacity),
-		font:          c.page.pageFont(cs.fontFamily, cs.weight, cs.italic),
+		font:          c.page.fontFor(cs.fontFamilies, cs.weight, cs.italic),
 		textTransform: cs.textTransform,
 		letterSpacing: cs.letterSpacing,
 	}
 	// An inline element's background belongs to its text runs. A block's is its
 	// box, which finishBlock draws, so painting it here as well would draw it
 	// twice and darken a translucent colour.
-	if cs.hasBackground && !isBlockDisplay(cs.display) {
-		c.style.bg = scaleAlpha(cs.background, cs.opacity)
-		c.style.hasBG = true
+	if !isBlockDisplay(cs.display) {
+		// An inline element's padding and border-radius shape that run's box:
+		// the background covers content plus padding, and the padding widens
+		// the run. A tag pill is the case this exists for.
+		c.style.padLeft, c.style.padRight = cs.paddingLeft, cs.paddingRight
+		c.style.padTop, c.style.padBottom = cs.paddingTop, cs.paddingBottom
+		c.style.hasPad = cs.paddingLeft != 0 || cs.paddingRight != 0 ||
+			cs.paddingTop != 0 || cs.paddingBottom != 0
+		c.style.radiusPx, c.style.radiusPct = cs.radiusPx, cs.radiusPct
+		if cs.hasBackground {
+			c.style.bg = scaleAlpha(cs.background, cs.opacity)
+			c.style.hasBG = true
+		}
 	}
 	// Text that is a direct child of a flex row or grid has no element of its
 	// own to carry the line height, so it is kept here for ensure.
-	c.lineH = cs.lineHeight
+	c.lineH = c.textLine(cs)
 	block := isBlockDisplay(cs.display)
 	c.ownHeightPx, c.hasOwnHeight = 0, false
 	if cs.hasHeight {
@@ -1295,6 +1365,17 @@ func (c *collector) walkElement(el *html.Node) {
 		start := len(c.blocks)
 		c.walkChildren(el)
 		c.flush()
+		// The button's padding belongs to its box, which finishBlock draws
+		// around the label. Left on the runs as well, the shrink-wrap below
+		// counted it twice and the button came out one padding wider than a
+		// browser's.
+		for i := start; i < len(c.blocks); i++ {
+			for j := range c.blocks[i].spans {
+				s := &c.blocks[i].spans[j].style
+				s.padLeft, s.padRight, s.padTop, s.padBottom, s.hasPad = 0, 0, 0, 0, false
+				s.hasBG = false
+			}
+		}
 		align := cs.textAlign
 		if align == "" {
 			align = "center"
@@ -1408,6 +1489,15 @@ func (c *collector) walkElement(el *html.Node) {
 		if isFlexColumnContainer(cs) {
 			applyColumnAlign(c.blocks[start:], cs.alignItems)
 		}
+		// An "::after" clearfix is not drawn, but it ends the element's
+		// floats: the layout clears them at this block, which is what gives
+		// a floated row its height.
+		if cs.containClear != "" {
+			c.blocks = append(c.blocks, renderBlock{
+				kind: blockClear, clearSide: cs.containClear,
+				ownerSeq: c.elID, depth: c.depth, ownerGeomID: c.elGeomID,
+			})
+		}
 		c.finishBlock(start, cs, boxed)
 		if frame != nil {
 			c.absOwner = frameParent
@@ -1463,20 +1553,44 @@ func (c *collector) controlBlock(cs *computedStyle) int {
 		borderBox:       cs.boxSizingBorderBox,
 		marginRight:     cs.marginRight,
 		paddingRight:    cs.paddingRight,
-		shadowX:         cs.shadowX,
-		shadowY:         cs.shadowY,
-		shadowBlur:      cs.shadowBlur,
-		shadowSpread:    cs.shadowSpread,
-		shadowColor:     scaleAlpha(cs.shadowColor, cs.opacity),
-		hasShadow:       cs.hasShadow,
+		// The control applies its own right edges here; finishBlock is never
+		// reached for it, so without this the enclosing element overwrote
+		// them with its own and the control lost its right padding.
+		hasRightEdges: true,
+		shadowX:       cs.shadowX,
+		shadowY:       cs.shadowY,
+		shadowBlur:    cs.shadowBlur,
+		shadowSpread:  cs.shadowSpread,
+		shadowColor:   scaleAlpha(cs.shadowColor, cs.opacity),
+		hasShadow:     cs.hasShadow,
 		// The control's box is drawn by the layout, not per line.
 		boxID:       c.nextBoxID(),
 		borderLeft:  c.content - cs.paddingLeft - cs.borderW,
+		boxPadRight: cs.paddingRight + cs.borderW,
+		// The control declares the box it paints, so its rectangle is that
+		// box. Without this the layout treated the block as one carrying a
+		// container's box and stretched it to the frame's right edge, which
+		// made a "width: 100%" field 15px too wide inside a padded column.
+		ownsBox:     true,
+		lineH:       c.textLine(cs),
 		hasBorder:   cs.hasBorder,
 		borderW:     cs.borderW,
 		borderColor: scaleAlpha(cs.borderColor, cs.opacity),
 		radiusPx:    cs.radiusPx,
 		radiusPct:   cs.radiusPct,
+	}
+	// A declared height holds a control open the same way it does a block:
+	// ".form-control" is "height: 40px" and must be 40px tall whatever its
+	// text measures. The minimum is the content box, so border-box strips
+	// the padding and border the box adds around it.
+	if cs.hasHeight && cs.heightPx > 0 {
+		h := cs.heightPx
+		if cs.boxSizingBorderBox {
+			h -= cs.paddingTop + cs.paddingBottom + 2*cs.borderW
+		}
+		if h > b.minHeight {
+			b.minHeight, b.hasDeclaredHeight = h, true
+		}
 	}
 	if c.hasBG {
 		b.boxBG, b.boxHasBG = c.bg, true

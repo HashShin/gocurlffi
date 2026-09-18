@@ -3,7 +3,7 @@ package browser
 import (
 	"strings"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 	"github.com/dop251/goja"
 )
 

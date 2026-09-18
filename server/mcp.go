@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/HashShin/gocurlffi/browser"
+	"github.com/HashShin/shade/browser"
 )
 
 // An MCP (Model Context Protocol) server over JSON-RPC 2.0, so an AI agent can
@@ -244,7 +244,7 @@ func (s *MCP) dispatch(sess *mcpSession, method string, params json.RawMessage) 
 		return map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "gocurlffi", "version": version},
+			"serverInfo":      map[string]any{"name": "shade", "version": version},
 		}, nil
 	case "ping":
 		return map[string]any{}, nil

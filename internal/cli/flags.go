@@ -110,7 +110,7 @@ func boolFlagNames(fs *flag.FlagSet) map[string]bool {
 
 // reorderFlags moves options ahead of positional arguments so the standard
 // flag package (which stops at the first non-flag) sees them, allowing
-// "gocurlffi get URL -f text". boolFlags holds the options that take no value.
+// "shade get URL -f text". boolFlags holds the options that take no value.
 func reorderFlags(args []string, boolFlags map[string]bool) []string {
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {

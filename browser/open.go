@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/HashShin/gocurlffi/requests"
+	"github.com/HashShin/shade/requests"
 )
 
 // Open loads a request's URL in a browser of its own and returns the page
