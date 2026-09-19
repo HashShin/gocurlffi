@@ -159,6 +159,12 @@ make build
   honoured (via `x/net/html/charset`), so non-UTF-8 pages are not mojibake.
   A `<base href>` sets the base for relative URLs, used by script `src`,
   `href`/`src` properties, `fetch`, `XMLHttpRequest`, links and markdown.
+- A response that is not markup - `text/plain`, `application/json`, a binary
+  type - is shown as its text inside a `<pre>`, the way a browser's plain-text
+  viewer does, and `document.contentType` reports the served type. Nothing in
+  such a body is parsed or run: a `text/plain` body containing `<script>` stays
+  text, where parsing it as HTML would execute it. `text/html`, XHTML and XML
+  keep the parsed-and-scripted path.
 - HTML5 parsing and a mutable DOM: `createElement`, `appendChild`,
   `insertBefore`, `innerHTML`/`outerHTML`, `textContent`, attributes,
   `classList`, `dataset`, `style`, `cloneNode`.

@@ -918,6 +918,9 @@ func (e *jsEnv) defineDocumentProto(p *goja.Object) {
 		return e.vm.ToValue("UTF-8")
 	}, nil)
 	e.accessor(p, "contentType", func(call goja.FunctionCall) goja.Value {
+		if e.page.contentType != "" {
+			return e.vm.ToValue(e.page.contentType)
+		}
 		return e.vm.ToValue("text/html")
 	}, nil)
 	e.accessor(p, "compatMode", func(call goja.FunctionCall) goja.Value {

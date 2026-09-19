@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,6 +46,11 @@ type Page struct {
 	doc        *html.Node
 	env        *jsEnv
 	readyState string
+	// contentType is the media type the document was served as, which is what
+	// document.contentType answers. A response that is not markup is shown as
+	// text instead of being parsed (see install), so this also records which
+	// of the two happened.
+	contentType string
 
 	userAgent string
 	platform  string
@@ -165,6 +171,7 @@ func newPage(b *Browser, url string) *Page {
 		browser:         b,
 		URL:             url,
 		readyState:      "loading",
+		contentType:     "text/html",
 		userAgent:       defaultUserAgent,
 		platform:        "Linux armv8l",
 		loadedScripts:   map[string]bool{},
@@ -301,19 +308,33 @@ func (p *Page) loadForm(rawURL string, body []byte, headers map[string]string) e
 func (p *Page) install(resp *requests.Response) error {
 	p.resp = resp
 	p.URL = resp.URL
-	contentType := ""
+	header := ""
 	if resp.Headers != nil {
-		contentType = resp.Headers.Get("Content-Type")
+		header = resp.Headers.Get("Content-Type")
 	}
 	// charset.NewReader honours the Content-Type charset, a BOM and <meta
 	// charset>, transcoding to UTF-8 so non-UTF-8 pages are not mojibake.
-	body, berr := charset.NewReader(bytes.NewReader(resp.Content), contentType)
+	body, berr := charset.NewReader(bytes.NewReader(resp.Content), header)
 	if berr != nil {
 		body = bytes.NewReader(resp.Content)
 	}
-	doc, perr := html.Parse(body)
-	if perr != nil {
-		return perr
+	data, rerr := io.ReadAll(body)
+	if rerr != nil {
+		return rerr
+	}
+	p.contentType = documentContentType(header)
+	var doc *html.Node
+	if isMarkupType(p.contentType) {
+		doc, rerr = html.Parse(bytes.NewReader(data))
+		if rerr != nil {
+			return rerr
+		}
+	} else {
+		// A browser shows a response that is not markup as its text in a
+		// viewer and runs nothing in it. Parsing the bytes as HTML instead
+		// would execute a <script> that a text/plain body merely contains,
+		// which is the one thing such a body must never do.
+		doc = plainTextDocument(string(data))
 	}
 	p.adoptDocument(doc)
 	return p.run()
@@ -333,6 +354,7 @@ func (p *Page) adoptDocument(doc *html.Node) {
 // SetContent loads HTML from a string, running scripts unless disabled.
 func (p *Page) SetContent(source, url string) error {
 	p.URL = url
+	p.contentType = "text/html"
 	doc, err := html.Parse(strings.NewReader(source))
 	if err != nil {
 		return err
