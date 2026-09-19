@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,14 @@ import (
 
 // clientKey identifies a cached transport. Timeouts and redirect policy are
 // applied per request, so they are not part of the key.
+//
+// The scheme is part of it because one tls-client cannot serve both. It caches
+// a transport under host:port for an http URL exactly as it does for an https
+// one, so an http request poisons the https request that follows it to the
+// same host in the same session: the https hop is handed the cached http
+// transport, whose dial runs through the function that reports success by
+// returning the sentinel "protocol negotiated", and that string surfaces as
+// the request error. A redirect from https to http to https walks all three.
 type clientKey struct {
 	impersonate string
 	proxy       string
@@ -27,9 +36,10 @@ type clientKey struct {
 	iface       string
 	certFile    string
 	keyFile     string
+	scheme      string
 }
 
-func keyFor(cfg *config) clientKey {
+func keyFor(cfg *config, rawURL string) clientKey {
 	return clientKey{
 		impersonate: cfg.impersonate,
 		proxy:       effectiveProxy(cfg),
@@ -38,7 +48,19 @@ func keyFor(cfg *config) clientKey {
 		iface:       cfg.interfaceName,
 		certFile:    certFile(cfg),
 		keyFile:     certKey(cfg),
+		scheme:      urlScheme(rawURL),
 	}
+}
+
+// urlScheme is a URL's lower-cased scheme, defaulting to https when it cannot
+// be read: that is the scheme impersonation is for, and a request that reaches
+// the transport with no readable scheme is already failing.
+func urlScheme(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" {
+		return "https"
+	}
+	return strings.ToLower(u.Scheme)
 }
 
 func certFile(cfg *config) string {

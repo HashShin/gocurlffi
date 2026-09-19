@@ -297,11 +297,6 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 	jar := s.jar
 	originalHost := hostOf(finalURL)
 
-	client, err := s.getClient(keyFor(cfg), cfg)
-	if err != nil {
-		return nil, err
-	}
-
 	history := []*Response{}
 	currentURL := finalURL
 	currentMethod := method
@@ -325,6 +320,13 @@ func (s *Session) requestOnce(method, rawURL string, cfg *config) (*Response, er
 			reader = currentStream
 		}
 		req, err := buildHTTPRequest(currentMethod, currentURL, headers, currentBody, reader)
+		if err != nil {
+			return nil, err
+		}
+		// The client is chosen per hop, not once for the whole chain: a
+		// redirect may change the scheme, and one transport cannot serve both
+		// (see clientKey).
+		client, err := s.getClient(keyFor(cfg, currentURL), cfg)
 		if err != nil {
 			return nil, err
 		}
