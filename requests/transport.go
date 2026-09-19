@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	http "github.com/bogdanfinn/fhttp"
@@ -249,9 +250,28 @@ func buildHTTPRequest(method, url string, headers *Headers, body []byte, stream 
 		return nil, &InvalidURL{newError(err.Error(), 3, nil)}
 	}
 	m, order := headers.toTransport()
+	// toTransport lower-cases header names, which is the spelling the ordered
+	// writer wants, but net/http only recognises the canonical one. A
+	// lower-cased content-length is therefore invisible to the writer's own
+	// check, so it writes a second one and a server refuses the request. Take
+	// it out of the ordered set and let the writer send the single
+	// Content-Length, from the body it already measured or from the value the
+	// caller gave.
+	if cl := m["content-length"]; len(cl) > 0 && req.ContentLength == 0 {
+		if n, perr := strconv.ParseInt(strings.TrimSpace(cl[0]), 10, 64); perr == nil {
+			req.ContentLength = n
+		}
+	}
+	delete(m, "content-length")
+	for i, name := range order {
+		if name == "content-length" {
+			order = append(order[:i], order[i+1:]...)
+			break
+		}
+	}
 	req.Header = http.Header(m)
 	req.Header[http.HeaderOrderKey] = order
-	if len(body) > 0 && req.Header.Get("content-length") == "" {
+	if len(body) > 0 && req.ContentLength == 0 {
 		req.ContentLength = int64(len(body))
 	}
 	return req, nil
